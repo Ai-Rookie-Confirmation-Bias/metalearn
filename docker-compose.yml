@@ -1,1 +1,43 @@
 # [핵심] 프론트/백/DB 컨테이너 실행 오케스트레이션
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: dev
+      POSTGRES_DB: metalearn
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d metalearn"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  backend:
+    build: ./backend
+    command: uv run uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file: ./backend/.env
+    environment:
+      # 호스트가 'db'(서비스명) — 도커 네트워크 내부 DNS
+      DATABASE_URL: postgresql+psycopg://postgres:dev@db:5432/metalearn
+    ports: ["8000:8000"]
+    volumes:
+      - ./backend:/app
+      - /app/.venv            # 컨테이너의 가상환경을 호스트가 덮어쓰지 않게
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build: ./frontend
+    command: pnpm dev --host 0.0.0.0
+    environment:
+      - CHOKIDAR_USEPOLLING=true   # mac/windows 파일변경 감지(HMR)용
+    ports: ["5173:5173"]
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules    # 컨테이너 node_modules 유지(플랫폼 바이너리 충돌 방지)
+    depends_on: [backend]
+
+volumes:
+  pgdata: {}
