@@ -19,5 +19,13 @@ app.include_router(api_router, prefix="/api")
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | bool]:
+    return {
+        "status": "ok",
+        "persist_to_db": settings.PERSIST_TO_DB,
+        "storage": "postgresql" if settings.PERSIST_TO_DB else "memory",
+        "llm_provider": settings.llm_provider,
+        "llm_model": settings.SOLAR_MODEL if settings.llm_provider == "solar" else "mock",
+        "document_intelligence": "llm" if not settings.use_mock_ai else "local",
+        "document_parse": "upstage" if settings.UPSTAGE_API_KEY.strip() else "pypdf",
+    }

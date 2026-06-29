@@ -23,6 +23,7 @@ services:
     ports: ["8000:8000"]
     volumes:
       - ./backend:/app
+      - ./backend/uploads:/app/uploads
       - /app/.venv            # 컨테이너의 가상환경을 호스트가 덮어쓰지 않게
     depends_on:
       db:
