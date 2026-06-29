@@ -1,0 +1,594 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetaLearn UI Components Catalog</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <!-- KaTeX for Math Rendering -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js"></script>
+</head>
+<body>
+    <div class="catalog-layout">
+        
+        <!-- 사이드바 -->
+        <aside class="catalog-sidebar">
+            <div class="catalog-header">
+                <h1 class="catalog-title">MetaLearn</h1>
+                <p class="catalog-subtitle">UI Component Catalog</p>
+                <div style="margin-top: 1rem;">
+                    <a href="dashboard.html" class="btn-primary" style="padding: 0.5rem; width: 100%; display: block; text-align: center; font-size: 0.85rem;">대시보드로 돌아가기</a>
+                </div>
+            </div>
+            
+            <div class="catalog-nav">
+                <div class="catalog-nav-group">
+                    <div class="catalog-nav-title">Categories</div>
+                    <div class="catalog-nav-item active" onclick="switchSection('desc', this)"><i class="ph-fill ph-book-open"></i> ① 설명 (보여주기)</div>
+                    <div class="catalog-nav-item" onclick="switchSection('quiz', this)"><i class="ph-fill ph-question"></i> ② 문제 (답하기)</div>
+                    <div class="catalog-nav-item" onclick="switchSection('interactive', this)"><i class="ph-fill ph-game-controller"></i> ③ 인터랙티브 (조작)</div>
+                    <div class="catalog-nav-item" onclick="switchSection('flow', this)"><i class="ph-fill ph-git-merge"></i> ⓸ 흐름 제어</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- 메인 캔버스 -->
+        <main class="catalog-main">
+            <div class="catalog-canvas">
+
+                <!-- ① 설명 섹션 -->
+                <section id="sec-desc" class="catalog-section active">
+                    <div class="catalog-section-header">
+                        <h2 class="catalog-section-title">① 설명 컴포넌트</h2>
+                        <p class="catalog-section-desc">사용자에게 개념을 보여주고 읽게 하는 컴포넌트입니다.</p>
+                    </div>
+
+                    <!-- 공통: 수식 렌더링 데모 (Math) -->
+                    <div class="learning-block type-concept math-demo" style="border: 2px solid var(--accent-color);">
+                        <div class="block-source"><i class="ph-fill ph-magic-wand"></i> 수식 렌더러 동작 테스트</div>
+                        <h3 class="block-title">공통 기능: 수식 자동 변환</h3>
+                        <div class="block-body">
+                            이 텍스트는 일반 텍스트입니다. 하지만 달러 기호로 감싸면 멋진 수학 수식이 됩니다.<br><br>
+                            - 인라인 수식: 피타고라스 정리는 \(a^2 + b^2 = c^2\) 입니다.<br>
+                            - 블록 수식:
+                            $$ f(x) = \int_{-\infty}^\infty \hat f(\xi)\,e^{2 \pi i \xi x} \,d\xi $$
+                            이 기능은 새로운 컴포넌트를 만들지 않아도, <strong>모든 41개 컴포넌트의 텍스트 영역에서 공통으로 자동 작동</strong>합니다!
+                        </div>
+                    </div>
+
+                    <!-- 1차: Concept -->
+                    <div class="learning-block type-concept">
+                        <div class="block-source book"><i class="ph-fill ph-book-open"></i> 교재 출처</div>
+                        <h3 class="block-title">개념 요약 (concept)</h3>
+                        <div class="block-body">메모리에 데이터를 저장하기 위해 공간을 할당받는 것을 <strong>'선언'</strong>이라 합니다.</div>
+                    </div>
+
+                    <!-- 2차: Callout -->
+                    <div class="learning-block type-callout variant-tip">
+                        <div class="block-source"><i class="ph-fill ph-robot"></i> AI 팁</div>
+                        <h3 class="block-title">강조/팁 (callout)</h3>
+                        <div class="block-body"><i class="ph-fill ph-lightbulb callout-icon"></i><div><strong>꿀팁:</strong> 프로그래밍을 처음 시작할 때 초기화를 까먹지 마세요!</div></div>
+                    </div>
+
+                    <!-- 2차: Definition -->
+                    <div class="learning-block">
+                        <div class="block-source book"><i class="ph-fill ph-book-open"></i> 교재 출처</div>
+                        <h3 class="block-title">용어 정의 플립 카드 (definition)</h3>
+                        <div class="definition-flip-container">
+                            <div class="definition-flipper">
+                                <div class="definition-front">
+                                    <div class="def-term">Garbage Value</div>
+                                    <div style="font-size: 0.85rem; color: var(--text-tertiary); margin-top: 1rem;"><i class="ph-fill ph-hand-pointing"></i> 마우스를 올려 뜻 확인</div>
+                                </div>
+                                <div class="definition-back">
+                                    <div class="def-meaning">초기화되지 않은 메모리 공간에 남아있는 값</div>
+                                    <div class="def-example">"변수를 초기화하지 않고 출력하면 가비지 값이 나옵니다."</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2차: Image -->
+                    <div class="learning-block type-image">
+                        <div class="block-source book"><i class="ph-fill ph-book-open"></i> 교재 출처</div>
+                        <h3 class="block-title">이미지 (image)</h3>
+                        <div class="img-wrapper">
+                            <img src="https://images.unsplash.com/photo-1518770660439-4636190af475?q=80&w=800&auto=format&fit=crop" alt="칩셋 메모리">
+                            <div class="img-caption">그림 1. 컴퓨터 메모리(RAM) 구조의 시각화</div>
+                        </div>
+                    </div>
+
+                    <!-- 2차: Chart -->
+                    <div class="learning-block">
+                        <div class="block-source"><i class="ph-fill ph-robot"></i> AI 분석</div>
+                        <h3 class="block-title">정적 그래프 (chart)</h3>
+                        <div class="css-chart-wrap">
+                            <div class="css-chart-bar-wrap">
+                                <div class="css-chart-bar" style="height: 30%;"><div class="css-chart-value">30%</div></div>
+                                <div class="css-chart-label">초보자 실수</div>
+                            </div>
+                            <div class="css-chart-bar-wrap">
+                                <div class="css-chart-bar" style="height: 80%;"><div class="css-chart-value">80%</div></div>
+                                <div class="css-chart-label">변수 오타</div>
+                            </div>
+                            <div class="css-chart-bar-wrap">
+                                <div class="css-chart-bar" style="height: 10%;"><div class="css-chart-value">10%</div></div>
+                                <div class="css-chart-label">컴파일 에러</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Analogy -->
+                    <div class="learning-block type-analogy">
+                        <div class="block-source"><i class="ph-fill ph-lightbulb"></i> 비유</div>
+                        <h3 class="block-title">비유 (analogy)</h3>
+                        <div class="block-body">변수 선언은 이사 갈 집에 빈 방을 마련하는 것과 같습니다. 아직 방 안에는 무엇을 넣을지 정하지 않았지만 공간은 확보된 상태죠!</div>
+                    </div>
+
+                    <!-- 3차: KeyTakeaways -->
+                    <div class="learning-block type-takeaways">
+                        <div class="block-source"><i class="ph-fill ph-robot"></i> AI 요약</div>
+                        <h3 class="block-title">핵심 요약 (keyTakeaways)</h3>
+                        <div class="block-body">
+                            <ul class="takeaway-list">
+                                <li class="takeaway-item"><i class="ph-fill ph-check-circle takeaway-icon"></i><div>변수를 만들기 위해 공간을 확보하는 것을 선언이라 합니다.</div></li>
+                                <li class="takeaway-item"><i class="ph-fill ph-check-circle takeaway-icon"></i><div>변수에 최초로 값을 할당하는 것을 초기화라 합니다.</div></li>
+                            </ul>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Timeline -->
+                    <div class="learning-block">
+                        <h3 class="block-title">실행 순서 (timeline)</h3>
+                        <div class="block-body">
+                            <div class="timeline-wrap">
+                                <div class="timeline-item">
+                                    <div class="timeline-dot"></div>
+                                    <div class="timeline-title">1단계: 선언</div>
+                                    <div class="timeline-desc">`int age;` - 메모리에 4바이트 공간 확보</div>
+                                </div>
+                                <div class="timeline-item">
+                                    <div class="timeline-dot"></div>
+                                    <div class="timeline-title">2단계: 초기화</div>
+                                    <div class="timeline-desc">`age = 20;` - 20이라는 값을 공간에 씀</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Table -->
+                    <div class="learning-block">
+                        <h3 class="block-title">비교표 (table)</h3>
+                        <div class="block-body table-responsive">
+                            <table class="custom-table">
+                                <thead>
+                                    <tr><th>구분</th><th>개념</th><th>코드 예시</th></tr>
+                                </thead>
+                                <tbody>
+                                    <tr><td>선언</td><td>메모리 공간 확보</td><td><code>int a;</code></td></tr>
+                                    <tr><td>초기화</td><td>최초의 값 할당</td><td><code>a = 10;</code></td></tr>
+                                    <tr><td>할당</td><td>이미 있는 변수에 새 값 덮어쓰기</td><td><code>a = 20;</code></td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Tree (Mermaid) -->
+                    <div class="learning-block">
+                        <div class="block-source"><i class="ph-fill ph-git-commit"></i> 구조도</div>
+                        <h3 class="block-title">분류도 (tree)</h3>
+                        <div class="block-body diagram-wrap">
+                            <div class="mermaid">
+                                flowchart TD
+                                    A[데이터 타입] --> B[정수형]
+                                    A --> C[실수형]
+                                    B --> D[int]
+                                    B --> E[long]
+                                    C --> F[float]
+                                    C --> G[double]
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Flow (Mermaid) -->
+                    <div class="learning-block">
+                        <div class="block-source"><i class="ph-fill ph-git-commit"></i> 순서도</div>
+                        <h3 class="block-title">프로세스 (flow)</h3>
+                        <div class="block-body diagram-wrap">
+                            <div class="mermaid">
+                                flowchart LR
+                                    A([시작]) --> B[변수 선언]
+                                    B --> C{초기화 했나?}
+                                    C -- 예 --> D[안전한 사용]
+                                    C -- 아니오 --> E[가비지 값 발생]
+                                    D --> F([종료])
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3차: ConceptMap (Mermaid) -->
+                    <div class="learning-block">
+                        <div class="block-source"><i class="ph-fill ph-git-commit"></i> 지식망</div>
+                        <h3 class="block-title">개념 연결망 (conceptMap)</h3>
+                        <div class="block-body diagram-wrap">
+                            <div class="mermaid">
+                                graph TD
+                                    VAR(변수) -->|가짐| NAME(이름)
+                                    VAR -->|저장| VAL(값)
+                                    VAR -->|할당받음| MEM(메모리 공간)
+                                    MEM -.->|초기화 안되면| GAB(가비지 값)
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Code Block -->
+                    <div class="learning-block type-code">
+                        <div class="block-source book"><i class="ph-fill ph-book-open"></i> 교재 출처</div>
+                        <h3 class="block-title">코드 예시 (code)</h3>
+                        <div class="block-body">
+                            <button class="code-copy-btn"><i class="ph ph-copy"></i> Copy</button>
+                            <span class="comment">// 변수 선언과 초기화</span><br>
+                            <span class="keyword">int</span> main() {<br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;<span class="type">int</span> age; <span class="comment">// 선언</span><br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;age = <span class="string">20</span>; <span class="comment">// 초기화</span><br>
+                            &nbsp;&nbsp;&nbsp;&nbsp;<span class="keyword">return</span> <span class="string">0</span>;<br>
+                            }
+                        </div>
+                    </div>
+
+                </section>
+
+
+                <!-- ② 문제 섹션 -->
+                <section id="sec-quiz" class="catalog-section">
+                    <div class="catalog-section-header">
+                        <h2 class="catalog-section-title">② 문제 컴포넌트</h2>
+                    </div>
+
+                    <!-- 1차: Cloze -->
+                    <div class="learning-block type-cloze">
+                        <div class="block-source"><i class="ph-fill ph-robot"></i> AI 생성</div>
+                        <h3 class="block-title">빈칸 채우기 (cloze)</h3>
+                        <div class="block-body cloze-sentence">
+                            <code>int age;</code> 과정은 메모리 공간을 만드는 
+                            <input type="text" class="cloze-blank" id="cloze1" data-answer="선언" placeholder="?"> 과정이다.
+                        </div>
+                    </div>
+
+                    <!-- 1차: MCQ -->
+                    <div class="learning-block type-mcq">
+                        <div class="block-source"><i class="ph-fill ph-robot"></i> AI 생성</div>
+                        <h3 class="block-title">객관식 (mcq)</h3>
+                        <div class="block-body">
+                            <div class="mcq-question">다음 중 초기화되지 않은 변수를 사용할 때 발생하는 문제로 가장 적절한 것은?</div>
+                            <div class="mcq-options">
+                                <div class="mcq-option" onclick="selectMcq(this, false)"><div class="option-indicator">A</div><span>프로그램이 즉시 종료된다.</span></div>
+                                <div class="mcq-option" onclick="selectMcq(this, true)"><div class="option-indicator">B</div><span>의미 없는 쓰레기 값이 사용된다.</span></div>
+                                <div class="mcq-option" onclick="selectMcq(this, false)"><div class="option-indicator">C</div><span>자동으로 0으로 세팅된다.</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 2차: ShortAnswer -->
+                    <div class="learning-block">
+                        <div class="block-source"><i class="ph-fill ph-robot"></i> AI 생성</div>
+                        <h3 class="block-title">단답형 (shortAnswer)</h3>
+                        <div class="block-body">
+                            <div class="short-prompt">초기화되지 않은 메모리 공간에 있는 값을 무엇이라고 부르나요? (영어로)</div>
+                            <input type="text" class="short-input" id="shortInput" placeholder="정답을 입력하세요 (ex. garbage)" oninput="checkShortAnswer(this)">
+                        </div>
+                    </div>
+
+                    <!-- 3차: True/False -->
+                    <div class="learning-block">
+                        <div class="block-source"><i class="ph-fill ph-robot"></i> AI 생성</div>
+                        <h3 class="block-title">O/X 퀴즈 (trueFalse)</h3>
+                        <div class="block-body">
+                            <div class="mcq-question">C언어에서 변수를 선언만 하면 자동으로 0이 들어간다.</div>
+                            <div class="tf-container">
+                                <button class="tf-btn true-btn" onclick="selectTf(this, false)">O <span>그렇다</span></button>
+                                <button class="tf-btn false-btn" onclick="selectTf(this, true)">X <span>아니다</span></button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 1차/타겟분기: Code Exercise -->
+                    <div class="learning-block type-code-exercise">
+                        <div class="block-source"><i class="ph-fill ph-code"></i> 직접 코딩하기</div>
+                        <h3 class="block-title">실행형 코드 작성 (codeExercise)</h3>
+                        <div class="block-body">
+                            <div class="exercise-prompt">배열 `[1, 2, 3]`을 순회하며 각 요소를 출력하는 for문을 완성하세요.</div>
+                            
+                            <div class="code-editor-mockup">
+                                <div class="editor-header">
+                                    <span class="editor-lang">C (main.c)</span>
+                                </div>
+                                <div class="editor-body">
+                                    <div class="line-numbers">
+                                        <span>1</span><span>2</span><span>3</span><span>4</span><span>5</span>
+                                    </div>
+                                    <div class="editor-code">
+                                        <div class="line"><span class="keyword">int</span> main() {</div>
+                                        <div class="line">    <span class="keyword">int</span> arr[<span class="string">3</span>] = {<span class="string">1</span>, <span class="string">2</span>, <span class="string">3</span>};</div>
+                                        <div class="line">    <span class="comment">// 여기에 for문을 작성하세요</span></div>
+                                        <div class="line">    <input type="text" class="cloze-blank code-blank" placeholder="for(int i=0; ...)"></div>
+                                        <div class="line">}</div>
+                                    </div>
+                                </div>
+                                <div class="editor-footer">
+                                    <button class="btn-run-code" onclick="runMockCode()"><i class="ph-fill ph-play"></i> Run Code</button>
+                                </div>
+                            </div>
+                            
+                            <div class="terminal-mockup" id="terminalOut" style="display: none;">
+                                <div class="term-header">Terminal Output</div>
+                                <div class="term-body">1<br>2<br>3<br><br><span style="color: #10b981;">[Success] All test cases passed!</span></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 1차: ExplainBack -->
+                    <div class="learning-block type-explain">
+                        <div class="block-source"><i class="ph-fill ph-robot"></i> AI 생성</div>
+                        <h3 class="block-title">파인만 역질문 (explainBack)</h3>
+                        <div class="block-body">
+                            <div class="explain-prompt">초등학교 5학년 동생에게 '변수 선언'과 '초기화'를 비유를 들어 설명해 보세요.</div>
+                            <textarea class="explain-textarea" id="explainText" placeholder="예: 변수 선언은 빈 상자를 준비하는 거고..."></textarea>
+                            <div class="explain-action">
+                                <button class="btn-primary" onclick="submitExplain()">제출</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+
+                <!-- ③ 인터랙티브 섹션 -->
+                <section id="sec-interactive" class="catalog-section">
+                    <div class="catalog-section-header">
+                        <h2 class="catalog-section-title">③ 인터랙티브 컴포넌트</h2>
+                    </div>
+
+                    <!-- 2차: StepReveal -->
+                    <div class="learning-block">
+                        <h3 class="block-title">단계별 풀이 (stepReveal)</h3>
+                        <div class="block-body">
+                            <div class="step-item"><div class="step-content revealed"><strong>Step 1:</strong> 변수 `a`와 `b`를 선언합니다.</div></div>
+                            <div class="step-item">
+                                <div class="step-content" id="step2"><strong>Step 2:</strong> `a = 10;`, `b = 20;` 으로 초기화합니다.</div>
+                                <div class="step-skeleton" id="skel2"></div>
+                            </div>
+                            <button class="btn-primary step-reveal-btn" id="btnReveal" onclick="revealNextStep()">다음 단계 보기 <i class="ph ph-caret-down"></i></button>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Slider Explore -->
+                    <div class="learning-block">
+                        <h3 class="block-title">변수 슬라이더 (sliderExplore)</h3>
+                        <div class="block-body">
+                            <div class="slider-formula">y = 2 * <span class="slider-val-highlight" id="sliderVal">5</span></div>
+                            <div class="slider-control-wrap">
+                                <div class="slider-label"><span>x 값 조절</span><span id="sliderDisplay">5</span></div>
+                                <input type="range" min="1" max="10" value="5" class="slider-input" oninput="updateSlider(this.value)">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Comparison Slider -->
+                    <div class="learning-block">
+                        <h3 class="block-title">Before & After (comparisonSlider)</h3>
+                        <div class="block-body">
+                            <div class="comparison-wrap">
+                                <!-- Base Image (After) -->
+                                <img src="https://images.unsplash.com/photo-1555066931-4365d14bab8c?q=80&w=800&auto=format&fit=crop" class="comp-img" alt="After">
+                                <div class="comp-label after">After</div>
+                                
+                                <!-- Overlay Image (Before) -->
+                                <div class="comp-overlay" id="compOverlay">
+                                    <img src="https://images.unsplash.com/photo-1542831371-29b0f74f9713?q=80&w=800&auto=format&fit=crop" alt="Before">
+                                </div>
+                                <div class="comp-label before">Before</div>
+                                
+                                <!-- Invisible slider for drag -->
+                                <input type="range" min="0" max="100" value="50" class="comp-slider" oninput="updateComparison(this.value)">
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Tabbed Explain -->
+                    <div class="learning-block">
+                        <h3 class="block-title">관점별 설명 탭 (tabbedExplain)</h3>
+                        <div class="block-body">
+                            <div class="tabbed-tabs">
+                                <button class="tab-btn active" onclick="switchTabbed(this, 'tab1')">초보자용</button>
+                                <button class="tab-btn" onclick="switchTabbed(this, 'tab2')">전공자용</button>
+                                <button class="tab-btn" onclick="switchTabbed(this, 'tab3')">실무자용</button>
+                            </div>
+                            <div class="tabbed-content active" id="tab1">변수 선언은 이사갈 집에 빈 방을 하나 만드는 것과 같아요!</div>
+                            <div class="tabbed-content" id="tab2">변수 선언은 운영체제로부터 메모리 공간(RAM)을 할당받아 심볼릭 네임과 매핑하는 과정입니다.</div>
+                            <div class="tabbed-content" id="tab3">현업에서는 변수 선언 시 명확한 네이밍 컨벤션(CamelCase 등)을 지키는 것이 유지보수에 핵심입니다.</div>
+                        </div>
+                    </div>
+
+                </section>
+
+                <!-- ⓸ 흐름 제어 섹션 -->
+                <section id="sec-flow" class="catalog-section">
+                    <div class="catalog-section-header">
+                        <h2 class="catalog-section-title">⓸ 흐름 제어</h2>
+                    </div>
+
+                    <!-- 2차: Section Header -->
+                    <div class="learning-block type-section-header">
+                        <div class="section-header-title">2-2. 메모리의 이해</div>
+                        <div class="section-progress-wrap">
+                            <div class="section-progress-bar"><div class="section-progress-fill" style="width: 75%;"></div></div>
+                            <div class="section-progress-text">챕터 진행률 75%</div>
+                        </div>
+                    </div>
+
+                    <!-- 3차: Confidence Check -->
+                    <div class="learning-block">
+                        <h3 class="block-title">사전 지식 체크 (confidenceCheck)</h3>
+                        <p style="color: var(--text-secondary);">이 개념을 이미 알고 계신가요?</p>
+                        <div class="confidence-box">
+                            <button class="conf-btn conf-new" onclick="selectConf(this)"><i class="ph-fill ph-x-circle"></i>처음 봐요</button>
+                            <button class="conf-btn conf-mid" onclick="selectConf(this)"><i class="ph-fill ph-question"></i>들어만 봤어요</button>
+                            <button class="conf-btn conf-skip" onclick="selectConf(this)"><i class="ph-fill ph-check-circle"></i>완벽히 알아요 (스킵)</button>
+                        </div>
+                    </div>
+
+                    <!-- 1차: ReviewGate 버튼 (클릭 시 모달) -->
+                    <div class="learning-block">
+                        <h3 class="block-title">망각곡선 복습 팝업 (reviewGate)</h3>
+                        <p style="margin-bottom: 1rem; color: var(--text-secondary);">다음 챕터로 넘어가기 전, 복습 주기가 도래한 개념을 알려주는 모달 창입니다.</p>
+                        <button class="btn-primary" onclick="document.getElementById('reviewModal').style.display='flex'">팝업 데모 열기</button>
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+    <!-- ReviewGate Modal -->
+    <div class="review-gate-overlay" id="reviewModal" style="display: none;">
+        <div class="review-gate-modal">
+            <i class="ph-fill ph-brain review-gate-icon"></i>
+            <h2 class="review-gate-title">잠깐, 복습할 시간이에요!</h2>
+            <p class="review-gate-desc">다음 강의로 넘어가기 전,<br>망각 곡선에 따라 잊어버리기 쉬운 3가지 개념을 짚고 넘어갑니다.</p>
+            <div class="review-items">
+                <div class="review-item"><i class="ph-fill ph-sparkle"></i> 변수의 선언 (어제 학습)</div>
+                <div class="review-item"><i class="ph-fill ph-sparkle"></i> Garbage Value (어제 학습)</div>
+                <div class="review-item"><i class="ph-fill ph-sparkle"></i> 데이터 타입 int (3일 전 학습)</div>
+            </div>
+            <button class="btn-primary" style="width: 100%; justify-content: center;" onclick="document.getElementById('reviewModal').style.display='none'">복습 퀴즈 시작하기</button>
+            <button class="btn-primary" style="width: 100%; justify-content: center; background: transparent; color: var(--text-tertiary); box-shadow: none; margin-top: 0.5rem;" onclick="document.getElementById('reviewModal').style.display='none'">다음에 할게요</button>
+        </div>
+    </div>
+
+    <!-- 기능 스크립트 -->
+    <script>
+        // 사이드바 카테고리 탭
+        function switchSection(sectionId, el) {
+            document.querySelectorAll('.catalog-nav-item').forEach(nav => nav.classList.remove('active'));
+            document.querySelectorAll('.catalog-section').forEach(sec => sec.classList.remove('active'));
+            el.classList.add('active');
+            document.getElementById('sec-' + sectionId).classList.add('active');
+        }
+
+        // Cloze 로직
+        document.querySelectorAll('.cloze-blank').forEach(input => {
+            input.addEventListener('input', (e) => {
+                const val = e.target.value.trim();
+                const ans = e.target.getAttribute('data-answer');
+                if (val === ans) { e.target.className = 'cloze-blank correct'; }
+                else if (val.length >= ans.length) { e.target.className = 'cloze-blank incorrect'; }
+                else { e.target.className = 'cloze-blank'; }
+            });
+        });
+
+        // MCQ
+        let mcqAns = false;
+        function selectMcq(el, isCorrect) {
+            if(mcqAns) return;
+            el.parentElement.querySelectorAll('.mcq-option').forEach(o => o.className = 'mcq-option');
+            el.className = isCorrect ? 'mcq-option correct' : 'mcq-option incorrect';
+            if(isCorrect) mcqAns = true;
+        }
+
+        // ShortAnswer
+        function checkShortAnswer(el) {
+            const val = el.value.trim().toLowerCase();
+            if (val === 'garbage') { el.className = 'short-input correct'; }
+            else if (val.length >= 7) { el.className = 'short-input incorrect'; }
+            else { el.className = 'short-input'; }
+        }
+
+        // ExplainBack
+        let explainAnswered = false;
+        function submitExplain() {
+            if (explainAnswered) return;
+            if (document.getElementById('explainText').value.trim().length > 5) {
+                alert('훌륭한 설명입니다!');
+                document.getElementById('explainText').disabled = true;
+                explainAnswered = true;
+            } else { alert('최소 5글자 이상 작성해주세요.'); }
+        }
+
+        // StepReveal
+        function revealNextStep() {
+            document.getElementById('skel2').style.display = 'none';
+            document.getElementById('step2').classList.add('revealed');
+            document.getElementById('btnReveal').style.display = 'none';
+        }
+
+        // True/False
+        let tfAns = false;
+        function selectTf(el, isCorrect) {
+            if(tfAns) return;
+            el.parentElement.querySelectorAll('.tf-btn').forEach(b => {
+                b.classList.remove('selected', 'correct', 'incorrect');
+            });
+            el.classList.add('selected');
+            el.classList.add(isCorrect ? 'correct' : 'incorrect');
+            if(isCorrect) tfAns = true;
+        }
+
+        // Slider Explore
+        function updateSlider(val) {
+            document.getElementById('sliderVal').innerText = val;
+            document.getElementById('sliderDisplay').innerText = val;
+        }
+
+        // Comparison Slider
+        function updateComparison(val) {
+            document.getElementById('compOverlay').style.width = val + '%';
+        }
+
+        // Tabbed Explain
+        function switchTabbed(el, targetId) {
+            const wrap = el.closest('.learning-block');
+            wrap.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            wrap.querySelectorAll('.tabbed-content').forEach(c => c.classList.remove('active'));
+            el.classList.add('active');
+            wrap.querySelector('#' + targetId).classList.add('active');
+        }
+
+        // Confidence Check
+        function selectConf(el) {
+            const wrap = el.closest('.confidence-box');
+            wrap.querySelectorAll('.conf-btn').forEach(b => b.style.opacity = '0.5');
+            el.style.opacity = '1';
+            el.style.borderColor = 'var(--accent-color)';
+            alert('AI: 당신의 수준에 맞춰 다음 강의 난이도를 조절합니다.');
+        }
+
+        // Run Code Mockup
+        function runMockCode() {
+            document.getElementById('terminalOut').style.display = 'block';
+            alert('AI: 코드를 분석하고 테스트 케이스를 통과했습니다!');
+        }
+
+        // KaTeX 초기화 (DOM 로드 후 자동 렌더링)
+        document.addEventListener("DOMContentLoaded", function() {
+            renderMathInElement(document.body, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\(', right: '\\)', display: false},
+                    {left: '\\[', right: '\\]', display: true}
+                ],
+                throwOnError : false
+            });
+        });
+
+        // Mermaid 초기화
+        mermaid.initialize({ startOnLoad: true, theme: 'neutral', securityLevel: 'loose' });
+    </script>
+</body>
+</html>

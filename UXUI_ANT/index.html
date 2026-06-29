@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetaLearn - 배움의 진화</title>
+    <!-- 구글 폰트: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- 아이콘 -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    
+    <!-- 좌상단 고정 로고 -->
+    <header class="global-header">
+        <div class="global-header-inner">
+            <a href="index.html" class="global-logo">
+                <i class="ph ph-hexagon"></i>
+                <span>MetaLearn</span>
+            </a>
+        </div>
+    </header>
+
+    <div class="landing-container">
+        
+        <!-- PAGE 1: 히어로 섹션 (왼쪽 텍스트 / 오른쪽 이미지) -->
+        <section class="scroll-section hero-section">
+            <div class="split-layout">
+                <!-- 좌측: 텍스트 및 CTA -->
+                <div class="split-text">
+                    <h1 class="split-title" style="color: #4ade80;">재밌고 효과적인<br>맞춤형 학습</h1>
+                    <p class="split-subtitle">
+                        MetaLearn과 함께하는 학습은 재미있을 뿐 아니라, <strong>그 효과도 입증되었어요!</strong><br>
+                        나의 학습 메타인지를 파악하고 실력을 레벨업 해보세요.
+                    </p>
+                    
+                    <div class="cta-group">
+                        <a href="onboarding.html" class="btn-primary btn-large cta-start-btn" style="width: 100%; justify-content: center; margin-bottom: 0.75rem;">지금 시작하기</a>
+                        <p class="cta-hint">간단한 설문을 통해 맞춤형 학습 플랜을 추천받으세요.</p>
+                    </div>
+                </div>
+
+                <!-- 우측: 인터랙티브 체험 데모 -->
+                <div class="split-visual">
+                    <div class="interactive-demo">
+                        <div class="demo-header">
+                            <span class="demo-title">기본 체험해보기</span>
+                            <div class="demo-tabs">
+                                <button class="demo-tab active" data-index="0">1. 개념</button>
+                                <i class="ph ph-caret-right text-muted"></i>
+                                <button class="demo-tab" data-index="1">2. 퀴즈</button>
+                            </div>
+                        </div>
+                        
+                        <div class="demo-viewport">
+                            <div class="demo-slider">
+                                <!-- 첫번째 패널: 학습 내용 -->
+                                <div class="demo-panel">
+                                    <div class="panel-inner">
+                                        <div class="panel-badge">개념 학습</div>
+                                        <h4 class="panel-heading">메타인지(Metacognition)란?</h4>
+                                        <p class="panel-text">
+                                            메타인지는 <strong>'자신의 생각에 대해 생각하는 능력'</strong>입니다.<br><br>
+                                            단순히 지식을 아는 것을 넘어, 내가 <em>'무엇을 알고 있고 무엇을 모르는지'</em> 객관적으로 파악함으로써 가장 효율적인 학습 전략을 세울 수 있게 해줍니다.
+                                        </p>
+                                        <div class="panel-action">
+                                            <button class="btn-primary btn-slide-next">
+                                                개념을 이해했어요 <i class="ph ph-arrow-right"></i>
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                                
+                                <!-- 두번째 패널: 문제 풀기 -->
+                                <div class="demo-panel">
+                                    <div class="panel-inner bg-light">
+                                        <div class="panel-badge" style="background-color: rgba(74, 222, 128, 0.2); color: #166534;">실전 테스트</div>
+                                        <h4 class="panel-heading">다음 중 메타인지가 잘 발휘된 상황은 무엇일까요?</h4>
+                                        
+                                        <div class="quiz-options">
+                                            <button class="quiz-option" data-correct="false">
+                                                <span class="option-letter">A</span>
+                                                <span class="option-text">이해하지 못한 공식을 무작정 10번 반복해서 외웠다.</span>
+                                            </button>
+                                            <button class="quiz-option" data-correct="true">
+                                                <span class="option-letter">B</span>
+                                                <span class="option-text">모의고사를 푼 뒤, 틀린 문제의 원인을 파악하고 보완 계획을 세웠다.</span>
+                                            </button>
+                                            <button class="quiz-option" data-correct="false">
+                                                <span class="option-letter">C</span>
+                                                <span class="option-text">친구보다 점수가 높게 나와서 기분이 좋아졌다.</span>
+                                            </button>
+                                        </div>
+                                        
+                                        <div class="quiz-feedback hidden">
+                                            <div class="feedback-text"></div>
+                                            <button class="btn-text btn-slide-prev mt-2">다시 학습하기</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="scroll-indicator">
+                <i class="ph ph-caret-down"></i>
+            </div>
+        </section>
+
+        <!-- PAGE 2: 메타인지 분석 (왼쪽 글씨 / 오른쪽 이미지) -->
+        <section class="scroll-section">
+            <div class="split-layout">
+                <!-- 좌측: 텍스트 -->
+                <div class="split-text">
+                    <h2 class="split-title" style="color: #4ade80; font-size: 3rem;">완벽한<br>메타인지 분석</h2>
+                    <p class="split-subtitle">
+                        내가 무엇을 알고 모르는지 정확히 진단합니다.<br>
+                        취약점을 집중 공략하여 불필요한 반복 학습 시간을 획기적으로 절약하세요.
+                    </p>
+                </div>
+                <!-- 우측: 비주얼/이미지 -->
+                <div class="split-visual">
+                    <div class="visual-box">
+                        <i class="ph ph-brain" style="font-size: 5rem; color: #4ade80;"></i>
+                        <div class="visual-badge">학습 효율 200% 증가</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 3: 목표 기반 학습 설계 (왼쪽 이미지 / 오른쪽 글씨) -->
+        <section class="scroll-section">
+            <div class="split-layout reverse">
+                <!-- 좌측: 비주얼/이미지 -->
+                <div class="split-visual">
+                    <div class="visual-box">
+                        <i class="ph ph-target" style="font-size: 5rem; color: #4ade80;"></i>
+                        <div class="visual-badge">목표 달성률 87% 상승</div>
+                    </div>
+                </div>
+                <!-- 우측: 텍스트 -->
+                <div class="split-text">
+                    <h2 class="split-title" style="color: #4ade80; font-size: 3rem;">목표 기반<br>학습 설계</h2>
+                    <p class="split-subtitle">
+                        명확한 마일스톤을 설정하고 당신만의 최적화된 학습 경로를 생성하세요.<br>
+                        학습 진도율과 달성률을 대시보드에서 한눈에 파악할 수 있습니다.
+                    </p>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 4: 꾸준한 학습 동기 자극 (왼쪽 글씨 / 오른쪽 이미지) -->
+        <section class="scroll-section">
+            <div class="split-layout">
+                <!-- 좌측: 텍스트 -->
+                <div class="split-text">
+                    <h2 class="split-title" style="color: #4ade80; font-size: 3rem;">꾸준한 학습<br>동기 자극</h2>
+                    <p class="split-subtitle">
+                        게임화된 학습 기능, 재미있는 도전 과제, 그리고 친절한 AI 어시스턴트의 적시 알림을 통해 매일매일 자연스럽게 학습 습관을 기를 수 있습니다.
+                    </p>
+                </div>
+                <!-- 우측: 비주얼/이미지 -->
+                <div class="split-visual">
+                    <div class="visual-box">
+                        <i class="ph ph-trend-up" style="font-size: 5rem; color: #4ade80;"></i>
+                        <div class="visual-badge">14일 연속 학습 달성</div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- PAGE 5: 프리미엄 CTA 섹션 (네이비 배경) -->
+        <section class="scroll-section premium-section">
+            <div class="premium-content">
+                <h2 class="premium-title">
+                    POWER UP WITH<br>
+                    <span class="gradient-text">METALEARN PRO</span>
+                </h2>
+                <a href="onboarding.html" class="btn-premium">1주 무료 체험하기</a>
+            </div>
+            
+            <footer class="minimal-footer">
+                <p>© 2026 MetaLearn. All rights reserved. &nbsp;|&nbsp; <a href="#">이용약관</a> &nbsp;|&nbsp; <a href="#">개인정보처리방침</a></p>
+            </footer>
+        </section>
+
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
