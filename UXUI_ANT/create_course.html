@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetaLearn - 새로운 학습 시작하기</title>
+    <!-- 구글 폰트: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- 아이콘 -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="wizard-page">
+
+    <header class="wizard-header">
+        <a href="dashboard.html" class="back-btn">
+            <i class="ph ph-arrow-left"></i> 대시보드로 돌아가기
+        </a>
+    </header>
+
+    <main class="wizard-main">
+        
+        <!-- Step Indicator -->
+        <div class="step-indicator" id="stepIndicator">
+            <div class="step-item active" id="indicator1">1. 자료 업로드</div>
+            <div class="step-item" id="indicator2">2. 목표 설정</div>
+            <div class="step-item" id="indicator3">3. 수준 진단</div>
+        </div>
+
+        <!-- Step 1: 파일 업로드 -->
+        <div id="step1" class="wizard-step active">
+            <h2>학습할 자료를 올려주세요</h2>
+            <p class="desc">PDF, DOCX 문서나 관련 자료를 업로드하면 AI가 분석하여 커리큘럼을 짜드립니다.</p>
+            
+            <div class="upload-zone" id="uploadZone">
+                <i class="ph ph-upload-simple"></i>
+                <span>클릭하거나 파일을 여기로 드래그하세요</span>
+                <span style="font-size: 0.8rem; color: #666;">지원 포맷: PDF, Word, PPT (최대 50MB)</span>
+            </div>
+            
+            <!-- 파일 선택 시 가상의 파일명 표시 -->
+            <div id="fileInfo" style="display:none; margin-top:1rem; padding:1rem; background:rgba(255,255,255,0.05); border-radius:8px; display:flex; align-items:center; gap:1rem;">
+                <i class="ph ph-file-pdf" style="font-size:2rem; color:#f87171;"></i>
+                <div>
+                    <div style="font-weight:600; color:#fff;" id="fileName">example_document.pdf</div>
+                    <div style="font-size:0.8rem; color:#888;">2.4 MB</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 2: 목표 설정 -->
+        <div id="step2" class="wizard-step">
+            <h2>이 학습의 목표는 무엇인가요?</h2>
+            <p class="desc">AI가 목표에 맞춰 난이도와 문제 유형을 최적화합니다.</p>
+            
+            <div class="form-group">
+                <label>최종 달성 목표</label>
+                <textarea placeholder="예: 한 달 뒤에 있을 파이썬 코딩 테스트를 통과하고 싶어요."></textarea>
+            </div>
+            
+            <div class="form-group" style="display:flex; gap:2rem;">
+                <div style="flex:1;">
+                    <label>희망 학습 기간</label>
+                    <select>
+                        <option>1주일 (집중 코스)</option>
+                        <option selected>1개월 (표준 코스)</option>
+                        <option>3개월 (여유 코스)</option>
+                    </select>
+                </div>
+                <div style="flex:1;">
+                    <label>주당 학습 시간</label>
+                    <select>
+                        <option>주 2~3시간</option>
+                        <option selected>주 5~6시간</option>
+                        <option>주 10시간 이상</option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Step 3: 수준 진단 퀴즈 -->
+        <div id="step3" class="wizard-step">
+            <h2>진단 테스트</h2>
+            <p class="desc">현재 지식 수준을 파악하기 위해 AI가 문서를 바탕으로 추출한 문제들입니다. 편하게 풀어주세요!</p>
+            
+            <div class="diagnostic-question">
+                <h4>Q1. 다음 중 파이썬에서 변수를 선언하는 올바른 방법은?</h4>
+                <label class="quiz-option">
+                    <input type="radio" name="q1" value="1">
+                    <div class="quiz-circle"><i class="ph ph-circle"></i></div>
+                    <div>
+                        <div class="opt-title">var x = 10;</div>
+                    </div>
+                </label>
+                <label class="quiz-option">
+                    <input type="radio" name="q1" value="2">
+                    <div class="quiz-circle"><i class="ph ph-circle"></i></div>
+                    <div>
+                        <div class="opt-title">x = 10</div>
+                    </div>
+                </label>
+                <label class="quiz-option">
+                    <input type="radio" name="q1" value="3">
+                    <div class="quiz-circle"><i class="ph ph-circle"></i></div>
+                    <div>
+                        <div class="opt-title">int x = 10;</div>
+                    </div>
+                </label>
+            </div>
+
+            <div class="diagnostic-question">
+                <h4>Q2. 파이썬의 기본 자료형이 아닌 것은?</h4>
+                <label class="quiz-option">
+                    <input type="radio" name="q2" value="1">
+                    <div class="quiz-circle"><i class="ph ph-circle"></i></div>
+                    <div>
+                        <div class="opt-title">List (리스트)</div>
+                    </div>
+                </label>
+                <label class="quiz-option">
+                    <input type="radio" name="q2" value="2">
+                    <div class="quiz-circle"><i class="ph ph-circle"></i></div>
+                    <div>
+                        <div class="opt-title">Dictionary (딕셔너리)</div>
+                    </div>
+                </label>
+                <label class="quiz-option">
+                    <input type="radio" name="q2" value="3">
+                    <div class="quiz-circle"><i class="ph ph-circle"></i></div>
+                    <div>
+                        <div class="opt-title">Pointer (포인터)</div>
+                    </div>
+                </label>
+            </div>
+            
+            <div style="text-align: right; color: #888; font-size: 0.9rem;">
+                * 모르는 문제는 찍지 말고 비워두셔도 좋습니다.
+            </div>
+        </div>
+
+        <!-- Step 4: Loading -->
+        <div id="step4" class="wizard-step loading-scene">
+            <div class="spinner"></div>
+            <div class="loading-text" id="loadingText">문서를 분석하는 중입니다...</div>
+            <div class="loading-subtext">최대 1분 정도 소요될 수 있습니다.</div>
+        </div>
+
+    </main>
+
+    <footer class="wizard-footer" id="wizardFooter">
+        <div class="wizard-footer-inner">
+            <button class="btn-back" id="btnPrev" disabled>이전</button>
+            <button class="btn-primary" id="btnNext">다음</button>
+        </div>
+    </footer>
+
+    <script>
+        let currentStep = 1;
+        const totalSteps = 3; // 4는 로딩
+
+        const btnPrev = document.getElementById('btnPrev');
+        const btnNext = document.getElementById('btnNext');
+        const wizardFooter = document.getElementById('wizardFooter');
+        
+        // 간단한 업로드 인터랙션 데모
+        const uploadZone = document.getElementById('uploadZone');
+        const fileInfo = document.getElementById('fileInfo');
+        let uploadInProgress = false;
+        
+        uploadZone.addEventListener('click', () => {
+            if(uploadInProgress) return;
+            uploadInProgress = true;
+            
+            // 파일 업로드 시뮬레이션 (업로드 존이 파일 아이콘으로 변함)
+            uploadZone.style.display = 'none';
+            fileInfo.style.display = 'flex';
+            fileInfo.style.opacity = '0';
+            
+            // 로딩을 없애고 바로 파일이 올라간 것으로 표현
+            setTimeout(() => {
+                fileInfo.style.transition = 'opacity 0.3s';
+                fileInfo.style.opacity = '1';
+                
+                // 업로드 완료 시 자동으로 0.6초 뒤 다음 스텝(목표 설정)으로 넘어갑니다.
+                setTimeout(() => {
+                    if(currentStep === 1) {
+                        currentStep++;
+                        updateWizard();
+                    }
+                }, 600);
+                
+            }, 300);
+        });
+
+        // 퀴즈 옵션 선택 토글 데모
+        const diagnosticQuestions = document.querySelectorAll('.diagnostic-question');
+        diagnosticQuestions.forEach(q => {
+            const options = q.querySelectorAll('.quiz-option');
+            options.forEach(opt => {
+                opt.addEventListener('click', () => {
+                    options.forEach(o => {
+                        o.classList.remove('selected');
+                        o.querySelector('.quiz-circle').innerHTML = '<i class="ph ph-circle"></i>';
+                    });
+                    opt.classList.add('selected');
+                    opt.querySelector('.quiz-circle').innerHTML = '<i class="ph ph-check-circle" style="color:var(--accent-color)"></i>';
+                });
+            });
+        });
+
+        // 네비게이션
+        btnNext.addEventListener('click', () => {
+            if(currentStep < totalSteps) {
+                currentStep++;
+                updateWizard();
+            } else if (currentStep === totalSteps) {
+                // 제출 (로딩 시작)
+                startLoading();
+            }
+        });
+
+        btnPrev.addEventListener('click', () => {
+            if(currentStep > 1) {
+                currentStep--;
+                updateWizard();
+            }
+        });
+
+        function updateWizard() {
+            // 버튼 상태
+            btnPrev.disabled = currentStep === 1;
+            btnNext.innerText = currentStep === totalSteps ? '커리큘럼 생성하기' : '다음';
+
+            // 스텝 UI 갱신
+            for(let i=1; i<=totalSteps; i++) {
+                document.getElementById('step' + i).classList.remove('active');
+                
+                const indicator = document.getElementById('indicator' + i);
+                indicator.classList.remove('active', 'completed');
+                
+                if (i < currentStep) {
+                    indicator.classList.add('completed');
+                } else if (i === currentStep) {
+                    indicator.classList.add('active');
+                }
+            }
+            
+            // 현재 스텝 활성화
+            document.getElementById('step' + currentStep).classList.add('active');
+        }
+
+        function startLoading() {
+            // 헤더, 인디케이터, 푸터 숨김
+            document.querySelector('.wizard-header').style.display = 'none';
+            document.getElementById('stepIndicator').style.display = 'none';
+            wizardFooter.style.display = 'none';
+            
+            // 기존 스텝 닫기
+            document.getElementById('step' + currentStep).classList.remove('active');
+            
+            // 로딩 화면 열기
+            const step4 = document.getElementById('step4');
+            step4.classList.add('active');
+
+            // 로딩 시뮬레이션
+            const loadingText = document.getElementById('loadingText');
+            
+            setTimeout(() => {
+                loadingText.innerText = "사용자 목표와 수준을 매핑하는 중...";
+            }, 2000);
+
+            setTimeout(() => {
+                loadingText.innerText = "맞춤형 코스 생성이 거의 완료되었습니다...";
+            }, 4000);
+
+            setTimeout(() => {
+                // 성공 시 대시보드로 이동
+                window.location.href = "dashboard.html";
+            }, 6000);
+        }
+
+    </script>
+</body>
+</html>

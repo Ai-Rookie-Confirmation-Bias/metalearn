@@ -1100,3 +1100,287 @@ body.focus-mode .sidebar, body.focus-mode .ai-panel { display: none; }
 }
 .focus-nav-2d button:hover { background: var(--accent-color); transform: scale(1.1); }
 .focus-nav-2d button:disabled { opacity: 0.3; cursor: not-allowed; transform: none; background: rgba(255,255,255,0.1); }
+
+/* ====================================================
+   Create Course Wizard Page Styles
+   ==================================================== */
+.wizard-page {
+    background: #f8fafc; /* 라이트 테마 배경 */
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    color: #1f2937; /* 다크 텍스트 */
+}
+.wizard-header {
+    display: flex;
+    align-items: center;
+    padding: 1.5rem 2rem;
+    border-bottom: 1px solid #e5e7eb;
+    background: #fff;
+}
+.wizard-header .back-btn {
+    color: #6b7280;
+    text-decoration: none;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 1rem;
+    transition: color 0.2s;
+    font-weight: 500;
+}
+.wizard-header .back-btn:hover { color: #111827; }
+
+.wizard-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: flex-start;
+    padding: 3rem 2rem;
+    max-width: 800px;
+    margin: 0 auto;
+    width: 100%;
+}
+
+/* Step Indicator */
+.step-indicator {
+    display: flex;
+    width: 100%;
+    margin-bottom: 3rem;
+    position: relative;
+}
+.step-item {
+    flex: 1;
+    text-align: center;
+    color: #9ca3af;
+    font-weight: 600;
+    font-size: 0.95rem;
+    position: relative;
+    padding-bottom: 1rem;
+    border-bottom: 3px solid #e5e7eb;
+    transition: all 0.3s;
+}
+.step-item.active {
+    color: var(--accent-color);
+    border-bottom-color: var(--accent-color);
+}
+.step-item.completed {
+    color: #111827;
+    border-bottom-color: #9ca3af;
+}
+
+/* Step Content Areas */
+.wizard-step {
+    width: 100%;
+    display: none;
+    animation: fadeIn 0.4s ease-out forwards;
+    background: #fff;
+    padding: 2.5rem;
+    border-radius: 16px;
+    box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+}
+.wizard-step.active {
+    display: block;
+}
+
+.wizard-step h2 {
+    font-size: 1.8rem;
+    margin-bottom: 0.5rem;
+    font-weight: 700;
+    color: #111827;
+}
+.wizard-step p.desc {
+    color: #6b7280;
+    margin-bottom: 2rem;
+    font-size: 1.05rem;
+}
+
+/* Upload Zone */
+.upload-zone {
+    width: 100%;
+    height: 250px;
+    border: 2px dashed #d1d5db;
+    border-radius: 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #f9fafb;
+    cursor: pointer;
+    transition: all 0.3s;
+    gap: 1rem;
+}
+.upload-zone:hover, .upload-zone.dragover {
+    border-color: var(--accent-color);
+    background: rgba(59, 130, 246, 0.05);
+}
+.upload-zone i {
+    font-size: 3rem;
+    color: #9ca3af;
+}
+.upload-zone span {
+    color: #6b7280;
+    font-size: 1.1rem;
+    font-weight: 500;
+}
+
+/* Form Styles */
+.form-group {
+    margin-bottom: 2rem;
+}
+.form-group label {
+    display: block;
+    margin-bottom: 0.5rem;
+    color: #374151;
+    font-weight: 600;
+}
+.form-group input[type="text"],
+.form-group textarea,
+.form-group select {
+    width: 100%;
+    padding: 1rem;
+    background: #fff;
+    border: 1px solid #d1d5db;
+    border-radius: 8px;
+    color: #111827;
+    font-size: 1rem;
+    font-family: inherit;
+    transition: border-color 0.2s, box-shadow 0.2s;
+}
+.form-group input:focus, .form-group textarea:focus, .form-group select:focus {
+    border-color: var(--accent-color);
+    outline: none;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+.form-group textarea {
+    resize: vertical;
+    min-height: 100px;
+}
+
+/* Quiz Option Card */
+.quiz-option {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 1.2rem 1.5rem;
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    margin-bottom: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.quiz-option:hover {
+    background: #f9fafb;
+    border-color: #d1d5db;
+}
+.quiz-option.selected {
+    border-color: var(--accent-color);
+    background: rgba(59, 130, 246, 0.05);
+    box-shadow: 0 2px 4px rgba(59, 130, 246, 0.1);
+}
+.quiz-option input[type="radio"] {
+    display: none;
+}
+.quiz-option .opt-title {
+    font-weight: 600;
+    color: #111827;
+}
+.quiz-option .opt-desc {
+    font-size: 0.85rem;
+    color: #6b7280;
+    margin-top: 0.2rem;
+}
+
+/* 진단 퀴즈 문항 스타일 */
+.diagnostic-question {
+    margin-bottom: 2rem;
+    padding-bottom: 2rem;
+    border-bottom: 1px solid #e5e7eb;
+}
+.diagnostic-question:last-child {
+    border-bottom: none;
+    margin-bottom: 0;
+    padding-bottom: 0;
+}
+.diagnostic-question h4 {
+    font-size: 1.1rem;
+    color: #1f2937;
+    margin-bottom: 1rem;
+    font-weight: 600;
+}
+
+/* Loading Scene */
+.wizard-step.loading-scene {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 40vh;
+    text-align: center;
+    background: transparent;
+    box-shadow: none;
+}
+.wizard-step.loading-scene.active {
+    display: flex;
+}
+.spinner {
+    width: 60px;
+    height: 60px;
+    border: 4px solid #e5e7eb;
+    border-top-color: var(--accent-color);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-bottom: 2rem;
+}
+@keyframes spin { 100% { transform: rotate(360deg); } }
+
+.loading-text {
+    font-size: 1.5rem;
+    font-weight: 700;
+    margin-bottom: 0.5rem;
+    color: #111827;
+}
+.loading-subtext {
+    color: #6b7280;
+}
+
+/* Footer Actions */
+.wizard-footer {
+    width: 100%;
+    padding: 1.5rem 2rem;
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid #e5e7eb;
+    background: #fff;
+}
+.wizard-footer-inner {
+    width: 100%;
+    max-width: 800px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: space-between;
+}
+.wizard-footer button {
+    padding: 0.8rem 2.5rem;
+    border-radius: 8px;
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+.btn-back {
+    background: transparent;
+    color: #6b7280;
+    border: 1px solid #d1d5db;
+}
+.btn-back:hover:not(:disabled) {
+    background: #f3f4f6;
+    color: #111827;
+}
+.btn-back:disabled {
+    opacity: 0;
+    pointer-events: none;
+}
+
+
