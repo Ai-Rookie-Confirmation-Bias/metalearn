@@ -9,6 +9,8 @@ from app.core.database import Base
 
 # 모델 등록(메타데이터 채우기). 새 도메인 추가 시 여기에 import.
 from app.features.learning import models as _learning_models  # noqa: F401
+from app.features.materials import models as _materials_models  # noqa: F401
+from app.features.diagnostic import models as _diagnostic_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
