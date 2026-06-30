@@ -18,7 +18,17 @@ document.addEventListener('DOMContentLoaded', () => {
         
         // Transform slider (0% or -50%)
         slider.style.transform = `translateX(-${index * 50}%)`;
+
+        // Update height smoothly
+        const viewport = document.querySelector('.demo-viewport');
+        const panels = document.querySelectorAll('.demo-panel');
+        if (viewport && panels[index]) {
+            viewport.style.height = `${panels[index].scrollHeight}px`;
+        }
     };
+
+    // Initial height setup
+    setTimeout(() => { slideTo(0); }, 50); // slight delay to ensure DOM is fully rendered for height calculation
 
     // Click on Tabs
     tabs.forEach(tab => {
@@ -66,6 +76,15 @@ document.addEventListener('DOMContentLoaded', () => {
                 feedbackBox.classList.remove('hidden', 'success');
                 feedbackBox.classList.add('error');
                 feedbackText.innerHTML = "💡 아쉽습니다. 메타인지는 '자신이 모른다는 사실을 인지'하고 보완하는 과정과 관련이 깊습니다.";
+            }
+
+            // 피드백 박스가 나타나서 높이가 길어졌으므로, 뷰포트 높이를 다시 계산해서 부드럽게 늘려줌
+            const viewport = document.querySelector('.demo-viewport');
+            const quizPanel = document.querySelectorAll('.demo-panel')[1];
+            if (viewport && quizPanel) {
+                setTimeout(() => {
+                    viewport.style.height = `${quizPanel.scrollHeight}px`;
+                }, 10);
             }
         });
     });

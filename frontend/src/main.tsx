@@ -5,6 +5,7 @@ import { RouterProvider } from "react-router-dom";
 
 import { queryClient } from "@/app/queryClient";
 import { router } from "@/app/routes";
+import "./index.css";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
