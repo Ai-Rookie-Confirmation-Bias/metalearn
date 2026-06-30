@@ -1,5 +1,5 @@
 import { Outlet, Link } from "react-router-dom";
-import { Hexagon } from "@phosphor-icons/react";
+import { HexagonIcon } from "@phosphor-icons/react";
 
 // 앱 셸: 모든 페이지 공통 글로벌 헤더(로고) + 페이지 콘텐츠 슬롯
 export default function App() {
@@ -11,7 +11,7 @@ export default function App() {
             to="/"
             className="inline-flex items-center gap-2 text-2xl font-extrabold tracking-tight text-primary pointer-events-auto [text-shadow:0_2px_4px_rgba(255,255,255,0.8)]"
           >
-            <Hexagon weight="fill" className="text-[2rem] text-accent" />
+            <HexagonIcon weight="fill" className="text-[2rem] text-accent" />
             <span>MetaLearn</span>
           </Link>
         </div>

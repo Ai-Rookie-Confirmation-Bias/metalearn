@@ -49,6 +49,9 @@
 | 상태관리 | TanStack Query 5, Zustand 5 | (Query) 서버 데이터 캐시 / (Zustand) UI 상태 |
 | 라우팅 | react-router-dom 7 | URL ↔ 페이지 매핑 |
 | 로컬 저장 | Dexie (IndexedDB) | 오프라인 영속 — Phase 2 |
+| 스타일링 | Tailwind CSS 4 | 유틸리티 기반 스타일 (CSS-in-JSX, 토큰은 `@theme`) |
+| 아이콘 | Phosphor Icons (`@phosphor-icons/react`) | 아이콘 시스템 (`*Icon` 컴포넌트) |
+| 스타일 유틸 | clsx | 조건부 className 조합 (블록 상태별 스타일 분기) |
 | Backend | Python 3.12, FastAPI, uv | 비즈니스 로직, Pydantic 검증, AI 연동 |
 | ORM/검증 | SQLAlchemy 2.0, Pydantic 2 | DB 매핑 / DTO |
 | DB | PostgreSQL 16 + pgvector | 관계형 + 벡터(RAG) 저장 |
