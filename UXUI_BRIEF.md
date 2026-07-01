@@ -23,6 +23,7 @@
   - 유틸리티로 표현 못 하는 것(3D flip, 가상요소, CSS 차트 등)만 전역 또는 co-located `.css`로.
 - **아이콘:** `@phosphor-icons/react`의 **`*Icon`** 컴포넌트(예: `ArrowRightIcon`). 접미사 없는 건 deprecated.
 - **상태별 스타일 분기:** `clsx` 조건부 className.
+- **radius(모서리) 규칙:** 버튼 `rounded-xl`(12px) / 카드·컨테이너 `rounded-2xl`(16px) / 칩·뱃지 `rounded-full`. **pill 버튼 금지** — `rounded-full`은 작은 뱃지·칩에만.
 - **FSD 배치:**
   - `pages/` = **URL과 1:1**로 매핑되는 화면 조립.
   - 페이지 전용 컴포넌트 = `pages/<page>/`에 **co-locate** (URL 없음 = page 아님).

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, useRef, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { clsx } from "clsx";
 import { BrainIcon, TargetIcon, TrendUpIcon, CaretDownIcon } from "@phosphor-icons/react";
@@ -8,7 +8,7 @@ import { InteractiveDemo } from "@/pages/landing/InteractiveDemo";
 // 우측(또는 좌측) 비주얼 박스: 아이콘 + 하단 뱃지
 function VisualBox({ icon, badge }: { icon: ReactNode; badge: string }) {
   return (
-    <div className="w-[300px] h-[400px] border-[3px] border-border-primary rounded-3xl flex flex-col items-center justify-center shadow-[0_25px_50px_-12px_rgba(0,0,0,0.1)] relative bg-[radial-gradient(circle_at_center,#ffffff_0%,#f9fafb_100%)]">
+    <div className="w-[300px] h-[400px] border-[3px] border-border-primary rounded-2xl flex flex-col items-center justify-center shadow-[0_25px_50px_-12px_rgba(0,0,0,0.1)] relative bg-[radial-gradient(circle_at_center,#ffffff_0%,#f9fafb_100%)]">
       {icon}
       <div className="absolute -bottom-4 bg-[#facc15] text-[#854d0e] font-extrabold px-6 py-2 rounded-full shadow-md text-[0.9rem]">
         {badge}
@@ -49,7 +49,7 @@ function FeatureSection({
   );
 
   return (
-    <section className="h-screen w-full snap-start flex flex-col justify-center relative">
+    <section className="h-screen w-full snap-start snap-always flex flex-col justify-center relative">
       <div className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-16 items-center max-w-[1200px] mx-auto px-8 w-full">
         {reverse ? (
           <>
@@ -68,10 +68,57 @@ function FeatureSection({
 }
 
 export function LandingPage() {
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  // 랜딩에선 창 스크롤을 잠가 모든 스크롤을 스냅 컨테이너 안에서만 일어나게
+  // (원본 variables.css의 body{overflow:hidden} 역할 — 이게 없으면 크롬에서 창이 스크롤돼 스냅이 안 걸림)
+  useEffect(() => {
+    const prevBody = document.body.style.overflow;
+    const prevHtml = document.documentElement.style.overflow;
+    document.body.style.overflow = "hidden";
+    document.documentElement.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevBody;
+      document.documentElement.style.overflow = prevHtml;
+    };
+  }, []);
+
+  // 마우스 휠만 가로채 한 섹션씩 이동 (트랙패드=작고 연속적인 델타는 CSS 스냅에 맡김).
+  // Chrome 휠은 CSS 스냅이 잘 안 걸려서 JS로 보정.
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    let locked = false;
+
+    const onWheel = (e: WheelEvent) => {
+      if (Math.abs(e.deltaY) < 50) return; // 트랙패드 → native 스냅
+      e.preventDefault();
+      if (locked) return;
+
+      const h = el.clientHeight;
+      const current = Math.round(el.scrollTop / h);
+      const next = Math.max(0, Math.min(current + (e.deltaY > 0 ? 1 : -1), el.children.length - 1));
+      if (next === current) return;
+
+      locked = true;
+      el.scrollTo({ top: next * h, behavior: "smooth" });
+
+      const release = () => {
+        locked = false;
+        el.removeEventListener("scrollend", release);
+      };
+      el.addEventListener("scrollend", release);
+      window.setTimeout(() => (locked = false), 800); // scrollend 미지원 폴백
+    };
+
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
+
   return (
-    <div className="h-screen overflow-y-scroll snap-y snap-mandatory scroll-smooth">
+    <div ref={scrollRef} className="h-screen overflow-y-scroll snap-y snap-mandatory">
       {/* PAGE 1: 히어로 */}
-      <section className="h-screen w-full snap-start flex flex-col justify-center relative">
+      <section className="h-screen w-full snap-start snap-always flex flex-col justify-center relative">
         <div className="grid grid-cols-1 min-[900px]:grid-cols-2 gap-16 items-center max-w-[1200px] mx-auto px-8 w-full">
           <div className="flex flex-col items-start max-[900px]:items-center max-[900px]:text-center">
             <h1 className="text-[3.5rem] max-[900px]:text-5xl font-extrabold tracking-[-0.04em] leading-[1.1] mb-6 text-[#4ade80]">
@@ -179,7 +226,7 @@ export function LandingPage() {
       />
 
       {/* PAGE 5: 프리미엄 CTA */}
-      <section className="h-screen w-full snap-start flex flex-col justify-center items-center text-center relative bg-navy text-white">
+      <section className="h-screen w-full snap-start snap-always flex flex-col justify-center items-center text-center relative bg-navy text-white">
         <div className="flex flex-col items-center gap-10 max-w-[800px] px-8 z-[2]">
           <h2 className="text-[4.5rem] max-md:text-5xl font-black italic leading-[1.1] tracking-[-0.02em] uppercase">
             POWER UP WITH
@@ -190,7 +237,7 @@ export function LandingPage() {
           </h2>
           <Link
             to="/login"
-            className="bg-white text-navy px-10 py-4 rounded-full text-[1.125rem] font-extrabold uppercase tracking-wider shadow-[0_10px_25px_rgba(255,255,255,0.2)] hover:scale-105 hover:shadow-[0_15px_35px_rgba(255,255,255,0.3)] transition-all"
+            className="bg-white text-navy px-10 py-4 rounded-xl text-[1.125rem] font-extrabold uppercase tracking-wider shadow-[0_10px_25px_rgba(255,255,255,0.2)] hover:scale-105 hover:shadow-[0_15px_35px_rgba(255,255,255,0.3)] transition-all"
           >
             1주 무료 체험하기
           </Link>

@@ -2,7 +2,7 @@ import { createBrowserRouter } from "react-router-dom";
 
 import App from "@/App";
 import { LandingPage } from "@/pages/LandingPage";
-import { LoginPage } from "@/pages/LoginPage";
+import { AuthPage } from "@/pages/AuthPage";
 import { LearningPage } from "@/pages/LearningPage";
 
 // URL 기반 페이지 매핑 지도
@@ -14,7 +14,7 @@ export const router = createBrowserRouter([
     element: <App />,
     children: [
       { index: true, element: <LandingPage /> },
-      { path: "login", element: <LoginPage /> },
+      { path: "login", element: <AuthPage /> },
       { path: "learning", element: <LearningPage /> },
     ],
   },

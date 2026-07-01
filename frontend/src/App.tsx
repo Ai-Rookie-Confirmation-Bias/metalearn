@@ -1,8 +1,11 @@
-import { Outlet, Link } from "react-router-dom";
+import { Outlet, Link, useLocation } from "react-router-dom";
 import { HexagonIcon } from "@phosphor-icons/react";
 
 // 앱 셸: 모든 페이지 공통 글로벌 헤더(로고) + 페이지 콘텐츠 슬롯
 export default function App() {
+  // 인증 페이지에선 헤더 로그인 링크 숨김 (이미 그 페이지라 중복)
+  const isAuthPage = useLocation().pathname === "/login";
+
   return (
     <>
       <header className="fixed left-0 top-0 z-[100] w-full py-8 pointer-events-none">
@@ -14,12 +17,14 @@ export default function App() {
             <HexagonIcon weight="fill" className="text-[2rem] text-accent" />
             <span>MetaLearn</span>
           </Link>
-          <Link
-            to="/login"
-            className="pointer-events-auto text-[0.95rem] font-semibold text-text-secondary hover:text-primary transition-colors [text-shadow:0_2px_4px_rgba(255,255,255,0.8)]"
-          >
-            로그인
-          </Link>
+          {!isAuthPage && (
+            <Link
+              to="/login"
+              className="pointer-events-auto rounded-xl border border-border-primary bg-white px-5 py-2 text-[0.9rem] font-semibold text-text-primary shadow-sm hover:bg-bg-secondary transition-colors"
+            >
+              로그인
+            </Link>
+          )}
         </div>
       </header>
       <Outlet />
