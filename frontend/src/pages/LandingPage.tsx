@@ -87,7 +87,7 @@ export function LandingPage() {
             </p>
             <div className="w-full max-w-[400px]">
               <Link
-                to="/onboarding"
+                to="/login"
                 className="bg-primary text-white px-7 py-[0.8rem] text-[1.1rem] rounded-xl font-semibold shadow-sm inline-flex items-center justify-center w-full mb-3 hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md transition-all"
               >
                 지금 시작하기
@@ -189,7 +189,7 @@ export function LandingPage() {
             </span>
           </h2>
           <Link
-            to="/onboarding"
+            to="/login"
             className="bg-white text-navy px-10 py-4 rounded-full text-[1.125rem] font-extrabold uppercase tracking-wider shadow-[0_10px_25px_rgba(255,255,255,0.2)] hover:scale-105 hover:shadow-[0_15px_35px_rgba(255,255,255,0.3)] transition-all"
           >
             1주 무료 체험하기
