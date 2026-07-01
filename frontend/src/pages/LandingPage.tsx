@@ -1,5 +1,7 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, useOutletContext } from "react-router-dom";
+
+import type { LayoutContext } from "@/App";
 import { clsx } from "clsx";
 import { BrainIcon, TargetIcon, TrendUpIcon, CaretDownIcon } from "@phosphor-icons/react";
 
@@ -69,6 +71,24 @@ function FeatureSection({
 
 export function LandingPage() {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const premiumRef = useRef<HTMLElement>(null);
+  const { setHeaderHidden } = useOutletContext<LayoutContext>();
+
+  // 네이비(프리미엄) 섹션이 화면에 들어오면 헤더를 위로 숨김 (검은 로고/버튼 안 보임 방지)
+  useEffect(() => {
+    const root = scrollRef.current;
+    const target = premiumRef.current;
+    if (!root || !target) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => setHeaderHidden(entry.intersectionRatio > 0.5),
+      { root, threshold: [0, 0.5, 1] },
+    );
+    obs.observe(target);
+    return () => {
+      obs.disconnect();
+      setHeaderHidden(false);
+    };
+  }, [setHeaderHidden]);
 
   // 랜딩에선 창 스크롤을 잠가 모든 스크롤을 스냅 컨테이너 안에서만 일어나게
   // (원본 variables.css의 body{overflow:hidden} 역할 — 이게 없으면 크롬에서 창이 스크롤돼 스냅이 안 걸림)
@@ -101,14 +121,17 @@ export function LandingPage() {
       if (next === current) return;
 
       locked = true;
+      // 스무스 스크롤 중 mandatory 스냅이 끼어들어 출발점으로 되돌리는 크롬 버그 방지 → 잠시 스냅 끔
+      el.style.scrollSnapType = "none";
       el.scrollTo({ top: next * h, behavior: "smooth" });
 
       const release = () => {
+        el.style.scrollSnapType = ""; // Tailwind snap-mandatory 복귀
         locked = false;
         el.removeEventListener("scrollend", release);
       };
       el.addEventListener("scrollend", release);
-      window.setTimeout(() => (locked = false), 800); // scrollend 미지원 폴백
+      window.setTimeout(release, 800); // scrollend 미지원 폴백
     };
 
     el.addEventListener("wheel", onWheel, { passive: false });
@@ -226,7 +249,10 @@ export function LandingPage() {
       />
 
       {/* PAGE 5: 프리미엄 CTA */}
-      <section className="h-screen w-full snap-start snap-always flex flex-col justify-center items-center text-center relative bg-navy text-white">
+      <section
+        ref={premiumRef}
+        className="h-screen w-full snap-start snap-always flex flex-col justify-center items-center text-center relative bg-navy text-white"
+      >
         <div className="flex flex-col items-center gap-10 max-w-[800px] px-8 z-[2]">
           <h2 className="text-[4.5rem] max-md:text-5xl font-black italic leading-[1.1] tracking-[-0.02em] uppercase">
             POWER UP WITH

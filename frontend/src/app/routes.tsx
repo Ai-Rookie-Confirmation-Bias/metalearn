@@ -3,6 +3,7 @@ import { createBrowserRouter } from "react-router-dom";
 import App from "@/App";
 import { LandingPage } from "@/pages/LandingPage";
 import { AuthPage } from "@/pages/AuthPage";
+import { ProfileSetupPage } from "@/pages/ProfileSetupPage";
 import { LearningPage } from "@/pages/LearningPage";
 
 // URL 기반 페이지 매핑 지도
@@ -15,6 +16,8 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <LandingPage /> },
       { path: "login", element: <AuthPage /> },
+      // 첫 로그인 후 프로필 설정 (지금은 디자인 확인용 라우팅 — 실제 진입은 OAuth 붙을 때)
+      { path: "welcome", element: <ProfileSetupPage /> },
       { path: "learning", element: <LearningPage /> },
     ],
   },
