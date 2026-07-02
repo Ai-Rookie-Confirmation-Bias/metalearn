@@ -3,7 +3,7 @@ import { createBrowserRouter } from "react-router-dom";
 import App from "@/App";
 import { ExperimentalLayout, LabHome } from "@/app/ExperimentalLayout";
 import { LearningPage } from "@/pages/LearningPage";
-import { MaterialsPage } from "@/pages/MaterialsPage";
+import { DocumentsPage } from "@/pages/DocumentsPage";
 import { DiagnosticPage } from "@/pages/DiagnosticPage";
 import { CurriculumPage } from "@/pages/CurriculumPage";
 
@@ -21,7 +21,7 @@ export const router = createBrowserRouter([
         element: <ExperimentalLayout />,
         children: [
           { index: true, element: <LabHome /> },
-          { path: "materials", element: <MaterialsPage /> },
+          { path: "documents", element: <DocumentsPage /> },
           { path: "diagnostic", element: <DiagnosticPage /> },
           { path: "curriculum", element: <CurriculumPage /> },
         ],

@@ -20,7 +20,7 @@ from app.features.learning.schemas import (
     GenerateResponse,
 )
 from app.features.learning.models import Curriculum
-from app.features.materials.models import Concept
+from app.features.documents.models import Concept
 
 _CURRICULUM_SYSTEM = (
     "너는 교과서형 이론 설명 + 인출(retrieval) 연습을 결합한 학습자료 생성기다. "
@@ -101,7 +101,10 @@ class LearningService:
             session_id = None
 
         score = self._score(session_id, concept.id)
-        high = score >= settings.LEARNING_HIGH_THRESHOLD
+        weak_prereqs = self._weak_prerequisites(session_id, concept.id)
+        # X 자신이 충분히 강하거나, 약해도 걸리는 선수가 없으면(이미 다 앎/선수 없음) focused.
+        # 선수까지 약할 때만 bridge — "A는 약해도 선수는 안다 → 본문만" 철학 반영.
+        high = score >= settings.LEARNING_HIGH_THRESHOLD or not weak_prereqs
 
         if high:
             mode, prereq_ratio, main_ratio = "focused", 0.0, 1.0
@@ -110,7 +113,7 @@ class LearningService:
             mode = "bridge"
             prereq_ratio = settings.LEARNING_PREREQ_RATIO
             main_ratio = settings.LEARNING_MAIN_RATIO
-            used_prereqs = self._weak_prerequisites(session_id, concept.id)
+            used_prereqs = weak_prereqs
 
         if not req.force_regenerate:
             cached = self.repo.get_latest_curriculum(
@@ -153,7 +156,7 @@ class LearningService:
         if session_id is None:
             return settings.BKT_P_INIT
         mastery = self.repo.get_mastery(session_id=session_id, concept_id=concept_id)
-        return mastery.p_known if mastery is not None else settings.BKT_P_INIT
+        return mastery.strength if mastery is not None else settings.BKT_P_INIT
 
     def _weak_prerequisites(
         self, session_id: int | None, concept_id: int
@@ -162,14 +165,13 @@ class LearningService:
         direct = self.repo.get_direct_prerequisites(concept_id)
         if session_id is None or not direct:
             return direct
-        weak = [
+        return [
             p
             for p in direct
             if (m := self.repo.get_mastery(session_id=session_id, concept_id=p.id))
             is None
-            or m.p_known < settings.LEARNING_HIGH_THRESHOLD
+            or m.strength < settings.LEARNING_HIGH_THRESHOLD
         ]
-        return weak or direct
 
     @staticmethod
     def _response(

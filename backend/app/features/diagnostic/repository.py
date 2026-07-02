@@ -1,27 +1,49 @@
-"""[4.Repository] 진단 세션/숙련도/문항 DB 입출력.
-
-트랜잭션 commit은 서비스가 담당. 여기서는 flush까지만.
-"""
+"""[4.Repository] 진단 세션/숙련도/문항 DB 입출력."""
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.features.diagnostic.models import (
     ConceptMastery,
     DiagnosticQuestion,
     DiagnosticSession,
+    Enrollment,
 )
-from app.features.materials.models import Concept, ConceptPrerequisite
+from app.features.documents.models import Concept, ConceptEdge, Course
 
 
 class DiagnosticRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    # ── Enrollment ────────────────────────────────────────────
+    def ensure_enrollment(self, *, user_id: int, course_id: int) -> Enrollment:
+        enrollment = self.db.get(Enrollment, (user_id, course_id))
+        if enrollment is None:
+            enrollment = Enrollment(user_id=user_id, course_id=course_id)
+            self.db.add(enrollment)
+            self.db.flush()
+        return enrollment
+
+    def set_enrollment_diag_status(
+        self, *, user_id: int, course_id: int, status: str
+    ) -> None:
+        enrollment = self.ensure_enrollment(user_id=user_id, course_id=course_id)
+        enrollment.diag_status = status
+        self.db.flush()
+
+    def increment_diag_q_count(self, *, user_id: int, course_id: int) -> None:
+        enrollment = self.ensure_enrollment(user_id=user_id, course_id=course_id)
+        enrollment.diag_q_count += 1
+        self.db.flush()
+
     # ── Session ───────────────────────────────────────────────
-    def create_session(self, *, material_id: int) -> DiagnosticSession:
-        session = DiagnosticSession(material_id=material_id, status="active")
+    def get_course(self, course_id: int) -> Course | None:
+        return self.db.get(Course, course_id)
+
+    def create_session(self, *, course_id: int) -> DiagnosticSession:
+        session = DiagnosticSession(course_id=course_id, status="active")
         self.db.add(session)
         self.db.flush()
         return session
@@ -32,37 +54,40 @@ class DiagnosticRepository:
     def complete_session(self, session: DiagnosticSession) -> None:
         session.status = "completed"
         session.completed_at = datetime.now(timezone.utc)
+        course = self.get_course(session.course_id)
+        if course is not None:
+            self.set_enrollment_diag_status(
+                user_id=course.user_id,
+                course_id=course.id,
+                status="completed",
+            )
         self.db.flush()
 
-    # ── Concept (materials 도메인 조회) ───────────────────────
-    def list_concepts(self, material_id: int) -> list[Concept]:
-        stmt = select(Concept).where(Concept.material_id == material_id).order_by(Concept.id)
+    # ── Concept ───────────────────────────────────────────────
+    def list_concepts(self, course_id: int) -> list[Concept]:
+        stmt = select(Concept).where(Concept.course_id == course_id).order_by(Concept.id)
         return list(self.db.scalars(stmt))
 
-    # ── 그래프 조회 ───────────────────────────────────────────────
     def get_prerequisite_ids(self, concept_id: int) -> list[int]:
-        """concept_id가 직접 의존하는 선수 개념 ID 목록."""
-        stmt = select(ConceptPrerequisite.prerequisite_concept_id).where(
-            ConceptPrerequisite.concept_id == concept_id
+        stmt = select(ConceptEdge.to_concept_id).where(
+            ConceptEdge.from_concept_id == concept_id,
+            ConceptEdge.kind == "prerequisite",
         )
         return list(self.db.scalars(stmt))
 
     def get_dependent_ids(self, concept_id: int) -> list[int]:
-        """concept_id를 선수로 갖는 후속 개념 ID 목록."""
-        stmt = select(ConceptPrerequisite.concept_id).where(
-            ConceptPrerequisite.prerequisite_concept_id == concept_id
+        stmt = select(ConceptEdge.from_concept_id).where(
+            ConceptEdge.to_concept_id == concept_id,
+            ConceptEdge.kind == "prerequisite",
         )
         return list(self.db.scalars(stmt))
 
     def get_all_prerequisite_target_ids(self, concept_ids: list[int]) -> set[int]:
-        """주어진 개념들 중 '누군가의 선수지식'으로 쓰이는 개념 ID 집합.
-
-        이 집합에 없는 개념 = 최상위(메인) 개념.
-        """
         if not concept_ids:
             return set()
-        stmt = select(ConceptPrerequisite.prerequisite_concept_id).where(
-            ConceptPrerequisite.concept_id.in_(concept_ids)
+        stmt = select(ConceptEdge.to_concept_id).where(
+            ConceptEdge.from_concept_id.in_(concept_ids),
+            ConceptEdge.kind == "prerequisite",
         )
         return set(self.db.scalars(stmt))
 
@@ -72,7 +97,7 @@ class DiagnosticRepository:
         *,
         session_id: int,
         concept_ids: list[int],
-        p_init: float,
+        strength_init: float,
         locked_ids: set[int] | None = None,
     ) -> None:
         locked_ids = locked_ids or set()
@@ -80,7 +105,7 @@ class DiagnosticRepository:
             ConceptMastery(
                 session_id=session_id,
                 concept_id=cid,
-                p_known=p_init,
+                strength=strength_init,
                 locked=cid in locked_ids,
             )
             for cid in concept_ids
@@ -139,7 +164,6 @@ class DiagnosticRepository:
         return self.db.get(DiagnosticQuestion, question_id)
 
     def get_active_question(self, session_id: int) -> DiagnosticQuestion | None:
-        """현재 출제 중(활성)이며 아직 미응답인 문항."""
         stmt = (
             select(DiagnosticQuestion)
             .where(
@@ -154,7 +178,6 @@ class DiagnosticRepository:
     def get_pool_question(
         self, *, session_id: int, concept_id: int
     ) -> DiagnosticQuestion | None:
-        """풀에서 해당 개념의 다음 미사용 문항."""
         stmt = (
             select(DiagnosticQuestion)
             .where(
@@ -166,12 +189,6 @@ class DiagnosticRepository:
             .order_by(DiagnosticQuestion.id)
         )
         return self.db.scalars(stmt).first()
-
-    def has_question_pool(self, session_id: int) -> bool:
-        stmt = select(DiagnosticQuestion.id).where(
-            DiagnosticQuestion.session_id == session_id
-        )
-        return self.db.scalars(stmt).first() is not None
 
     def has_questions_for_concept(self, session_id: int, concept_id: int) -> bool:
         stmt = (
@@ -185,7 +202,6 @@ class DiagnosticRepository:
         return self.db.scalars(stmt).first() is not None
 
     def get_sole_unanswered(self, session_id: int) -> DiagnosticQuestion | None:
-        """미응답 문항이 정확히 1개일 때만 반환 (레거시/마지막 문항)."""
         stmt = select(DiagnosticQuestion).where(
             DiagnosticQuestion.session_id == session_id,
             DiagnosticQuestion.answered.is_(False),
@@ -193,17 +209,9 @@ class DiagnosticRepository:
         rows = list(self.db.scalars(stmt))
         return rows[0] if len(rows) == 1 else None
 
-    def get_open_question(self, session_id: int) -> DiagnosticQuestion | None:
-        """하위 호환: 활성 문항 우선, 없으면 기존 방식."""
-        active = self.get_active_question(session_id)
-        if active is not None:
-            return active
-        stmt = (
-            select(DiagnosticQuestion)
-            .where(
-                DiagnosticQuestion.session_id == session_id,
-                DiagnosticQuestion.answered.is_(False),
-            )
-            .order_by(DiagnosticQuestion.id.desc())
+    def count_answered_questions(self, session_id: int) -> int:
+        stmt = select(func.count(DiagnosticQuestion.id)).where(
+            DiagnosticQuestion.session_id == session_id,
+            DiagnosticQuestion.answered.is_(True),
         )
-        return self.db.scalars(stmt).first()
+        return int(self.db.scalar(stmt) or 0)

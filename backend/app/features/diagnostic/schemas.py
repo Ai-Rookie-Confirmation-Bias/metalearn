@@ -76,7 +76,7 @@ class JudgeVerdict(BaseModel):
 
 # ── 요청 ──────────────────────────────────────────────────────────────
 class StartRequest(BaseModel):
-    material_id: int
+    course_id: int
 
 
 class AnswerRequest(BaseModel):
@@ -101,7 +101,7 @@ class QuestionOut(BaseModel):
 class MasteryOut(BaseModel):
     concept_id: int
     concept_name: str
-    p_known: float
+    strength: float
     resolved: bool
     answered_count: int
 

@@ -16,7 +16,7 @@ router = APIRouter()
 
 @router.post("/start", response_model=SessionState, status_code=201)
 async def start(req: StartRequest, db: Session = Depends(get_db)) -> SessionState:
-    return await DiagnosticService(db).start(req.material_id)
+    return await DiagnosticService(db).start(req.course_id)
 
 
 @router.get("/{session_id}", response_model=SessionState)

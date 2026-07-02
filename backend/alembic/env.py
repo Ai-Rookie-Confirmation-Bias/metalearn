@@ -7,9 +7,9 @@ from sqlalchemy import engine_from_config, pool
 from app.core.config import settings
 from app.core.database import Base
 
-# 모델 등록(메타데이터 채우기). 새 도메인 추가 시 여기에 import.
+from app.features.auth import models as _auth_models  # noqa: F401
 from app.features.learning import models as _learning_models  # noqa: F401
-from app.features.materials import models as _materials_models  # noqa: F401
+from app.features.documents import models as _documents_models  # noqa: F401
 from app.features.diagnostic import models as _diagnostic_models  # noqa: F401
 
 config = context.config

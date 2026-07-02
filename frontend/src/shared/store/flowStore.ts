@@ -1,6 +1,4 @@
-// 학습 플로우(자료→진단→커리큘럼) 간 ID를 잇는 공용 UI 상태 (Zustand).
-// 페이지 이동 시 수동 ID 입력 없이 컨텍스트를 전달한다.
-// persist: 새로고침(F5)해도 materialId/sessionId/conceptId가 날아가지 않게 유지.
+// 학습 플로우(문서→코스→진단→커리큘럼) 간 ID를 잇는 공용 UI 상태.
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
@@ -10,12 +8,12 @@ export interface FlowConcept {
 }
 
 interface FlowState {
-  materialId: number | null;
+  courseId: number | null;
   sessionId: number | null;
   conceptId: number | null;
   concepts: FlowConcept[];
   autoGenerateCurriculum: boolean;
-  setMaterial: (id: number, concepts: FlowConcept[]) => void;
+  setCourse: (id: number, concepts: FlowConcept[]) => void;
   setSession: (id: number) => void;
   setConcept: (id: number) => void;
   setAutoGenerateCurriculum: (v: boolean) => void;
@@ -25,19 +23,19 @@ interface FlowState {
 export const useFlowStore = create<FlowState>()(
   persist(
     (set) => ({
-      materialId: null,
+      courseId: null,
       sessionId: null,
       conceptId: null,
       concepts: [],
       autoGenerateCurriculum: false,
-      setMaterial: (id, concepts) =>
-        set({ materialId: id, concepts, sessionId: null, conceptId: null }),
+      setCourse: (id, concepts) =>
+        set({ courseId: id, concepts, sessionId: null, conceptId: null }),
       setSession: (id) => set({ sessionId: id }),
       setConcept: (id) => set({ conceptId: id }),
       setAutoGenerateCurriculum: (v) => set({ autoGenerateCurriculum: v }),
       reset: () =>
         set({
-          materialId: null,
+          courseId: null,
           sessionId: null,
           conceptId: null,
           concepts: [],

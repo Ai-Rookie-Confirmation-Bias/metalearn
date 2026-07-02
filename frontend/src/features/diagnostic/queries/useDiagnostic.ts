@@ -9,7 +9,7 @@ import {
 
 export function useStartDiagnostic() {
   return useMutation({
-    mutationFn: (materialId: number) => startDiagnostic(materialId),
+    mutationFn: (courseId: number) => startDiagnostic(courseId),
   });
 }
 

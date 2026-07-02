@@ -13,7 +13,7 @@ export interface QuestionOut {
 export interface MasteryOut {
   concept_id: number;
   concept_name: string;
-  p_known: number;
+  strength: number;
   resolved: boolean;
   answered_count: number;
 }

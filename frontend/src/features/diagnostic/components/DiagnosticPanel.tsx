@@ -26,11 +26,11 @@ const QTYPE_LABEL: Record<QuestionType, string> = {
   inverse: "역질문 인출",
 };
 
-/** 진단 완료 후 커리큘럼 대상: 가장 약한(모름) 개념 우선, 없으면 p_known 최저. */
+/** 진단 완료 후 커리큘럼 대상: 가장 약한(모름) 개념 우선, 없으면 strength 최저. */
 function pickWeakestForCurriculum(masteries: MasteryOut[]): number {
-  const unknown = masteries.filter((m) => m.resolved && m.p_known < 0.5);
+  const unknown = masteries.filter((m) => m.resolved && m.strength < 0.5);
   const pool = unknown.length > 0 ? unknown : masteries;
-  return [...pool].sort((a, b) => a.p_known - b.p_known)[0].concept_id;
+  return [...pool].sort((a, b) => a.strength - b.strength)[0].concept_id;
 }
 
 function MasteryBadge({
@@ -40,10 +40,10 @@ function MasteryBadge({
   m: MasteryOut;
   onCurriculum: (conceptId: number) => void;
 }) {
-  const pct = Math.round(m.p_known * 100);
+  const pct = Math.round(m.strength * 100);
   let label = `측정 중 ${pct}%`;
   let color = "#888";
-  if (m.resolved && m.p_known >= 0.5) {
+  if (m.resolved && m.strength >= 0.5) {
     label = `앎 ${pct}%`;
     color = "#16a34a";
   } else if (m.resolved) {
@@ -84,14 +84,14 @@ function MasteryBadge({
 }
 
 export function DiagnosticPanel() {
-  const flowMaterialId = useFlowStore((s) => s.materialId);
+  const flowCourseId = useFlowStore((s) => s.courseId);
   const setFlowSession = useFlowStore((s) => s.setSession);
   const setFlowConcept = useFlowStore((s) => s.setConcept);
   const setAutoGenerateCurriculum = useFlowStore((s) => s.setAutoGenerateCurriculum);
   const navigate = useNavigate();
 
-  const [materialId, setMaterialId] = useState(
-    flowMaterialId ? String(flowMaterialId) : "",
+  const [courseId, setCourseId] = useState(
+    flowCourseId ? String(flowCourseId) : "",
   );
   const [sessionId, setSessionId] = useState<number | null>(null);
   const [question, setQuestion] = useState<QuestionOut | null>(null);
@@ -121,7 +121,7 @@ export function DiagnosticPanel() {
   }
 
   function handleStart() {
-    const id = Number(materialId);
+    const id = Number(courseId);
     if (!id) return;
     start.mutate(id, { onSuccess: applyState });
   }
@@ -158,14 +158,14 @@ export function DiagnosticPanel() {
     return (
       <div>
         <input
-          value={materialId}
-          onChange={(e) => setMaterialId(e.target.value)}
-          placeholder="자료 ID (Material #)"
+          value={courseId}
+          onChange={(e) => setCourseId(e.target.value)}
+          placeholder="코스 ID (Course #)"
           inputMode="numeric"
         />
         <Button
           onClick={handleStart}
-          disabled={!materialId || start.isPending}
+          disabled={!courseId || start.isPending}
           style={{ marginLeft: 8 }}
         >
           {start.isPending ? "세션 생성 + 첫 문항..." : "정밀 진단 시작"}

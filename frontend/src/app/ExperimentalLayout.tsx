@@ -3,7 +3,7 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 
 const TABS = [
-  { to: "/lab/materials", label: "1. 자료 섭취" },
+  { to: "/lab/documents", label: "1. 문서 섭취" },
   { to: "/lab/diagnostic", label: "2. 정밀 진단" },
   { to: "/lab/curriculum", label: "3. JIT 커리큘럼" },
 ];
@@ -90,11 +90,11 @@ export function LabHome() {
     <div>
       <h2 style={{ marginTop: 0 }}>추가 기능 플로우</h2>
       <p style={{ color: "#666" }}>
-        위 탭을 <strong>1 → 2 → 3</strong> 순서로 진행하면 자료 ID·세션 ID가 자동으로
+        위 탭을 <strong>1 → 2 → 3</strong> 순서로 진행하면 코스 ID·세션 ID가 자동으로
         이어집니다.
       </p>
       <ol style={{ color: "#444", lineHeight: 1.8 }}>
-        <li>자료 섭취: PDF 업로드 → 개념/선수지식 그래프 추출</li>
+        <li>문서 섭취: PDF 업로드 → documents → courses → 개념 그래프</li>
         <li>정밀 진단: BKT로 개념별 숙련도 확정</li>
         <li>JIT 커리큘럼: 점수에 맞춘 인출형 학습 자료 생성</li>
       </ol>

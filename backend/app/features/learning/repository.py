@@ -1,20 +1,16 @@
-"""[4.Repository] DB 조회/삽입 및 pgvector 유사도 검색 전담.
-
-커리큘럼(JIT)은 materials의 개념 그래프와 diagnostic의 숙련도를 함께 읽는다.
-"""
+"""[4.Repository] DB 조회/삽입 및 pgvector 유사도 검색 전담."""
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.features.diagnostic.models import ConceptMastery, DiagnosticSession
+from app.features.documents.models import Concept, ConceptEdge
 from app.features.learning.models import Curriculum, LearningItem
-from app.features.materials.models import Concept, ConceptPrerequisite
 
 
 class LearningRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    # ── 기존 데모(generate) ───────────────────────────────────
     def add(self, content: str, embedding: list[float] | None = None) -> LearningItem:
         item = LearningItem(content=content, embedding=embedding)
         self.db.add(item)
@@ -23,7 +19,6 @@ class LearningRepository:
         return item
 
     def search_similar(self, embedding: list[float], limit: int = 5) -> list[LearningItem]:
-        """pgvector 코사인 거리 기반 유사 항목 검색."""
         stmt = (
             select(LearningItem)
             .order_by(LearningItem.embedding.cosine_distance(embedding))
@@ -31,19 +26,17 @@ class LearningRepository:
         )
         return list(self.db.scalars(stmt))
 
-    # ── 개념 그래프 조회 ──────────────────────────────────────
     def get_concept(self, concept_id: int) -> Concept | None:
         return self.db.get(Concept, concept_id)
 
     def get_direct_prerequisites(self, concept_id: int) -> list[Concept]:
-        """해당 개념이 직접 의존하는 선수 개념들 (선행 그래프 1-hop)."""
         stmt = (
             select(Concept)
-            .join(
-                ConceptPrerequisite,
-                ConceptPrerequisite.prerequisite_concept_id == Concept.id,
+            .join(ConceptEdge, ConceptEdge.to_concept_id == Concept.id)
+            .where(
+                ConceptEdge.from_concept_id == concept_id,
+                ConceptEdge.kind == "prerequisite",
             )
-            .where(ConceptPrerequisite.concept_id == concept_id)
             .order_by(Concept.id)
         )
         return list(self.db.scalars(stmt))
@@ -58,7 +51,6 @@ class LearningRepository:
         )
         return self.db.scalars(stmt).first()
 
-    # ── 커리큘럼 캐시 ─────────────────────────────────────────
     def get_latest_curriculum(
         self, *, concept_id: int, session_id: int | None
     ) -> Curriculum | None:

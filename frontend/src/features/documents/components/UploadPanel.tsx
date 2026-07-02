@@ -1,40 +1,42 @@
-// [3단계] 순수 UI 렌더링. queries만 호출.
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 import { Button } from "@/shared/ui/Button";
-import { useUploadMaterial } from "@/features/materials/queries/useUploadMaterial";
-import type { MaterialDetail } from "@/features/materials/types";
+import { useUploadDocument } from "@/features/documents/queries/useUploadDocument";
+import type { CourseDetail } from "@/features/documents/types";
 import { useFlowStore } from "@/shared/store/flowStore";
 import { apiErrorMessage } from "@/shared/api/errors";
 
-function ConceptGraph({ material }: { material: MaterialDetail }) {
+function ConceptGraph({ course }: { course: CourseDetail }) {
   const nameById = useMemo(
-    () => new Map(material.concepts.map((c) => [c.id, c.name])),
-    [material.concepts],
+    () => new Map(course.concepts.map((c) => [c.id, c.name])),
+    [course.concepts],
   );
 
   return (
     <div>
       <h3>
-        추출된 개념 {material.concept_count}개 · 상태: {material.status}
+        추출된 개념 {course.concept_count}개 · 상태: {course.status}
       </h3>
       <ul style={{ listStyle: "none", padding: 0 }}>
-        {material.concepts.map((c) => (
+        {course.concepts.map((c) => (
           <li
             key={c.id}
             style={{
-              marginLeft: c.depth * 16,
+              marginLeft: c.depth_level * 16,
               padding: "6px 0",
               borderBottom: "1px solid #eee",
             }}
           >
             <strong>{c.name}</strong>{" "}
-            <span style={{ color: "#888", fontSize: 12 }}>(depth {c.depth})</span>
+            <span style={{ color: "#888", fontSize: 12 }}>
+              (depth {c.depth_level})
+            </span>
             <div style={{ fontSize: 13, color: "#444" }}>{c.description}</div>
             {c.prerequisite_ids.length > 0 && (
               <div style={{ fontSize: 12, color: "#2563eb" }}>
-                선수지식: {c.prerequisite_ids.map((id) => nameById.get(id) ?? id).join(", ")}
+                선수지식:{" "}
+                {c.prerequisite_ids.map((id) => nameById.get(id) ?? id).join(", ")}
               </div>
             )}
           </li>
@@ -47,8 +49,8 @@ function ConceptGraph({ material }: { material: MaterialDetail }) {
 export function UploadPanel() {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
-  const { mutate, data, isPending, error } = useUploadMaterial();
-  const setMaterial = useFlowStore((s) => s.setMaterial);
+  const { mutate, data, isPending, error } = useUploadDocument();
+  const setCourse = useFlowStore((s) => s.setCourse);
   const navigate = useNavigate();
 
   function handleUpload() {
@@ -56,10 +58,10 @@ export function UploadPanel() {
     mutate(
       { file, title: title || undefined },
       {
-        onSuccess: (material) => {
-          setMaterial(
-            material.id,
-            material.concepts.map((c) => ({ id: c.id, name: c.name })),
+        onSuccess: (course) => {
+          setCourse(
+            course.id,
+            course.concepts.map((c) => ({ id: c.id, name: c.name })),
           );
         },
       },
@@ -88,10 +90,10 @@ export function UploadPanel() {
         <>
           <div style={{ margin: "12px 0" }}>
             <Button onClick={() => navigate("/lab/diagnostic")}>
-              이 자료로 정밀 진단 시작 →
+              이 코스로 정밀 진단 시작 →
             </Button>
           </div>
-          <ConceptGraph material={data} />
+          <ConceptGraph course={data} />
         </>
       )}
     </div>

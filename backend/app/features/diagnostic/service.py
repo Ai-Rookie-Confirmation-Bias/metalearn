@@ -3,7 +3,7 @@
 명세 충실 구현:
   - 절(Concept) 단위 추적.
   - 세션 시작 시 모든 개념 문항을 배치 생성(비용 절감) → 풀에서 꺼내 사용.
-  - 각 개념의 p_known이 경계(>=HIGH / <=LOW)에 닿을 때까지 반복, 닿으면 확정.
+  - 각 개념의 strength이 경계(>=HIGH / <=LOW)에 닿을 때까지 반복, 닿으면 확정.
   - 모든 개념이 확정되면 세션 종료. (피로도 무시 / 정확도 올인)
 """
 from fastapi import HTTPException
@@ -34,7 +34,7 @@ from app.features.diagnostic.schemas import (
     QuizDraft,
     SessionState,
 )
-from app.features.materials.models import Concept
+from app.features.documents.models import Concept
 
 _QUIZ_SYSTEM = (
     "너는 특정 개념의 숙지 여부를 변별하는 진단 문항 출제기다. "
@@ -122,15 +122,22 @@ class DiagnosticService:
         )
 
     # ── 공개 API ──────────────────────────────────────────────
-    async def start(self, material_id: int) -> SessionState:
-        concepts = self.repo.list_concepts(material_id)
+    async def start(self, course_id: int) -> SessionState:
+        course = self.repo.get_course(course_id)
+        if course is None:
+            raise HTTPException(status_code=404, detail="코스를 찾을 수 없습니다.")
+
+        concepts = self.repo.list_concepts(course_id)
         if not concepts:
             raise HTTPException(
                 status_code=400,
                 detail="진단할 개념이 없습니다. 먼저 자료를 섭취(ingest)하세요.",
             )
 
-        session = self.repo.create_session(material_id=material_id)
+        session = self.repo.create_session(course_id=course_id)
+        self.repo.set_enrollment_diag_status(
+            user_id=course.user_id, course_id=course_id, status="in_progress"
+        )
         concept_ids = [c.id for c in concepts]
 
         if settings.BKT_GATED_MODE:
@@ -140,7 +147,7 @@ class DiagnosticService:
             self.repo.create_masteries(
                 session_id=session.id,
                 concept_ids=concept_ids,
-                p_init=settings.BKT_P_INIT,
+                strength_init=settings.BKT_P_INIT,
                 locked_ids=sub_ids,
             )
             # 비용 최소화: 시작 시엔 메인 개념 문항만 생성. 하위는 오답 시 지연 생성.
@@ -149,7 +156,7 @@ class DiagnosticService:
             self.repo.create_masteries(
                 session_id=session.id,
                 concept_ids=concept_ids,
-                p_init=settings.BKT_P_INIT,
+                strength_init=settings.BKT_P_INIT,
             )
             await self._ensure_questions(session.id, concepts)
 
@@ -188,12 +195,16 @@ class DiagnosticService:
         if mastery is None:  # 방어적: 정상 흐름에선 발생하지 않음
             raise HTTPException(status_code=500, detail="숙련도 상태가 없습니다.")
 
-        mastery.p_known = bkt.update(
-            mastery.p_known, correct=is_correct, params=self._params(question.qtype)
+        mastery.strength = bkt.update(
+            mastery.strength, correct=is_correct, params=self._params(question.qtype)
         )
         mastery.answered_count += 1
 
-        concepts = {c.id: c for c in self.repo.list_concepts(session.material_id)}
+        course = self.repo.get_course(session.course_id)
+        if course is not None:
+            self.repo.increment_diag_q_count(user_id=course.user_id, course_id=course.id)
+
+        concepts = {c.id: c for c in self.repo.list_concepts(session.course_id)}
 
         if settings.BKT_GATED_MODE:
             await self._gate_after_answer(
@@ -205,7 +216,7 @@ class DiagnosticService:
             )
         else:
             if bkt.is_resolved(
-                mastery.p_known,
+                mastery.strength,
                 high=settings.BKT_RESOLVE_HIGH,
                 low=settings.BKT_RESOLVE_LOW,
             ) or mastery.answered_count >= settings.BKT_MAX_QUESTIONS_PER_CONCEPT:
@@ -214,7 +225,7 @@ class DiagnosticService:
             self._propagate(
                 session_id=session_id,
                 concept_id=question.concept_id,
-                updated_p=mastery.p_known,
+                updated_strength=mastery.strength,
                 correct=is_correct,
             )
 
@@ -240,12 +251,12 @@ class DiagnosticService:
         *,
         session_id: int,
         concept_id: int,
-        updated_p: float,
+        updated_strength: float,
         correct: bool,
         _visited: set[int] | None = None,
         _hop: int = 1,
     ) -> None:
-        """정/오답에서 선수/후속 개념으로 p_known을 전파한다 (BFS, 최대 2-hop).
+        """정/오답에서 선수/후속 개념으로 strength을 전파한다 (BFS, 최대 2-hop).
 
         정답 → 선수(prerequisites) 상향 전파:
           "이걸 맞혔다면 선수도 알 가능성 ↑"
@@ -276,18 +287,18 @@ class DiagnosticService:
             if neighbor is None or neighbor.resolved:
                 continue
 
-            old_p = neighbor.p_known
+            old_p = neighbor.strength
             if correct:
                 new_p = bkt.propagate_up(
-                    answered_p=updated_p, prereq_p=old_p, decay=decay, hop=_hop
+                    answered_p=updated_strength, prereq_p=old_p, decay=decay, hop=_hop
                 )
             else:
                 new_p = bkt.propagate_down(
-                    answered_p=updated_p, dependent_p=old_p, decay=decay, hop=_hop
+                    answered_p=updated_strength, dependent_p=old_p, decay=decay, hop=_hop
                 )
 
             new_p = max(0.01, min(0.99, new_p))
-            neighbor.p_known = new_p
+            neighbor.strength = new_p
 
             # 전파로 확정 경계를 넘었고 최소 1문항 이상 직접 풀었으면 확정
             if (
@@ -306,7 +317,7 @@ class DiagnosticService:
             self._propagate(
                 session_id=session_id,
                 concept_id=nid,
-                updated_p=new_p,
+                updated_strength=new_p,
                 correct=correct,
                 _visited=_visited,
                 _hop=_hop + 1,
@@ -353,7 +364,7 @@ class DiagnosticService:
         return session
 
     async def _build_state(self, session: DiagnosticSession) -> SessionState:
-        concepts = {c.id: c for c in self.repo.list_concepts(session.material_id)}
+        concepts = {c.id: c for c in self.repo.list_concepts(session.course_id)}
         question = await self._advance(session, concepts)
         masteries = self.repo.list_masteries(session.id)
         self.db.commit()
@@ -410,7 +421,7 @@ class DiagnosticService:
             return None
         return max(
             candidates,
-            key=lambda m: (bkt.uncertainty(m.p_known), -m.answered_count),
+            key=lambda m: (bkt.uncertainty(m.strength), -m.answered_count),
         )
 
     # ── 게이티드 라우팅 (메인 우선 → 오답 시 하위 파고들기) ────────
@@ -466,7 +477,7 @@ class DiagnosticService:
 
             m = self.repo.get_mastery(session_id=session_id, concept_id=pid)
             if m is not None and not m.resolved:
-                m.p_known = max(m.p_known, settings.BKT_RESOLVE_HIGH)
+                m.strength = max(m.strength, settings.BKT_RESOLVE_HIGH)
                 m.resolved = True
                 self.db.flush()
 
@@ -592,7 +603,7 @@ class DiagnosticService:
         return MasteryOut(
             concept_id=m.concept_id,
             concept_name=concept_name,
-            p_known=round(m.p_known, 4),
+            strength=round(m.strength, 4),
             resolved=m.resolved,
             answered_count=m.answered_count,
         )

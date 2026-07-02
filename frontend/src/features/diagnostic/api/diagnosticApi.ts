@@ -6,10 +6,10 @@ import type { AnswerResult, SessionState } from "@/features/diagnostic/types";
 // 일어날 수 있어 넉넉히(백엔드 생성 타임아웃 120s × 2 여유).
 const _TIMEOUT = 240_000;
 
-export async function startDiagnostic(materialId: number): Promise<SessionState> {
+export async function startDiagnostic(courseId: number): Promise<SessionState> {
   const { data } = await apiClient.post<SessionState>(
     "/api/diagnostic/start",
-    { material_id: materialId },
+    { course_id: courseId },
     { timeout: _TIMEOUT },
   );
   return data;
