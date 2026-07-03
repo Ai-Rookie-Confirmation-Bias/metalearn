@@ -201,11 +201,16 @@ explainBack 제출
     CREATE TYPE notif_type      AS ENUM ('review_due','generation_ready','streak','system');
     
     -- ╔ A. 콘텐츠 + 개념 그래프 ╗
-    CREATE TABLE users (
+    CREATE TABLE users (                         -- 소셜 로그인(구글/네이버) 기준
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      email text UNIQUE NOT NULL,
-      password_hash text NOT NULL,
-      created_at timestamptz NOT NULL DEFAULT now()
+      email text UNIQUE NOT NULL,                -- 소셜에서 받음
+      provider text NOT NULL,                    -- 'google' | 'naver'
+      provider_uid text NOT NULL,                -- 소셜 고유 ID(sub) — 계정 연결 키
+      nickname text,                             -- 표시명(프로필 설정에서 입력)
+      name text,                                 -- 소셜 실명(선택)
+      avatar_url text,                           -- 소셜 프로필 이미지(선택)
+      created_at timestamptz NOT NULL DEFAULT now(),
+      UNIQUE (provider, provider_uid)
     );
     
     CREATE TABLE documents (
@@ -438,9 +443,14 @@ explainBack 제출
     | **컬럼명** | **데이터 타입** | **제약조건** |
     | --- | --- | --- |
     | **사용자 고유 식별자 (`id`)** | `uuid` | PK, 기본값 |
-    | **이메일 주소 (`email`)** | `text` | UNIQUE, NOT NULL |
-    | **암호화된 비밀번호 (`password_hash`)** | `text` | NOT NULL |
+    | **이메일 주소 (`email`)** | `text` | UNIQUE, NOT NULL (소셜에서 받음) |
+    | **소셜 제공자 (`provider`)** | `text` | NOT NULL (`google`/`naver`) |
+    | **소셜 고유 ID (`provider_uid`)** | `text` | NOT NULL — 계정 연결 키(sub) |
+    | **표시명 (`nickname`)** | `text` | 프로필 설정에서 입력 |
+    | **실명 (`name`)** | `text` | 선택(소셜 제공) |
+    | **프로필 이미지 (`avatar_url`)** | `text` | 선택(소셜 제공) |
     | **계정 생성 일시 (`created_at`)** | `timestamptz` | NOT NULL, 기본값(now) |
+    | **(소셜 계정 유니크)** | — | UNIQUE(`provider`, `provider_uid`) |
     
     ### 문서 정보 (`documents`)
     
@@ -704,11 +714,12 @@ explainBack 제출
 
 | M | 경로 | 용도 |
 | --- | --- | --- |
-| POST | /auth/signup | 가입 → {user, accessToken, refreshToken} |
-| POST | /auth/login | 로그인 → 토큰 |
+| GET | /auth/{provider}/login | 소셜 로그인 시작 — 구글/네이버 동의 화면으로 리다이렉트 (`{provider}`=google\|naver) |
+| GET | /auth/{provider}/callback | 콜백: 코드 교환 → 유저 생성/조회 → 세션·토큰 발급 (신규면 프로필 설정으로) |
 | POST | /auth/refresh | accessToken 갱신 |
 | POST | /auth/logout 🔒 | 로그아웃 |
 | GET | /me 🔒 | 내 정보 |
+| PATCH | /me 🔒 | 프로필 수정(닉네임 등) |
 | GET | /me/stats 🔒 | 대시보드 통계(streak/시간/목표율) |
 
 ### 자료/코스
@@ -717,7 +728,7 @@ explainBack 제출
 | --- | --- | --- |
 | POST | /documents 🔒 | 업로드 → {documentId, status} |
 | GET | /documents/:id 🔒 | 처리 상태 폴링 |
-| GET | /courses 🔒 | 내 책장 |
+| GET | /courses 🔒 | 내 책장 — 코스별 진행률 + `lastActivityAt`(=`MAX(attempts.created_at)`, 저장 아닌 계산값) 포함 |
 | GET | /courses/:id 🔒 | 챕터/절 트리 |
 | GET | /courses/:id/map 🔒 | 전체 지도(개념 그래프) |
 | DELETE | /courses/:id 🔒 | 삭제 |
