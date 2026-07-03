@@ -1,56 +1,56 @@
 /**
- * 수업 생성(Create Course) 위저드.
- *
- * ⚠️ 파킹 상태: 이 파일은 폐기된 "가입 전 온보딩" 프로토타입의 다단계 위저드
- *    껍데기(카드·스텝전환·slideIn·footer)를 재활용하기 위해 보존한 것이다.
- *    아래 스텝 내용(접점/목표/가치/시작)은 온보딩 시절의 placeholder이며,
- *    실제 수업 생성 스텝(자료 선택 → 범위/목표 → 생성)으로 교체 예정.
- *    참고 원본: UXUI_ANT/create_course.html
+ * 수업 생성(Create Course) 위저드 — 모델 B(진단 분리).
+ *   STEP 1 메인 자료 → STEP 2 추가 자료(선택) → STEP 3 목표 → 책장으로.
+ * 진단(바닥 찾기)은 여기 없음: 책장 카드의 "진단 시작하기"에서 별도.
+ * 참고 원본: UXUI_ANT/create_course.html · 스키마: docs/SCHEMA.md
  */
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { clsx } from "clsx";
 import {
   ArrowLeftIcon,
-  MagnifyingGlassIcon,
-  ShareNetworkIcon,
-  UsersThreeIcon,
-  CompassIcon,
+  UploadSimpleIcon,
+  LinkIcon,
+  FileIcon,
+  TrashIcon,
+  ArrowUpIcon,
+  ArrowDownIcon,
   CertificateIcon,
   BriefcaseIcon,
   BookOpenIcon,
-  GraduationCapIcon,
-  BrainIcon,
-  MagicWandIcon,
-  PenNibIcon,
-  ArrowsClockwiseIcon,
-  RocketLaunchIcon,
+  SmileyIcon,
   type Icon,
 } from "@phosphor-icons/react";
 
-// [placeholder] STEP 1 접점
-const SOURCES: { icon: Icon; label: string }[] = [
-  { icon: MagnifyingGlassIcon, label: "검색하다가" },
-  { icon: ShareNetworkIcon, label: "SNS에서" },
-  { icon: UsersThreeIcon, label: "지인 추천" },
-  { icon: CompassIcon, label: "그냥 둘러보다" },
+import { useCreatedCourses } from "@/features/course-create/store";
+import type {
+  DocumentKind,
+  Material,
+  Purpose,
+  CreateCoursePayload,
+} from "@/features/course-create/types";
+
+const KINDS: { value: DocumentKind; label: string }[] = [
+  { value: "textbook", label: "교재" },
+  { value: "slide", label: "슬라이드" },
+  { value: "notes", label: "필기" },
+  { value: "exam", label: "기출/문제" },
+  { value: "text", label: "텍스트" },
+  { value: "link", label: "링크" },
+];
+// 메인 자료엔 링크 제외 (링크는 보조 자료로만)
+const PRIMARY_KINDS = KINDS.filter((k) => k.value !== "link");
+
+const PURPOSES: { value: Purpose; label: string; desc: string; icon: Icon }[] = [
+  { value: "exam", label: "시험 · 자격증", desc: "합격이 목표예요", icon: CertificateIcon },
+  { value: "career", label: "실무 · 커리어", desc: "일에 써먹고 싶어요", icon: BriefcaseIcon },
+  { value: "culture", label: "교양 · 흥미", desc: "새 분야를 알고 싶어요", icon: BookOpenIcon },
+  { value: "hobby", label: "취미", desc: "재미로 배워요", icon: SmileyIcon },
 ];
 
-// [placeholder] STEP 2 목표
-const GOALS: { icon: Icon; label: string; phrase: string }[] = [
-  { icon: CertificateIcon, label: "시험 · 자격증 합격", phrase: "시험 합격" },
-  { icon: BriefcaseIcon, label: "실무 · 커리어 역량", phrase: "실무 역량" },
-  { icon: BookOpenIcon, label: "새로운 분야 교양", phrase: "새로운 분야" },
-  { icon: GraduationCapIcon, label: "학교 성적 향상", phrase: "성적 향상" },
-];
-
-// [placeholder] STEP 3 가치 루프
-const LOOP: { icon: Icon; title: string; desc: string }[] = [
-  { icon: BrainIcon, title: "진단", desc: "내가 어디서 막히는지 객관적으로 찾아요." },
-  { icon: MagicWandIcon, title: "맞춤 생성", desc: "내 수준에 맞는 콘텐츠를 그때그때 만들어요." },
-  { icon: PenNibIcon, title: "직접 인출", desc: "떠먹여주지 않고 직접 꺼내고 설명하게 해요." },
-  { icon: ArrowsClockwiseIcon, title: "자동 복습", desc: "잊을 때쯤 다시 꺼내 오래 기억하게 해요." },
-];
+let uid = 0;
+const nextId = () => `m_${Date.now()}_${uid++}`;
+const stripExt = (name: string) => name.replace(/\.[^.]+$/, "");
 
 const cardBase = "border-2 rounded-xl bg-white cursor-pointer transition-all";
 const cardState = (selected: boolean) =>
@@ -58,10 +58,7 @@ const cardState = (selected: boolean) =>
     ? "border-primary bg-black/[0.03]"
     : "border-border-primary hover:border-text-tertiary hover:bg-bg-secondary";
 
-const NEXT_LABEL = ["다음 단계로 →", "다음 단계로 →", "이해했어요", "시작하기 🎉"];
-
-// 마운트될 때마다 오른쪽에서 슬라이드-인 (전역 @keyframes 대신 순수 Tailwind transition).
-// 부모에서 key={step}로 재마운트 → 매 스텝 애니메이션 재생.
+// 매 스텝 오른쪽에서 슬라이드-인 (전역 keyframe 대신 transition)
 function StepFade({ children }: { children: ReactNode }) {
   const [shown, setShown] = useState(false);
   useEffect(() => {
@@ -80,140 +77,292 @@ function StepFade({ children }: { children: ReactNode }) {
   );
 }
 
+function UploadZone({ label, onFiles }: { label: string; onFiles: (files: FileList) => void }) {
+  const ref = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => ref.current?.click()}
+        className="group flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-border-primary py-8 text-center transition-colors hover:border-accent hover:bg-accent/5"
+      >
+        <UploadSimpleIcon className="mb-2 text-[2rem] text-text-tertiary transition-colors group-hover:text-accent" />
+        <span className="text-[0.9rem] font-medium text-text-secondary">{label}</span>
+      </button>
+      <input
+        ref={ref}
+        type="file"
+        multiple
+        hidden
+        onChange={(e) => {
+          if (e.target.files) onFiles(e.target.files);
+          e.target.value = "";
+        }}
+      />
+    </>
+  );
+}
+
+// 자료 한 줄 (파일명 · 형태 선택 · [순서] · 삭제)
+function MaterialRow({
+  material,
+  kinds,
+  onKind,
+  onRemove,
+  onUp,
+  onDown,
+  canUp,
+  canDown,
+}: {
+  material: Material;
+  kinds: { value: DocumentKind; label: string }[];
+  onKind: (k: DocumentKind) => void;
+  onRemove: () => void;
+  onUp?: () => void;
+  onDown?: () => void;
+  canUp?: boolean;
+  canDown?: boolean;
+}) {
+  const FileTypeIcon = material.kind === "link" ? LinkIcon : FileIcon;
+  return (
+    <div className="flex items-center gap-3 rounded-xl border border-border-primary bg-white px-4 py-3">
+      <FileTypeIcon className="shrink-0 text-lg text-text-tertiary" />
+      <span className="min-w-0 flex-1 truncate text-[0.9rem] text-text-primary">{material.name}</span>
+
+      <select
+        value={material.kind}
+        onChange={(e) => onKind(e.target.value as DocumentKind)}
+        className="shrink-0 rounded-lg border border-border-primary bg-bg-secondary px-2 py-1 text-[0.8rem] text-text-secondary focus:outline-none"
+      >
+        {kinds.map((k) => (
+          <option key={k.value} value={k.value}>
+            {k.label}
+          </option>
+        ))}
+      </select>
+
+      {onUp && (
+        <div className="flex shrink-0 flex-col text-sm">
+          <button
+            type="button"
+            onClick={onUp}
+            disabled={!canUp}
+            className="text-text-tertiary transition-colors hover:text-primary disabled:opacity-30"
+          >
+            <ArrowUpIcon />
+          </button>
+          <button
+            type="button"
+            onClick={onDown}
+            disabled={!canDown}
+            className="text-text-tertiary transition-colors hover:text-primary disabled:opacity-30"
+          >
+            <ArrowDownIcon />
+          </button>
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={onRemove}
+        className="shrink-0 text-text-tertiary transition-colors hover:text-red-500"
+      >
+        <TrashIcon />
+      </button>
+    </div>
+  );
+}
+
 export function CreateCoursePage() {
   const navigate = useNavigate();
-  const [step, setStep] = useState(0); // 0..3
-  const [source, setSource] = useState<number | null>(null);
-  const [goal, setGoal] = useState<number | null>(null);
+  const addDraft = useCreatedCourses((s) => s.addDraft);
 
-  const canNext = step === 0 ? source !== null : step === 1 ? goal !== null : true;
-  const goalPhrase = goal !== null ? GOALS[goal].phrase : "목표";
+  const [step, setStep] = useState(0); // 0 메인 / 1 추가 / 2 목표
+  const [primaries, setPrimaries] = useState<Material[]>([]);
+  const [supps, setSupps] = useState<Material[]>([]);
+  const [linkUrl, setLinkUrl] = useState("");
+  const [purpose, setPurpose] = useState<Purpose | null>(null);
 
-  const back = () => (step === 0 ? navigate("/") : setStep((s) => s - 1));
-  const next = () => {
-    if (!canNext) return;
-    if (step === 3) {
-      navigate("/login");
-      return;
-    }
-    setStep((s) => s + 1);
+  const addFiles = (files: FileList, role: "primary" | "supplementary") => {
+    const items: Material[] = Array.from(files).map((f) => ({
+      id: nextId(),
+      name: f.name,
+      kind: "textbook",
+      role,
+    }));
+    (role === "primary" ? setPrimaries : setSupps)((prev) => [...prev, ...items]);
   };
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-bg-secondary px-4">
-      <div className="w-full max-w-[600px] bg-white rounded-2xl border border-border-primary shadow-lg p-12 max-[480px]:p-6 relative overflow-hidden">
-        {/* key={step}로 매 스텝 재마운트 → 각 스텝이 슬라이드-인 */}
-        <StepFade key={step}>
-          <div className="text-sm font-semibold text-accent mb-4">STEP {step + 1} / 4</div>
+  const addLink = () => {
+    const url = linkUrl.trim();
+    if (!url) return;
+    setSupps((prev) => [...prev, { id: nextId(), name: url, kind: "link", role: "supplementary" }]);
+    setLinkUrl("");
+  };
 
+  const setKind = (which: "p" | "s", id: string, kind: DocumentKind) => {
+    const upd = (arr: Material[]) => arr.map((m) => (m.id === id ? { ...m, kind } : m));
+    (which === "p" ? setPrimaries : setSupps)(upd);
+  };
+  const remove = (which: "p" | "s", id: string) => {
+    const f = (arr: Material[]) => arr.filter((m) => m.id !== id);
+    (which === "p" ? setPrimaries : setSupps)(f);
+  };
+  const move = (i: number, dir: -1 | 1) => {
+    setPrimaries((arr) => {
+      const j = i + dir;
+      if (j < 0 || j >= arr.length) return arr;
+      const copy = [...arr];
+      [copy[i], copy[j]] = [copy[j], copy[i]];
+      return copy;
+    });
+  };
+
+  const canNext = step === 0 ? primaries.length > 0 : step === 1 ? true : purpose !== null;
+
+  const back = () => (step === 0 ? navigate("/library") : setStep((s) => s - 1));
+  const next = () => {
+    if (!canNext) return;
+    if (step < 2) {
+      setStep((s) => s + 1);
+      return;
+    }
+    // 제출 — 백엔드 붙으면 이 payload를 POST /courses 로 전송(문서는 업로드 후 받은 id로 치환)
+    const payload: CreateCoursePayload = {
+      documentIds: [...primaries, ...supps].map((m) => m.id),
+      primaryIds: primaries.map((m) => m.id),
+      purpose: purpose!,
+    };
+    void payload; // mock: 전송 대신 스토어에 "생성중" 코스로 추가
+    addDraft(stripExt(primaries[0]?.name ?? "새 학습"));
+    navigate("/library");
+  };
+
+  const nextLabel = step === 2 ? "생성하기" : "다음";
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-bg-secondary px-4">
+      <div className="relative w-full max-w-[600px] overflow-hidden rounded-2xl border border-border-primary bg-white p-12 shadow-lg max-[480px]:p-6">
+        <div className="mb-4 text-sm font-semibold text-accent">STEP {step + 1} / 3</div>
+
+        <StepFade key={step}>
           {step === 0 && (
             <>
-              <h2 className="text-[1.75rem] font-bold text-primary mb-2 tracking-tight">
-                어떤 경로로 메타런에 오셨어요?
+              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
+                메인이 되는 자료를 올려주세요
               </h2>
-              <p className="text-[0.95rem] text-text-secondary mb-10">가볍게 하나만 골라주세요.</p>
-              <div className="grid grid-cols-2 max-[480px]:grid-cols-1 gap-4 mb-12">
-                {SOURCES.map((o, i) => (
-                  <button
-                    key={o.label}
-                    onClick={() => setSource(i)}
-                    className={clsx(
-                      cardBase,
-                      cardState(source === i),
-                      "flex flex-col items-center text-center px-4 py-6",
-                    )}
-                  >
-                    <o.icon className="text-[2.5rem] text-primary mb-4" />
-                    <span className="font-semibold text-base text-text-primary">{o.label}</span>
-                  </button>
-                ))}
-              </div>
+              <p className="mb-8 text-[0.95rem] text-text-secondary">
+                이 자료가 학습의 기준(천장)이 돼요. 여러 파일로 나뉘어 있으면 순서대로 올려주세요.
+              </p>
+              <UploadZone label="클릭해서 파일 선택 (여러 개 가능)" onFiles={(f) => addFiles(f, "primary")} />
+              {primaries.length > 0 && (
+                <div className="mt-4 flex flex-col gap-2">
+                  {primaries.map((m, i) => (
+                    <MaterialRow
+                      key={m.id}
+                      material={m}
+                      kinds={PRIMARY_KINDS}
+                      onKind={(k) => setKind("p", m.id, k)}
+                      onRemove={() => remove("p", m.id)}
+                      onUp={() => move(i, -1)}
+                      onDown={() => move(i, 1)}
+                      canUp={i > 0}
+                      canDown={i < primaries.length - 1}
+                    />
+                  ))}
+                </div>
+              )}
             </>
           )}
 
           {step === 1 && (
             <>
-              <h2 className="text-[1.75rem] font-bold text-primary mb-2 tracking-tight">
-                무엇을 이루고 싶으세요?
+              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
+                추가 자료가 있으면 올려주세요{" "}
+                <span className="text-[1.1rem] font-medium text-text-tertiary">(선택)</span>
               </h2>
-              <p className="text-[0.95rem] text-text-secondary mb-10">
-                목표에 맞춰 학습을 안내해드릴게요.
+              <p className="mb-8 text-[0.95rem] text-text-secondary">
+                기출·문제, 링크, 필기 같은 보조 자료예요. 없으면 건너뛰어도 돼요.
               </p>
-              <div className="flex flex-col gap-3 mb-12">
-                {GOALS.map((o, i) => (
-                  <button
-                    key={o.label}
-                    onClick={() => setGoal(i)}
-                    className={clsx(
-                      cardBase,
-                      cardState(goal === i),
-                      "flex flex-row items-center gap-4 text-left px-6 py-4",
-                    )}
-                  >
-                    <o.icon className="text-[1.75rem] text-primary shrink-0" />
-                    <span className="font-semibold text-base text-text-primary">{o.label}</span>
-                  </button>
-                ))}
+              <UploadZone label="파일 추가" onFiles={(f) => addFiles(f, "supplementary")} />
+              <div className="mt-3 flex gap-2">
+                <input
+                  value={linkUrl}
+                  onChange={(e) => setLinkUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addLink())}
+                  placeholder="https:// 링크 붙여넣기"
+                  className="flex-1 rounded-xl border border-border-primary bg-white px-4 py-2.5 text-[0.9rem] text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                />
+                <button
+                  type="button"
+                  onClick={addLink}
+                  className="shrink-0 rounded-xl border border-border-primary bg-white px-4 py-2.5 text-[0.9rem] font-semibold text-text-primary transition-colors hover:bg-bg-secondary"
+                >
+                  추가
+                </button>
               </div>
+              {supps.length > 0 && (
+                <div className="mt-4 flex flex-col gap-2">
+                  {supps.map((m) => (
+                    <MaterialRow
+                      key={m.id}
+                      material={m}
+                      kinds={KINDS}
+                      onKind={(k) => setKind("s", m.id, k)}
+                      onRemove={() => remove("s", m.id)}
+                    />
+                  ))}
+                </div>
+              )}
             </>
           )}
 
           {step === 2 && (
             <>
-              <h2 className="text-[1.75rem] font-bold text-primary mb-2 tracking-tight">
-                메타런은 <span className="text-accent">{goalPhrase}</span>을 이렇게 도와줘요
+              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
+                왜 배우세요?
               </h2>
-              <p className="text-[0.95rem] text-text-secondary mb-10">
-                떠먹여주는 게 아니라, 스스로 꺼내게 만드는 학습 루프예요.
+              <p className="mb-8 text-[0.95rem] text-text-secondary">
+                목표에 맞춰 난이도와 문제 유형을 조절해요.
               </p>
-              <div className="flex flex-col gap-3 mb-12">
-                {LOOP.map((o) => (
-                  <div key={o.title} className="flex items-center gap-4 px-6 py-4 rounded-xl bg-bg-secondary">
-                    <o.icon className="text-[1.75rem] text-primary shrink-0" />
-                    <div>
-                      <div className="font-semibold text-base text-text-primary">{o.title}</div>
-                      <div className="text-[0.85rem] text-text-secondary mt-1">{o.desc}</div>
-                    </div>
-                  </div>
+              <div className="grid grid-cols-2 gap-3 max-[480px]:grid-cols-1">
+                {PURPOSES.map((o) => (
+                  <button
+                    key={o.value}
+                    onClick={() => setPurpose(o.value)}
+                    className={clsx(
+                      cardBase,
+                      cardState(purpose === o.value),
+                      "flex flex-col items-start gap-1 px-5 py-4 text-left",
+                    )}
+                  >
+                    <o.icon className="text-[1.75rem] text-primary" />
+                    <span className="font-semibold text-text-primary">{o.label}</span>
+                    <span className="text-[0.8rem] text-text-secondary">{o.desc}</span>
+                  </button>
                 ))}
-              </div>
-            </>
-          )}
-
-          {step === 3 && (
-            <>
-              <h2 className="text-[1.75rem] font-bold text-primary mb-2 tracking-tight">
-                이제 시작할 준비가 됐어요!
-              </h2>
-              <p className="text-[0.95rem] text-text-secondary mb-10">
-                메타런과 함께 <span className="text-accent">{goalPhrase}</span>에 한 걸음씩 다가가 봐요.
-              </p>
-              <div className="flex flex-col items-center justify-center py-10 mb-12">
-                <RocketLaunchIcon className="text-[5rem] text-accent" weight="fill" />
               </div>
             </>
           )}
         </StepFade>
 
-        {/* footer (스텝 전환에도 고정) */}
-        <div className="flex justify-between items-center border-t border-border-primary pt-6">
+        <div className="mt-10 flex items-center justify-between border-t border-border-primary pt-6">
           <button
             onClick={back}
-            className="flex items-center gap-2 text-[13.3333px] leading-[normal] text-text-secondary font-medium hover:text-primary transition-colors"
+            className="flex items-center gap-2 text-[13.3333px] font-medium leading-[normal] text-text-secondary transition-colors hover:text-primary"
           >
-            <ArrowLeftIcon /> {step === 0 ? "홈으로" : "이전"}
+            <ArrowLeftIcon /> {step === 0 ? "책장으로" : "이전"}
           </button>
           <button
             onClick={next}
             disabled={!canNext}
             className={clsx(
-              "bg-primary text-white text-[13.3333px] leading-[normal] px-5 py-[0.6rem] rounded-xl font-semibold shadow-sm inline-flex items-center gap-2 transition-all",
+              "inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-[0.6rem] text-[13.3333px] font-semibold leading-[normal] text-white shadow-sm transition-all",
               canNext
-                ? "hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
-                : "opacity-50 cursor-not-allowed",
+                ? "hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
+                : "cursor-not-allowed opacity-50",
             )}
           >
-            {NEXT_LABEL[step]}
+            {nextLabel}
           </button>
         </div>
       </div>

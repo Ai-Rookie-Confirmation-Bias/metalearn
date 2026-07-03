@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import {
   PlusIcon,
   PlayIcon,
@@ -13,6 +13,7 @@ import {
 } from "@phosphor-icons/react";
 
 import { courses, meStats, type CourseSummary } from "@/pages/library/mock";
+import { useCreatedCourses } from "@/features/course-create/store";
 
 // difficulty_est(1~10) → 뱃지 라벨
 function difficultyLabel(est: number): string {
@@ -98,6 +99,31 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
 
   const CoverIcon = cover.icon;
 
+  // 방금 만든 코스 = 씨앗 생성 중 (백엔드에선 gen_status 폴링으로 대체)
+  if (course.generating) {
+    return (
+      <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm">
+        <div
+          className={`relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`}
+        >
+          <span className="h-9 w-9 animate-spin rounded-full border-[3px] border-white/40 border-t-white" />
+        </div>
+        <div className="flex flex-1 flex-col p-6">
+          <h4 className="mb-1 text-[1.125rem] font-bold leading-snug text-text-primary">
+            {course.title}
+          </h4>
+          <p className="mb-6 flex-1 text-[0.9rem] text-text-secondary">
+            AI가 커리큘럼을 만들고 있어요…
+          </p>
+          <div className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
+            <span className="h-4 w-4 animate-spin rounded-full border-2 border-text-tertiary/40 border-t-text-tertiary" />
+            생성 중…
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm transition-all hover:-translate-y-1 hover:border-text-tertiary hover:shadow-lg">
       <div
@@ -148,9 +174,27 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
 }
 
 export function LibraryPage() {
+  const navigate = useNavigate();
+  const drafts = useCreatedCourses((s) => s.drafts);
+
+  // 방금 만든 코스(스토어)를 CourseSummary 모양으로 → mock과 합쳐 렌더.
+  // (백엔드 붙으면 이 병합 대신 GET /courses 리페치 결과를 그대로 사용)
+  const draftCourses: CourseSummary[] = drafts.map((d) => ({
+    id: d.id,
+    title: d.title,
+    category: null,
+    difficultyEst: 5,
+    diagStatus: "not_started",
+    sectionsTotal: 0,
+    sectionsCompleted: 0,
+    lastActivityAt: null,
+    generating: d.generating,
+  }));
+  const allCourses = [...draftCourses, ...courses];
+
   // 이어서 학습할 코스 = 진행 중(진단 완료 & 0<진행<100) 코스 중 마지막 학습이 가장 최근인 것.
   // 정렬은 프론트에서 lastActivityAt(서버가 MAX(attempts.created_at)로 계산해 준 값) 최신순으로.
-  const continueCourse = courses
+  const continueCourse = allCourses
     .filter(
       (c) =>
         c.diagStatus === "completed" &&
@@ -160,7 +204,7 @@ export function LibraryPage() {
     .sort((a, b) => (b.lastActivityAt ?? "").localeCompare(a.lastActivityAt ?? ""))[0];
 
   // 커버 색/아이콘을 책장 안에서 안 겹치게 미리 배정
-  const coverByCourse = assignCovers(courses);
+  const coverByCourse = assignCovers(allCourses);
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-12 py-12">
@@ -183,10 +227,11 @@ export function LibraryPage() {
           <h3 className="text-xl font-bold text-text-primary">나의 책장</h3>
         </div>
 
-        {courses.length === 0 ? (
+        {allCourses.length === 0 ? (
           /* 첫 사용자(코스 0개) — 새 학습 시작을 크게 강조한 빈 상태 */
           <button
             type="button"
+            onClick={() => navigate("/create")}
             className="group flex w-full flex-col items-center justify-center rounded-2xl border-2 border-dashed border-accent/40 bg-accent/5 py-20 text-center transition-colors hover:bg-accent/10"
           >
             <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-accent text-[2.5rem] text-white shadow-sm">
@@ -202,10 +247,10 @@ export function LibraryPage() {
           </button>
         ) : (
           <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-8">
-            {/* 새 학습 추가 슬롯 — 맨 앞 고정(코스 많아도 좌상단에서 바로 찾음).
-                목적지는 CreateCoursePage 붙일 때 연결 */}
+            {/* 새 학습 추가 슬롯 — 맨 앞 고정(코스 많아도 좌상단에서 바로 찾음) */}
             <button
               type="button"
+              onClick={() => navigate("/create")}
               className="group flex min-h-[350px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border-primary p-8 text-center transition-colors hover:border-accent hover:bg-accent/5"
             >
               <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-bg-secondary text-[2rem] text-text-tertiary transition-colors group-hover:bg-accent group-hover:text-white">
@@ -215,7 +260,7 @@ export function LibraryPage() {
               <p className="text-[0.9rem] text-text-secondary">새로운 목표를 책장에 꽂아보세요.</p>
             </button>
 
-            {courses.map((course) => (
+            {allCourses.map((course) => (
               <BookCard key={course.id} course={course} cover={coverByCourse.get(course.id)!} />
             ))}
           </div>
