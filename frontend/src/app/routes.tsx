@@ -9,6 +9,7 @@ import { LearningPage } from "@/pages/LearningPage";
 import { LibraryPage } from "@/pages/LibraryPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
 import { SettingsPage } from "@/pages/SettingsPage";
+import { CreateCoursePage } from "@/pages/CreateCoursePage";
 
 // URL 기반 페이지 매핑 지도
 // 두 개의 셸: App(마케팅 헤더) / AppLayout(로그인 후 사이드바). 사이드바는 고정, 본문만 교체.
@@ -35,4 +36,6 @@ export const router = createBrowserRouter([
       { path: "settings", element: <SettingsPage /> },
     ],
   },
+  // 수업 생성 위저드 — 셸 없는 전체화면 집중 플로우
+  { path: "/create", element: <CreateCoursePage /> },
 ]);

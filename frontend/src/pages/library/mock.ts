@@ -17,6 +17,7 @@ export type CourseSummary = {
   sectionsCompleted: number; // section_progress(status=completed) 집계
   nextSectionTitle?: string; // 다음 학습할 절(첫 not_started section) — 이어서 배너용 힌트
   lastActivityAt: string | null; // 마지막 학습 시각 = MAX(attempts.created_at). 계산값(컬럼 아님), 활동 없으면 null
+  generating?: boolean; // 씨앗 생성 중(방금 만든 코스). 백엔드에선 gen_status로 대체
 };
 
 export const meStats: MeStats = {
