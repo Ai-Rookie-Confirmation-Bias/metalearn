@@ -10,6 +10,7 @@ __pycache__/
 
 # node / vite
 node_modules/
+.pnpm-store/
 dist/
 
 # os / editor

@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetaLearn - 몰입 학습 모드</title>
+    <!-- Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <!-- KaTeX -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.8/dist/contrib/auto-render.min.js" onload="renderMathInElement(document.body);"></script>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        .focus-top-bar { position: fixed; top: 0; left: 0; width: 100%; display: flex; justify-content: space-between; align-items: center; padding: 1rem 2rem; z-index: 1200; }
+        .focus-top-bar .logo-area { color: rgba(255,255,255,0.7); font-weight: 700; display: flex; align-items: center; gap: 0.5rem; text-decoration: none; transition: color 0.2s; }
+        .focus-top-bar .logo-area:hover { color: #fff; }
+    </style>
+</head>
+<body class="focus-mode">
+
+    <!-- 상단 바 -->
+    <div class="focus-top-bar">
+        <a href="learning.html" class="logo-area">
+            <i class="ph-fill ph-caret-left"></i> 일반 학습으로 돌아가기
+        </a>
+    </div>
+
+    <!-- 플리커 방지 투명 오버레이 히트박스 -->
+    <div class="minimap-overlay-hitbox" id="minimapOverlay"></div>
+
+    <!-- 우측 상단 2D 미니맵 -->
+    <div class="focus-minimap-2d" id="minimap2D">
+        <!-- JS로 동적 생성 -->
+    </div>
+
+    <!-- 메인 2D 뷰포트 -->
+    <div class="matrix-viewport">
+        <!-- 줌인/줌아웃을 담당하는 전체 맵 래퍼 -->
+        <div class="matrix-map" id="matrixMap">
+            <!-- X축 (가로 챕터) -->
+            <div class="matrix-x-track" id="matrixXTrack">
+                
+                <!-- Chapter 1 (index: 0) -->
+                <div class="matrix-chapter" data-title="1. C언어 개요 및 환경설정">
+                    <!-- Y축 (세로 블록) -->
+                    <div class="matrix-y-track">
+                        <!-- Block 0,0 -->
+                        <div class="matrix-block active">
+                            <div class="learning-block-wrapper">
+                                <div class="focus-chapter-title-inline">1. C언어 개요 및 환경설정</div>
+                                <div class="learning-block type-concept">
+                                    <div class="block-source book"><i class="ph-fill ph-book-open"></i> 교재 출처</div>
+                                    <h3 class="block-title">개념 요약</h3>
+                                    <div class="block-body">
+                                        메모리에 데이터를 저장하기 위해 공간을 할당받는 것을 <strong>'선언(Declaration)'</strong>이라 하고, 처음으로 값을 집어넣는 것을 <strong>'초기화(Initialization)'</strong>라고 합니다. 선언만 하고 초기화하지 않으면 메모리 안의 알 수 없는 쓰레기 값(Garbage value)이 남게 됩니다.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Block 0,1 -->
+                        <div class="matrix-block">
+                            <div class="learning-block-wrapper">
+                                <div class="focus-chapter-title-inline">1. C언어 개요 및 환경설정</div>
+                                <div class="learning-block type-cloze">
+                                    <div class="block-source"><i class="ph-fill ph-robot"></i> AI 생성</div>
+                                    <h3 class="block-title">인출 확인 (빈칸 채우기)</h3>
+                                    <div class="block-body cloze-sentence">
+                                        C언어에서 변수를 만들고 처음 값을 넣을 때, <br>
+                                        <code>int age;</code> 과정은 메모리 공간을 만드는 
+                                        <input type="text" class="cloze-blank" id="cloze1" data-answer="선언" placeholder="?"> 과정이고, <br>
+                                        <code>age = 20;</code> 과정은 처음 값을 넣는 
+                                        <input type="text" class="cloze-blank" id="cloze2" data-answer="초기화" placeholder="?"> 과정입니다.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Block 0,2 -->
+                        <div class="matrix-block">
+                            <div class="learning-block-wrapper">
+                                <div class="focus-chapter-title-inline">1. C언어 개요 및 환경설정</div>
+                                <div class="learning-block type-mcq">
+                                    <div class="block-source"><i class="ph-fill ph-robot"></i> AI 생성</div>
+                                    <h3 class="block-title">객관식 퀴즈</h3>
+                                    <div class="block-body">
+                                        <div class="mcq-question">다음 중 초기화되지 않은 변수를 사용할 때 발생하는 문제로 가장 적절한 것은?</div>
+                                        <div class="mcq-options">
+                                            <div class="mcq-option" onclick="selectMcq(this, false)">
+                                                <div class="option-indicator">A</div>
+                                                <span>컴파일 에러가 발생하며 프로그램이 즉시 종료된다.</span>
+                                            </div>
+                                            <div class="mcq-option" onclick="selectMcq(this, true)">
+                                                <div class="option-indicator">B</div>
+                                                <span>의미 없는 쓰레기 값(Garbage value)이 사용된다.</span>
+                                            </div>
+                                            <div class="mcq-option" onclick="selectMcq(this, false)">
+                                                <div class="option-indicator">C</div>
+                                                <span>자동으로 0으로 세팅된다.</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <!-- Block 0,3 -->
+                        <div class="matrix-block">
+                            <div class="learning-block-wrapper">
+                                <div class="focus-chapter-title-inline">1. C언어 개요 및 환경설정</div>
+                                <div class="learning-block type-cloze">
+                                    <div class="block-source"><i class="ph-fill ph-robot"></i> AI 생성</div>
+                                    <h3 class="block-title">파인만식 역질문</h3>
+                                    <div class="block-body">
+                                        <div class="explain-prompt">초등학교 5학년 동생에게 '변수 선언'과 '초기화'를 비유를 들어 설명해 보세요.</div>
+                                        <textarea class="explain-textarea" id="explainText" placeholder="예: 변수 선언은 빈 상자를 준비하는 거고..."></textarea>
+                                        <div class="explain-action">
+                                            <button class="btn-primary" onclick="submitExplain()">제출 및 피드백 받기</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chapter 2 (index: 1) - 샘플 챕터 -->
+                <div class="matrix-chapter" data-title="2. 변수와 연산자">
+                    <div class="matrix-y-track">
+                        <!-- Block 1,0 -->
+                        <div class="matrix-block">
+                            <div class="learning-block-wrapper">
+                                <div class="focus-chapter-title-inline">2. 변수와 연산자</div>
+                                <div class="learning-block type-concept">
+                                    <h3 class="block-title">다음 챕터: 변수의 자료형</h3>
+                                    <div class="block-body" style="text-align:center; padding: 4rem;">
+                                        <i class="ph ph-lock-key" style="font-size: 3rem; color: #555; margin-bottom: 1rem;"></i><br>
+                                        이전 챕터의 인출 학습을 모두 완료해야 잠금이 해제됩니다.
+                                        <br><br>
+                                        <button class="btn-primary" onclick="location.href='learning.html'">돌아가기</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chapter 3 - 확장 테스트용 더미 -->
+                <div class="matrix-chapter" data-title="3. 조건문과 반복문">
+                    <div class="matrix-y-track">
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">3-1. if문 기초</h3></div></div></div>
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">3-2. switch문 활용</h3></div></div></div>
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">3-3. for 반복문</h3></div></div></div>
+                    </div>
+                </div>
+
+                <!-- Chapter 4 - 확장 테스트용 더미 -->
+                <div class="matrix-chapter" data-title="4. 배열과 포인터">
+                    <div class="matrix-y-track">
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">4-1. 1차원 배열</h3></div></div></div>
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">4-2. 포인터의 개념</h3></div></div></div>
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">4-3. 배열과 포인터의 관계</h3></div></div></div>
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">4-4. 이중 포인터</h3></div></div></div>
+                    </div>
+                </div>
+
+                <!-- Chapter 5 - 확장 테스트용 더미 -->
+                <div class="matrix-chapter" data-title="5. 구조체와 동적할당">
+                    <div class="matrix-y-track">
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">5-1. 구조체 선언</h3></div></div></div>
+                        <div class="matrix-block"><div class="learning-block-wrapper"><div class="learning-block"><h3 class="block-title">5-2. 메모리 동적할당</h3></div></div></div>
+                    </div>
+                </div>
+                
+            </div>
+        </div>
+    </div>
+
+    <!-- 우측 하단 2D 네비게이션 컨트롤 -->
+    <div class="focus-nav-2d">
+        <button onclick="moveY(-1)" id="btnUp" title="위로 (이전 문제)"><i class="ph ph-arrow-up"></i></button>
+        <button onclick="moveY(1)" id="btnDown" title="아래로 (다음 문제)"><i class="ph ph-arrow-down"></i></button>
+        <button onclick="moveX(-1)" id="btnLeft" title="이전 챕터"><i class="ph ph-arrow-left"></i></button>
+        <button onclick="moveX(1)" id="btnRight" title="다음 챕터"><i class="ph ph-arrow-right"></i></button>
+    </div>
+
+    <script>
+        let currentX = 0; // Chapter Index
+        let currentY = 0; // Block Index
+
+        const matrixMap = document.getElementById('matrixMap');
+        const chapters = document.querySelectorAll('.matrix-chapter');
+        const xTrack = document.getElementById('matrixXTrack');
+        const minimap2D = document.getElementById('minimap2D');
+        const minimapOverlay = document.getElementById('minimapOverlay');
+        
+        document.addEventListener('DOMContentLoaded', () => {
+            initMinimap();
+            renderMatrix(false);
+            updateButtons();
+        });
+
+        // 미니맵 마우스 이벤트 제어 (플리커 방지)
+        minimap2D.addEventListener('mouseenter', () => {
+            minimap2D.classList.add('expanded');
+            minimapOverlay.classList.add('active');
+        });
+
+        minimapOverlay.addEventListener('mousemove', (e) => {
+            // 오버레이 내에서 마우스가 움직여도 미니맵이 확장된 상태를 유지
+            // 단, 미니맵 박스 바깥으로 완전히 나가서 다른 곳을 클릭하거나 일정 영역을 벗어나면 닫힘 처리를 할 수 있지만, 
+            // 여기서는 오버레이 영역을 벗어나는 mouseleave 이벤트로 처리합니다.
+        });
+
+        minimapOverlay.addEventListener('mouseleave', () => {
+            minimap2D.classList.remove('expanded');
+            minimapOverlay.classList.remove('active');
+            updateMinimapScroll(); // 작아질 때 다시 내 위치로 트래킹
+        });
+
+        // 1. 미니맵 초기화
+        function initMinimap() {
+            minimap2D.innerHTML = '';
+            
+            chapters.forEach((chapter, xIdx) => {
+                const col = document.createElement('div');
+                col.className = 'minimap-chapter-col';
+                
+                const title = document.createElement('div');
+                title.className = 'minimap-chapter-title';
+                title.innerText = 'Ch ' + (xIdx + 1);
+                col.appendChild(title);
+                
+                const yBlocks = chapter.querySelectorAll('.matrix-block');
+                yBlocks.forEach((block, yIdx) => {
+                    const dot = document.createElement('div');
+                    dot.className = 'minimap-dot';
+                    dot.id = `dot-${xIdx}-${yIdx}`;
+                    
+                    const blockTitleEl = block.querySelector('.block-title');
+                    const tooltipText = blockTitleEl ? blockTitleEl.innerText : `문제 ${xIdx+1}-${yIdx+1}`;
+                    dot.setAttribute('title', `Ch ${xIdx+1} - ${tooltipText}`);
+
+                    dot.onclick = (e) => {
+                        e.stopPropagation(); // 오버레이 클릭 방지
+                        if(currentX === xIdx && currentY === yIdx) return;
+                        
+                        const isChapterChange = (currentX !== xIdx);
+                        currentX = xIdx;
+                        currentY = yIdx;
+                        
+                        // 클릭 시 맵 닫기
+                        minimap2D.classList.remove('expanded');
+                        minimapOverlay.classList.remove('active');
+                        
+                        // 닫히는 애니메이션(0.5s) 후 올바른 크기에서 스크롤 트래킹
+                        setTimeout(() => updateMinimapScroll(), 550);
+                        
+                        renderMatrix(isChapterChange);
+                    };
+                    col.appendChild(dot);
+                });
+                minimap2D.appendChild(col);
+            });
+        }
+
+        function updateMinimap() {
+            chapters.forEach((chapter, xIdx) => {
+                const yBlocks = chapter.querySelectorAll('.matrix-block');
+                yBlocks.forEach((_, yIdx) => {
+                    const dot = document.getElementById(`dot-${xIdx}-${yIdx}`);
+                    if (!dot) return;
+                    
+                    dot.classList.remove('active', 'completed');
+                    if (xIdx === currentX && yIdx === currentY) {
+                        dot.classList.add('active');
+                    } else if (xIdx < currentX || (xIdx === currentX && yIdx < currentY)) {
+                        dot.classList.add('completed');
+                    }
+                });
+            });
+            updateMinimapScroll();
+        }
+
+        function updateMinimapScroll() {
+            const activeDot = document.getElementById(`dot-${currentX}-${currentY}`);
+            if (minimap2D && activeDot) {
+                if(!minimap2D.classList.contains('expanded')) {
+                    const scrollLeft = activeDot.offsetLeft - (minimap2D.clientWidth / 2) + (activeDot.offsetWidth / 2);
+                    const scrollTop = activeDot.offsetTop - (minimap2D.clientHeight / 2) + (activeDot.offsetHeight / 2);
+                    
+                    minimap2D.scrollTo({ left: scrollLeft, top: scrollTop, behavior: 'smooth' });
+                }
+            }
+        }
+
+        // 2. 화면 이동 (Zoom -> Pan -> Zoom) 렌더링
+        let isAnimating = false;
+
+        function renderMatrix(isPanAndZoom) {
+            if (isAnimating) return;
+            updateButtons();
+            updateMinimap();
+
+            if (isPanAndZoom) {
+                isAnimating = true;
+                
+                // 0. 출발지 챕터의 시야를 맨 위로 끌어올림 (카메라가 전체 조망을 위해 위로 올라가는 효과)
+                const activeChapter = document.querySelector('.matrix-chapter.active');
+                if(activeChapter) {
+                    activeChapter.scrollTo({ top: 0, behavior: 'smooth' });
+                }
+
+                // 1. Zoom Out (0.8s 애니메이션)
+                matrixMap.classList.add('zoomed-out');
+                
+                // 2. 줌아웃이 어느정도 된 시점에 이동 시작 (400ms)
+                setTimeout(() => {
+                    // 상태 리셋 및 활성화
+                    document.querySelectorAll('.matrix-chapter').forEach(c => c.classList.remove('active'));
+                    document.querySelectorAll('.matrix-block').forEach(b => b.classList.remove('active'));
+                    
+                    const targetChapter = chapters[currentX];
+                    targetChapter.classList.add('active');
+                    const targetBlock = targetChapter.querySelectorAll('.matrix-block')[currentY];
+                    if(targetBlock) targetBlock.classList.add('active');
+
+                    // 줌 상태에서의 스크롤 오차를 피하기 위해 우선 스크롤을 최상단으로 리셋
+                    targetChapter.scrollTop = 0;
+
+                    // X축 슬라이드 이동 (0.8s 애니메이션)
+                    xTrack.style.transform = `translateX(-${currentX * 100}vw)`;
+                    
+                    // 3. 이동이 진행되는 동안 Zoom In 시작 (500ms 후)
+                    setTimeout(() => {
+                        matrixMap.classList.remove('zoomed-out');
+                        
+                        // 4. 줌 인이 거의 끝나는 시점(600ms 후)에 정중앙 완벽 안착
+                        setTimeout(() => {
+                            if(targetBlock) {
+                                targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                            }
+                            isAnimating = false;
+                        }, 600); 
+                    }, 500); 
+                }, 400); 
+
+            } else {
+                // 세로 이동 시 (즉시 렌더 + 부드러운 스크롤)
+                isAnimating = true;
+                
+                document.querySelectorAll('.matrix-chapter').forEach(c => c.classList.remove('active'));
+                document.querySelectorAll('.matrix-block').forEach(b => b.classList.remove('active'));
+                
+                const targetChapter = chapters[currentX];
+                targetChapter.classList.add('active');
+                const targetBlock = targetChapter.querySelectorAll('.matrix-block')[currentY];
+                if(targetBlock) targetBlock.classList.add('active');
+
+                if(targetBlock) {
+                    // 세로 이동은 부드러운 스크롤 효과
+                    targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+
+                setTimeout(() => {
+                    isAnimating = false;
+                }, 600);
+            }
+        }
+
+        // 3. 버튼 상태 업데이트
+        function updateButtons() {
+            const currentChapterBlocksCount = chapters[currentX].querySelectorAll('.matrix-block').length;
+            
+            document.getElementById('btnUp').disabled = (currentY === 0);
+            document.getElementById('btnDown').disabled = (currentY === currentChapterBlocksCount - 1);
+            document.getElementById('btnLeft').disabled = (currentX === 0);
+            document.getElementById('btnRight').disabled = (currentX === chapters.length - 1);
+        }
+
+        // 4. 이동 컨트롤
+        function moveY(delta) {
+            if (isAnimating) return; // 줌 애니메이션 중 이동 차단
+            
+            const currentChapterBlocksCount = chapters[currentX].querySelectorAll('.matrix-block').length;
+            const newY = currentY + delta;
+            
+            if (newY >= 0 && newY < currentChapterBlocksCount) {
+                currentY = newY;
+                renderMatrix(false); // 세로 이동 시에는 줌 아웃 효과 없이 바로 슬라이드(팬)
+            }
+        }
+
+        function moveX(delta) {
+            if (isAnimating) return; // 애니메이션 중 이동 차단
+
+            const newX = currentX + delta;
+            if (newX >= 0 && newX < chapters.length) {
+                currentX = newX;
+                currentY = 0; // 챕터 이동 시 첫 블록부터 시작
+                renderMatrix(true); // 챕터(가로) 이동 시에만 줌 아웃 애니메이션 적용
+            }
+        }
+
+        // 키보드 방향키 조작 추가
+        document.addEventListener('keydown', (e) => {
+            if (isAnimating) return; // 키보드 연타 방지
+            
+            if (e.key === 'ArrowUp') moveY(-1);
+            else if (e.key === 'ArrowDown') moveY(1);
+            else if (e.key === 'ArrowLeft') moveX(-1);
+            else if (e.key === 'ArrowRight') moveX(1);
+        });
+
+        // 퀴즈 피드백 로직
+        function selectMcq(element, isCorrect) {
+            const options = element.parentElement.querySelectorAll('.mcq-option');
+            options.forEach(opt => {
+                opt.style.borderColor = '#444';
+                opt.style.backgroundColor = 'transparent';
+            });
+            if(isCorrect) {
+                element.style.borderColor = '#10b981';
+                element.style.backgroundColor = 'rgba(16, 185, 129, 0.1)';
+            } else {
+                element.style.borderColor = '#ef4444';
+                element.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+            }
+        }
+
+        function submitExplain() {
+            const btn = document.querySelector('.explain-action .btn-primary');
+            btn.innerHTML = '<i class="ph-fill ph-spinner ph-spin"></i> 피드백 생성 중...';
+            setTimeout(() => {
+                btn.innerHTML = '완벽하게 이해하셨네요! (AI 피드백)';
+                btn.style.backgroundColor = '#10b981';
+            }, 1000);
+        }
+    </script>
+</body>
+</html>

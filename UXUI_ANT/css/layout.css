@@ -1,0 +1,65 @@
+/* Global Header */
+.global-header {
+    position: fixed; top: 0; left: 0; width: 100%;
+    padding: 2rem 0; z-index: 100; pointer-events: none;
+}
+.global-header-inner {
+    width: 100%; max-width: var(--max-width);
+    margin: 0 auto; padding: 0 2rem;
+    display: flex;
+}
+.global-logo {
+    display: inline-flex; align-items: center; gap: 0.5rem;
+    font-weight: 800; font-size: 1.5rem; letter-spacing: -0.02em;
+    color: var(--primary-color); pointer-events: auto;
+    text-shadow: 0 2px 4px rgba(255,255,255,0.8);
+}
+.global-logo i { font-size: 2rem; color: var(--accent-color); }
+
+/* Split Layout (Zig-Zag) */
+.split-layout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    align-items: center;
+    max-width: var(--max-width);
+    margin: 0 auto;
+    padding: 0 2rem;
+    width: 100%;
+}
+.split-layout.reverse {
+    /* 우측 텍스트, 좌측 이미지(비주얼) */
+    grid-template-areas: "visual text";
+}
+.split-layout.reverse .split-text { grid-area: text; }
+.split-layout.reverse .split-visual { grid-area: visual; }
+
+@media (max-width: 900px) {
+    .split-layout, .split-layout.reverse {
+        grid-template-columns: 1fr;
+        grid-template-areas: "text" "visual";
+        gap: 2rem;
+        text-align: center;
+    }
+}
+
+.split-text { display: flex; flex-direction: column; align-items: flex-start; }
+@media (max-width: 900px) { .split-text { align-items: center; } }
+
+.split-title {
+    font-size: 3.5rem; font-weight: 800; letter-spacing: -0.04em;
+    line-height: 1.1; margin-bottom: 1.5rem; text-align: left;
+}
+@media (max-width: 900px) { .split-title { text-align: center; font-size: 3rem; } }
+
+.split-subtitle {
+    font-size: 1.125rem; color: var(--text-secondary);
+    margin-bottom: 2.5rem; line-height: 1.6; text-align: left;
+}
+@media (max-width: 900px) { .split-subtitle { text-align: center; } }
+
+/* 시각적으로 양쪽 여백이 동일해 보이도록 끝선에 정렬 */
+.split-visual { width: 100%; display: flex; justify-content: flex-end; position: relative; }
+.split-layout.reverse .split-visual { justify-content: flex-start; }
+@media (max-width: 900px) { .split-visual, .split-layout.reverse .split-visual { justify-content: center; } }
+

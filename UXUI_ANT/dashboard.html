@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MetaLearn - 대시보드</title>
+    <!-- 구글 폰트: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
+    <!-- 아이콘 -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body class="dashboard-body">
+
+    <!-- 사이드바 -->
+    <aside class="sidebar">
+        <div class="sidebar-header">
+            <div class="sidebar-logo">
+                <i class="ph ph-hexagon"></i>
+                <span>MetaLearn</span>
+            </div>
+        </div>
+        
+        <nav class="sidebar-nav">
+            <a href="dashboard.html" class="nav-item active">
+                <i class="ph ph-squares-four"></i> 대시보드
+            </a>
+            <a href="#" class="nav-item">
+                <i class="ph ph-books"></i> 나의 책장
+            </a>
+            <a href="#" class="nav-item">
+                <i class="ph ph-chart-line-up"></i> 메타인지 분석
+            </a>
+            <a href="#" class="nav-item">
+                <i class="ph ph-calendar-check"></i> 캘린더
+            </a>
+            <div class="nav-divider"></div>
+            <a href="#" class="nav-item">
+                <i class="ph ph-gear"></i> 설정
+            </a>
+        </nav>
+        
+        <div class="sidebar-footer">
+            <div class="pro-upgrade-card">
+                <i class="ph ph-lightning text-accent"></i>
+                <h5>Pro로 업그레이드</h5>
+                <p>무제한 AI 학습 분석을 경험하세요.</p>
+            </div>
+        </div>
+    </aside>
+
+    <!-- 메인 컨텐츠 영역 -->
+    <main class="main-content">
+        <!-- 대시보드 헤더 -->
+        <header class="dash-header">
+            <div class="dash-search">
+                <i class="ph ph-magnifying-glass"></i>
+                <input type="text" placeholder="어떤 강의나 목표를 찾고 계신가요?">
+            </div>
+            
+            <div class="dash-actions">
+                <button class="icon-btn"><i class="ph ph-bell"></i></button>
+                <div class="user-profile">
+                    <img src="https://ui-avatars.com/api/?name=User&background=0D8ABC&color=fff" alt="User" class="avatar">
+                    <span class="user-name">학습자님</span>
+                </div>
+            </div>
+        </header>
+
+        <!-- 대시보드 컨텐츠 -->
+        <div class="dash-container">
+            
+            <div class="page-title-wrap">
+                <h2 class="page-title">오늘도 성장할 준비 되셨나요?</h2>
+                <p class="page-subtitle">지금까지 14일째 꾸준히 학습 중입니다.</p>
+            </div>
+
+            <!-- 학습 현황 오버뷰 -->
+            <section class="overview-grid">
+                <div class="stat-card">
+                    <div class="stat-icon bg-blue"><i class="ph ph-fire"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">연속 학습 달성</div>
+                        <div class="stat-value">14 <span class="stat-unit">일</span></div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon bg-green"><i class="ph ph-clock"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">이번 주 학습 시간</div>
+                        <div class="stat-value">8.5 <span class="stat-unit">시간</span></div>
+                    </div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-icon bg-purple"><i class="ph ph-target"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">주간 목표 달성률</div>
+                        <div class="stat-value">82 <span class="stat-unit">%</span></div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- 나의 책장 (학습 과정) -->
+            <section class="library-section">
+                <div class="section-header-flex">
+                    <h3 class="section-title">나의 책장 (현재 학습 중)</h3>
+                    <a href="#" class="view-all-link">전체 보기 <i class="ph ph-caret-right"></i></a>
+                </div>
+
+                <div class="book-grid">
+                    
+                    <!-- 강좌 카드 1 -->
+                    <div class="book-card">
+                        <div class="book-cover cover-python">
+                            <i class="ph ph-file-code"></i>
+                            <span class="book-badge">입문</span>
+                        </div>
+                        <div class="book-content">
+                            <h4 class="book-title">왕초보를 위한 파이썬 기초</h4>
+                            <p class="book-desc">변수와 자료형, 반복문 마스터하기</p>
+                            
+                            <div class="progress-wrap">
+                                <div class="progress-info">
+                                    <span class="progress-label">진행률</span>
+                                    <span class="progress-percent">45%</span>
+                                </div>
+                                <div class="progress-bar-bg">
+                                    <div class="progress-bar-fill" style="width: 45%;"></div>
+                                </div>
+                            </div>
+                            
+                            <a href="learning.html" class="btn-primary w-full mt-4" style="text-align: center; justify-content: center;">이어서 학습하기</a>
+                        </div>
+                    </div>
+
+                    <!-- 강좌 카드 2 -->
+                    <div class="book-card">
+                        <div class="book-cover cover-english">
+                            <i class="ph ph-translate"></i>
+                            <span class="book-badge">중급</span>
+                        </div>
+                        <div class="book-content">
+                            <h4 class="book-title">실전 비즈니스 영어 회화</h4>
+                            <p class="book-desc">이메일 작성 및 미팅 리드하기</p>
+                            
+                            <div class="progress-wrap">
+                                <div class="progress-info">
+                                    <span class="progress-label">진행률</span>
+                                    <span class="progress-percent">80%</span>
+                                </div>
+                                <div class="progress-bar-bg">
+                                    <div class="progress-bar-fill" style="width: 80%;"></div>
+                                </div>
+                            </div>
+                            
+                            <button class="btn-primary w-full mt-4">이어서 학습하기</button>
+                        </div>
+                    </div>
+
+                    <!-- 새로운 공부 추가 슬롯 -->
+                    <a href="create_course.html" class="book-card add-new-card" style="text-decoration: none; color: inherit;">
+                        <div class="add-new-content">
+                            <div class="add-icon-wrap">
+                                <i class="ph ph-plus"></i>
+                            </div>
+                            <h4 class="book-title">새로운 학습 시작하기</h4>
+                            <p class="book-desc">새로운 목표를 책장에 꽂아보세요.</p>
+                        </div>
+                    </a>
+
+                </div>
+            </section>
+            
+        </div>
+    </main>
+
+</body>
+</html>

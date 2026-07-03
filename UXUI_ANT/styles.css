@@ -1,0 +1,11 @@
+@import url('./css/variables.css');
+@import url('./css/reset.css');
+@import url('./css/layout.css');
+@import url('./css/components.css');
+
+/* Pages */
+@import url('./css/pages/landing.css');
+@import url('./css/pages/dashboard.css');
+@import url('./css/pages/create-course.css');
+@import url('./css/pages/learning.css');
+@import url('./css/pages/focus.css');
