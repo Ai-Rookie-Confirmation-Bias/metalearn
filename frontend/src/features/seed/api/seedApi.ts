@@ -1,6 +1,7 @@
 import { apiClient, llmApiClient } from "@/shared/api/client";
 import type {
   AnswerItem,
+  BootstrapResponse,
   Curriculum,
   DiagnosticResult,
   DiagnosticSession,
@@ -29,6 +30,13 @@ export async function fetchSkeleton(documentId: string): Promise<DocumentSkeleto
   return data;
 }
 
+export async function bootstrapFromDocument(documentId: string): Promise<BootstrapResponse> {
+  const { data } = await llmApiClient.post<BootstrapResponse>("/api/seed/bootstrap", {
+    document_id: documentId,
+  });
+  return data;
+}
+
 export async function createProfile(body: SurveyRequest): Promise<SeedProfileResponse> {
   const { data } = await apiClient.post<SeedProfileResponse>("/api/seed/profiles", body);
   return data;
@@ -45,7 +53,7 @@ export async function submitDiagnostic(
   sessionId: string,
   answers: AnswerItem[],
 ): Promise<DiagnosticResult> {
-  const { data } = await apiClient.post<DiagnosticResult>(
+  const { data } = await llmApiClient.post<DiagnosticResult>(
     `/api/seed/diagnostics/${sessionId}/submit`,
     { answers },
   );
@@ -55,7 +63,6 @@ export async function submitDiagnostic(
 export async function analyzePrerequisites(body: {
   document_id: string;
   learning_range: LearningRange;
-  known_before?: string[];
 }): Promise<PrerequisiteAnalysis> {
   const { data } = await llmApiClient.post<PrerequisiteAnalysis>(
     "/api/seed/prerequisites/analyze",

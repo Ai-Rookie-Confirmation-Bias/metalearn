@@ -2,28 +2,23 @@ import { useMutation } from "@tanstack/react-query";
 import { useState } from "react";
 
 import {
-  createProfile,
+  bootstrapFromDocument,
   fetchSeedSlice,
-  fetchSkeleton,
   generateCurriculum,
-  startDiagnostic,
   submitDiagnostic,
   uploadDocument,
 } from "@/features/seed/api/seedApi";
 import { CurriculumView } from "@/features/seed/components/CurriculumView";
 import { DiagnosticQuiz } from "@/features/seed/components/DiagnosticQuiz";
 import { PdfUploadStep } from "@/features/seed/components/PdfUploadStep";
-import { SurveyWizard } from "@/features/seed/components/SurveyWizard";
 import type {
+  AnswerItem,
   Curriculum,
   DiagnosticSession,
-  DocumentResponse,
-  DocumentSkeleton,
-  LearningGoal,
   SeedSlice,
 } from "@/features/seed/types";
 
-type FlowStep = "upload" | "survey" | "diagnostic" | "curriculum";
+type FlowStep = "upload" | "diagnostic" | "curriculum";
 
 function getErrorMessage(err: unknown): string {
   if (err && typeof err === "object" && "response" in err) {
@@ -38,53 +33,30 @@ function getErrorMessage(err: unknown): string {
 
 export function SeedPage() {
   const [flowStep, setFlowStep] = useState<FlowStep>("upload");
-  const [document, setDocument] = useState<DocumentResponse | null>(null);
-  const [skeleton, setSkeleton] = useState<DocumentSkeleton | null>(null);
   const [session, setSession] = useState<DiagnosticSession | null>(null);
+  const [prerequisiteCount, setPrerequisiteCount] = useState(0);
   const [seedSlice, setSeedSlice] = useState<SeedSlice | null>(null);
   const [curriculum, setCurriculum] = useState<Curriculum | null>(null);
   const [flowError, setFlowError] = useState<string | null>(null);
 
   const uploadMutation = useMutation({
-    mutationFn: uploadDocument,
-    onSuccess: async (doc) => {
-      setFlowError(null);
-      setDocument(doc);
-      const sk = await fetchSkeleton(doc.id);
-      setSkeleton(sk);
-      setFlowStep("survey");
+    mutationFn: async (file: File) => {
+      const doc = await uploadDocument(file);
+      const boot = await bootstrapFromDocument(doc.id);
+      return { doc, boot };
     },
-    onError: (err) => setFlowError(getErrorMessage(err)),
-  });
-
-  const surveyMutation = useMutation({
-    mutationFn: async (payload: {
-      learning_range: { start: string; end: string };
-      known_before: string[];
-      learning_goal: LearningGoal | null;
-    }) => {
-      if (!document) throw new Error("문서가 없습니다.");
-      const profile = await createProfile({
-        document_id: document.id,
-        ...payload,
-      });
-      return startDiagnostic(profile.id);
-    },
-    onSuccess: (diagSession) => {
+    onSuccess: ({ boot }) => {
       setFlowError(null);
-      setSession(diagSession);
+      setSession(boot.diagnostic);
+      setPrerequisiteCount(boot.prerequisite_count);
       setFlowStep("diagnostic");
     },
     onError: (err) => setFlowError(getErrorMessage(err)),
   });
 
   const submitMutation = useMutation({
-    mutationFn: async (choices: Record<string, number>) => {
+    mutationFn: async (answers: AnswerItem[]) => {
       if (!session) throw new Error("진단 세션이 없습니다.");
-      const answers = Object.entries(choices).map(([question_id, choice_index]) => ({
-        question_id,
-        choice_index,
-      }));
       const result = await submitDiagnostic(session.id, answers);
       const slice = await fetchSeedSlice(result.profile_id);
       const curriculumData = await generateCurriculum(result.profile_id);
@@ -102,9 +74,8 @@ export function SeedPage() {
 
   const reset = () => {
     setFlowStep("upload");
-    setDocument(null);
-    setSkeleton(null);
     setSession(null);
+    setPrerequisiteCount(0);
     setSeedSlice(null);
     setCurriculum(null);
     setFlowError(null);
@@ -112,18 +83,17 @@ export function SeedPage() {
 
   return (
     <div>
-      <h1>Seed — PDF · 설문 · 진단 · 커리큘럼</h1>
+      <h1>Seed — PDF · 진단 · 커리큘럼</h1>
       <p style={{ color: "#666", marginBottom: "1.5rem" }}>
-        PDF 업로드 → 3단계 설문 → 진단 → 개인 맞춤 학습 로드맵
+        PDF 업로드 → Solar가 사전지식 탐색 · 진단 → 개인 맞춤 학습 로드맵
       </p>
 
       <nav style={{ marginBottom: "1.5rem", fontSize: "0.9rem", color: "#888" }}>
-        {(["upload", "survey", "diagnostic", "curriculum"] as FlowStep[]).map((s, i) => (
+        {(["upload", "diagnostic", "curriculum"] as FlowStep[]).map((s, i) => (
           <span key={s}>
             {i > 0 && " → "}
             <span style={{ fontWeight: flowStep === s ? 700 : 400, color: flowStep === s ? "#111" : "#888" }}>
               {s === "upload" && "업로드"}
-              {s === "survey" && "설문"}
               {s === "diagnostic" && "진단"}
               {s === "curriculum" && "커리큘럼"}
             </span>
@@ -139,19 +109,11 @@ export function SeedPage() {
         />
       )}
 
-      {flowStep === "survey" && skeleton && (
-        <SurveyWizard
-          skeleton={skeleton}
-          onSubmit={(payload) => surveyMutation.mutate(payload)}
-          isPending={surveyMutation.isPending}
-          error={flowError}
-        />
-      )}
-
       {flowStep === "diagnostic" && session && (
         <DiagnosticQuiz
           questions={session.questions}
-          onSubmit={(choices) => submitMutation.mutate(choices)}
+          prerequisiteCount={prerequisiteCount}
+          onSubmit={(answers) => submitMutation.mutate(answers)}
           isPending={submitMutation.isPending}
           error={flowError}
           generationMode={session.generation_mode}

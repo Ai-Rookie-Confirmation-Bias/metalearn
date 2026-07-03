@@ -57,25 +57,39 @@ export interface LearningRange {
 export interface SurveyRequest {
   document_id: string;
   learning_range: LearningRange;
-  known_before: string[];
   learning_goal?: LearningGoal | null;
+}
+
+export interface PrerequisiteConcept {
+  id: string;
+  label: string;
+  reason: string;
 }
 
 export interface SeedProfileResponse {
   id: string;
   document_id: string;
   learning_range: LearningRange;
-  known_before: string[];
   learning_goal: string | null;
   concepts_in_range: string[];
+  prerequisite_concepts: PrerequisiteConcept[];
   weaknesses: string[];
   status: string;
   created_at: string;
 }
 
+export interface BootstrapResponse {
+  profile_id: string;
+  diagnostic: DiagnosticSession;
+  prerequisite_count: number;
+}
+
+export type QuestionType = "multiple_choice" | "open_ended";
+
 export interface DiagnosticQuestion {
   id: string;
   concept_id: string;
+  question_type: QuestionType;
   question_text: string;
   options: string[];
 }
@@ -91,7 +105,8 @@ export interface DiagnosticSession {
 
 export interface AnswerItem {
   question_id: string;
-  choice_index: number;
+  choice_index?: number;
+  text_response?: string;
 }
 
 export interface DiagnosticResult {
@@ -106,7 +121,6 @@ export interface SeedSlice {
   document_id: string;
   profile_id: string;
   learning_range: LearningRange;
-  known_before: string[];
   learning_goal: string | null;
   concepts_in_range: string[];
   weaknesses: string[];
@@ -114,6 +128,7 @@ export interface SeedSlice {
 
 export type CurriculumPriority = "weakness" | "standard";
 export type CurriculumUnitStatus = "pending" | "in_progress" | "completed";
+export type CurriculumUnitType = "prerequisite" | "pdf_concept";
 
 export interface CurriculumUnit {
   order: number;
@@ -122,11 +137,13 @@ export interface CurriculumUnit {
   page_numbers: number[];
   chunk_ids: string[];
   chapter_id: string | null;
+  unit_type?: CurriculumUnitType;
   priority: CurriculumPriority;
   status: CurriculumUnitStatus;
   summary?: string | null;
   focus?: string | null;
   content?: string | null;
+  prereq_reason?: string | null;
 }
 
 export interface CurriculumChapterGroup {
@@ -156,8 +173,6 @@ export const LEARNING_GOAL_LABELS: Record<LearningGoal, string> = {
   skim: "훑어보기",
 };
 
-export const PREREQUISITE_LABELS: Record<string, string> = {
-  linear_algebra_basics: "선형대수 기초",
-  calculus_basics: "미적분 기초",
-  probability_basics: "확률 기초",
-};
+export function isPrerequisiteConceptId(conceptId: string): boolean {
+  return conceptId.startsWith("prereq_");
+}

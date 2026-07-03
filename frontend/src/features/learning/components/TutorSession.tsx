@@ -4,6 +4,7 @@ import { useState, type ReactNode } from "react";
 import {
   completeSession,
   getHint,
+  startPrerequisiteSession,
   startSession,
   submitResponse,
 } from "@/features/learning/api/learningApi";
@@ -14,6 +15,14 @@ import type { CurriculumUnit } from "@/features/seed/types";
 import { Button } from "@/shared/ui/Button";
 
 type Phase = "learn" | "check";
+
+interface SessionFrame {
+  sessionId: string;
+  question: string;
+  title: string;
+  depth: number;
+  isNestedPrereq: boolean;
+}
 
 interface Props {
   profileId: string;
@@ -48,6 +57,27 @@ function PhaseLabel({ step, label }: { step: 1 | 2; label: string }) {
       }}
     >
       {step}단계 · {label}
+    </span>
+  );
+}
+
+function DepthBadge({ depth }: { depth: number }) {
+  if (depth <= 0) return null;
+  return (
+    <span
+      style={{
+        display: "inline-block",
+        marginLeft: 8,
+        padding: "2px 8px",
+        borderRadius: 999,
+        fontSize: "0.72rem",
+        fontWeight: 700,
+        background: "#ede7f6",
+        color: "#5e35b1",
+        border: "1px solid #b39ddb",
+      }}
+    >
+      선수개념 depth {depth}
     </span>
   );
 }
@@ -155,10 +185,19 @@ function LearnPhase({
   onStartCheck: () => void;
   isStarting: boolean;
 }) {
+  const isPrereq = unit.unit_type === "prerequisite";
+
   return (
     <div>
       <PhaseLabel step={1} label="학습" />
-      <GenerationBanner mode="llm" note="Solar가 생성한 단원 설명을 먼저 읽어 보세요." />
+      <GenerationBanner
+        mode="llm"
+        note={
+          isPrereq
+            ? "Solar가 생성한 사전지식 설명을 먼저 읽어 보세요."
+            : "Solar가 생성한 단원 설명을 먼저 읽어 보세요."
+        }
+      />
 
       {unit.focus && (
         <p
@@ -195,21 +234,53 @@ function LearnPhase({
   );
 }
 
+function resetCheckState(setters: {
+  setRespondResult: (v: RespondResponse | null) => void;
+  setExtraHints: (v: HintResponse[]) => void;
+  setUserResponse: (v: string) => void;
+  setPrereqReturnMessage: (v: string | null) => void;
+}) {
+  setters.setRespondResult(null);
+  setters.setExtraHints([]);
+  setters.setUserResponse("");
+  setters.setPrereqReturnMessage(null);
+}
+
 export function TutorSession({ profileId, unit, onComplete }: Props) {
   const [phase, setPhase] = useState<Phase>("learn");
-  const [sessionId, setSessionId] = useState<string | null>(null);
-  const [question, setQuestion] = useState<string | null>(null);
+  const [sessionStack, setSessionStack] = useState<SessionFrame[]>([]);
   const [userResponse, setUserResponse] = useState("");
   const [respondResult, setRespondResult] = useState<RespondResponse | null>(null);
   const [extraHints, setExtraHints] = useState<HintResponse[]>([]);
+  const [prereqReturnMessage, setPrereqReturnMessage] = useState<string | null>(null);
+  const [canGoDeeper, setCanGoDeeper] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const currentFrame = sessionStack[sessionStack.length - 1] ?? null;
+  const displayTitle = currentFrame?.title ?? unit.title;
+  const displayDepth = currentFrame?.depth ?? (unit.unit_type === "prerequisite" ? 1 : 0);
 
   const startMutation = useMutation({
     mutationFn: () => startSession(profileId, unit.order),
     onSuccess: (data) => {
       setError(null);
-      setSessionId(data.session_id);
-      setQuestion(data.question);
+      const baseDepth = unit.unit_type === "prerequisite" ? 1 : 0;
+      setSessionStack([
+        {
+          sessionId: data.session_id,
+          question: data.question,
+          title: unit.title,
+          depth: baseDepth,
+          isNestedPrereq: false,
+        },
+      ]);
+      resetCheckState({
+        setRespondResult,
+        setExtraHints,
+        setUserResponse,
+        setPrereqReturnMessage,
+      });
+      setCanGoDeeper(true);
       setPhase("check");
     },
     onError: (err) => setError(getErrorMessage(err)),
@@ -217,8 +288,8 @@ export function TutorSession({ profileId, unit, onComplete }: Props) {
 
   const respondMutation = useMutation({
     mutationFn: (response: string) => {
-      if (!sessionId) throw new Error("세션이 시작되지 않았습니다.");
-      return submitResponse(sessionId, response);
+      if (!currentFrame) throw new Error("세션이 시작되지 않았습니다.");
+      return submitResponse(currentFrame.sessionId, response);
     },
     onSuccess: (data) => {
       setError(null);
@@ -229,8 +300,8 @@ export function TutorSession({ profileId, unit, onComplete }: Props) {
 
   const hintMutation = useMutation({
     mutationFn: () => {
-      if (!sessionId) throw new Error("세션이 시작되지 않았습니다.");
-      return getHint(sessionId);
+      if (!currentFrame) throw new Error("세션이 시작되지 않았습니다.");
+      return getHint(currentFrame.sessionId);
     },
     onSuccess: (data) => {
       setError(null);
@@ -242,13 +313,52 @@ export function TutorSession({ profileId, unit, onComplete }: Props) {
     onError: (err) => setError(getErrorMessage(err)),
   });
 
+  const prereqMutation = useMutation({
+    mutationFn: () => {
+      if (!currentFrame) throw new Error("세션이 시작되지 않았습니다.");
+      return startPrerequisiteSession(currentFrame.sessionId);
+    },
+    onSuccess: (data) => {
+      setError(null);
+      setCanGoDeeper(!data.is_foundational);
+      setSessionStack((prev) => [
+        ...prev,
+        {
+          sessionId: data.session_id,
+          question: data.question,
+          title: data.prereq_concept_title,
+          depth: data.depth,
+          isNestedPrereq: true,
+        },
+      ]);
+      resetCheckState({
+        setRespondResult,
+        setExtraHints,
+        setUserResponse,
+        setPrereqReturnMessage,
+      });
+    },
+    onError: (err) => setError(getErrorMessage(err)),
+  });
+
   const completeMutation = useMutation({
     mutationFn: () => {
-      if (!sessionId) throw new Error("세션이 시작되지 않았습니다.");
-      return completeSession(sessionId);
+      if (!currentFrame) throw new Error("세션이 시작되지 않았습니다.");
+      return completeSession(currentFrame.sessionId);
     },
-    onSuccess: () => {
+    onSuccess: (data) => {
       setError(null);
+      if (data.return_to_session_id) {
+        setSessionStack((prev) => prev.slice(0, -1));
+        resetCheckState({
+          setRespondResult,
+          setExtraHints,
+          setUserResponse,
+          setPrereqReturnMessage,
+        });
+        setPrereqReturnMessage("선수 개념 학습을 마쳤습니다. 원래 문제에 다시 도전해 보세요.");
+        return;
+      }
       onComplete();
     },
     onError: (err) => setError(getErrorMessage(err)),
@@ -258,15 +368,17 @@ export function TutorSession({ profileId, unit, onComplete }: Props) {
     startMutation.isPending ||
     respondMutation.isPending ||
     hintMutation.isPending ||
+    prereqMutation.isPending ||
     completeMutation.isPending;
 
   const hasHint2 = extraHints.some((h) => h.step_type === "hint_2");
   const answerReveal = extraHints.find((h) => h.step_type === "answer_reveal");
-  const showQuestionInput = phase === "check" && question && !respondResult && !isLoading;
+  const showQuestionInput =
+    phase === "check" && currentFrame?.question && !respondResult && !isLoading;
   const showIncorrectActions = respondResult?.correct === false && !answerReveal;
 
   const handleFinish = () => {
-    if (!sessionId) {
+    if (!currentFrame) {
       onComplete();
       return;
     }
@@ -287,15 +399,32 @@ export function TutorSession({ profileId, unit, onComplete }: Props) {
         <>
           <PhaseLabel step={2} label="확인" />
           <GenerationBanner mode="llm" note="Solar 튜터 · 역질문 · 힌트 · 정답 해설" />
+          <DepthBadge depth={displayDepth} />
+
+          {prereqReturnMessage && (
+            <p
+              style={{
+                margin: "0 0 0.75rem",
+                padding: "0.5rem 0.75rem",
+                background: "#f3e5f5",
+                borderRadius: 6,
+                fontSize: "0.85rem",
+                color: "#4527a0",
+                borderLeft: "3px solid #7e57c2",
+              }}
+            >
+              {prereqReturnMessage}
+            </p>
+          )}
 
           {isLoading && !respondResult && <LoadingOverlay />}
 
-          {question && (
+          {currentFrame?.question && (
             <AiBubble>
               <strong style={{ display: "block", marginBottom: 4, color: "#4a90e2" }}>
-                {unit.title} — 역질문
+                {displayTitle} — 역질문
               </strong>
-              {question}
+              {currentFrame.question}
             </AiBubble>
           )}
 
@@ -333,35 +462,39 @@ export function TutorSession({ profileId, unit, onComplete }: Props) {
                 {respondResult.feedback}
               </p>
               <Button onClick={handleFinish} disabled={completeMutation.isPending}>
-                {completeMutation.isPending ? "저장 중..." : "다음 단원"}
+                {completeMutation.isPending
+                  ? "저장 중..."
+                  : sessionStack.length > 1
+                    ? "선수개념 완료 · 원래 문제로"
+                    : "다음 단원"}
               </Button>
             </div>
           )}
 
           {respondResult?.correct === false && (
-        <div style={{ marginBottom: "1rem" }}>
-          <StatusBadge variant="error" label="다시 생각해보세요" />
-          {"missing_concept" in respondResult && respondResult.missing_concept && (
-            <p
-              style={{
-                margin: "0 0 0.75rem",
-                padding: "0.5rem 0.75rem",
-                background: "#fff5f5",
-                borderRadius: 6,
-                fontSize: "0.85rem",
-                color: "#7a2e2e",
-                borderLeft: "3px solid #e74c3c",
-              }}
-            >
-              <strong>부족한 개념</strong> · {respondResult.missing_concept}
-              {respondResult.reason && (
-                <span style={{ display: "block", marginTop: 4, color: "#555" }}>
-                  {respondResult.reason}
-                </span>
+            <div style={{ marginBottom: "1rem" }}>
+              <StatusBadge variant="error" label="다시 생각해보세요" />
+              {"missing_concept" in respondResult && respondResult.missing_concept && (
+                <p
+                  style={{
+                    margin: "0 0 0.75rem",
+                    padding: "0.5rem 0.75rem",
+                    background: "#fff5f5",
+                    borderRadius: 6,
+                    fontSize: "0.85rem",
+                    color: "#7a2e2e",
+                    borderLeft: "3px solid #e74c3c",
+                  }}
+                >
+                  <strong>부족한 개념</strong> · {respondResult.missing_concept}
+                  {respondResult.reason && (
+                    <span style={{ display: "block", marginTop: 4, color: "#555" }}>
+                      {respondResult.reason}
+                    </span>
+                  )}
+                </p>
               )}
-            </p>
-          )}
-          <AiBubble>{respondResult.hint}</AiBubble>
+              <AiBubble>{respondResult.hint}</AiBubble>
 
               {extraHints.map((hint) => (
                 <AiBubble key={hint.step_type}>
@@ -386,13 +519,22 @@ export function TutorSession({ profileId, unit, onComplete }: Props) {
               )}
 
               {answerReveal && (
-                <Button
-                  style={{ marginTop: "0.75rem" }}
-                  onClick={handleFinish}
-                  disabled={completeMutation.isPending}
-                >
-                  {completeMutation.isPending ? "저장 중..." : "학습 마치기"}
-                </Button>
+                <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginTop: "0.75rem" }}>
+                  {canGoDeeper && (
+                    <Button
+                      onClick={() => prereqMutation.mutate()}
+                      disabled={prereqMutation.isPending}
+                      style={{ background: "#7e57c2", borderColor: "#7e57c2" }}
+                    >
+                      {prereqMutation.isPending
+                        ? "탐색 중..."
+                        : `기초 개념 학습하기 (depth ${displayDepth + 1})`}
+                    </Button>
+                  )}
+                  <Button onClick={handleFinish} disabled={completeMutation.isPending}>
+                    {completeMutation.isPending ? "저장 중..." : "학습 마치기"}
+                  </Button>
+                </div>
               )}
             </div>
           )}

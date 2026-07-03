@@ -16,14 +16,15 @@ interface Props {
 function UnitCard({ unit, profileId }: { unit: CurriculumUnit; profileId: string }) {
   const [tutorActive, setTutorActive] = useState(false);
   const isWeak = unit.priority === "weakness";
+  const isPrereq = unit.unit_type === "prerequisite";
 
   return (
     <li
       style={{
         marginBottom: "0.75rem",
         borderRadius: 8,
-        border: `1px solid ${isWeak ? "#f5c26b" : "#e0e0e0"}`,
-        background: isWeak ? "#fffbf0" : "#fff",
+        border: `1px solid ${isPrereq ? "#b39ddb" : isWeak ? "#f5c26b" : "#e0e0e0"}`,
+        background: isPrereq ? "#faf8ff" : isWeak ? "#fffbf0" : "#fff",
         overflow: "hidden",
       }}
     >
@@ -40,7 +41,7 @@ function UnitCard({ unit, profileId }: { unit: CurriculumUnit; profileId: string
             minWidth: 28,
             height: 28,
             borderRadius: "50%",
-            background: isWeak ? "#f5a623" : "#4a90e2",
+            background: isPrereq ? "#7e57c2" : isWeak ? "#f5a623" : "#4a90e2",
             color: "#fff",
             fontSize: "0.78rem",
             fontWeight: 700,
@@ -55,9 +56,23 @@ function UnitCard({ unit, profileId }: { unit: CurriculumUnit; profileId: string
 
         <div style={{ flex: 1 }}>
           <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", flexWrap: "wrap" }}>
-            <strong style={{ fontSize: "0.95rem", color: isWeak ? "#b05a00" : "#111" }}>
+            <strong style={{ fontSize: "0.95rem", color: isPrereq ? "#4527a0" : isWeak ? "#b05a00" : "#111" }}>
               {unit.title}
             </strong>
+            {isPrereq && (
+              <span
+                style={{
+                  fontSize: "0.72rem",
+                  background: "#7e57c2",
+                  color: "#fff",
+                  borderRadius: 4,
+                  padding: "1px 6px",
+                  fontWeight: 600,
+                }}
+              >
+                사전지식 · 1단계
+              </span>
+            )}
             {isWeak && (
               <span
                 style={{
@@ -72,11 +87,18 @@ function UnitCard({ unit, profileId }: { unit: CurriculumUnit; profileId: string
                 약점 · 보강
               </span>
             )}
-            <span style={{ fontSize: "0.78rem", color: "#999" }}>
-              p.{unit.page_numbers.join(", ")}
-            </span>
+            {!isPrereq && unit.page_numbers.length > 0 && (
+              <span style={{ fontSize: "0.78rem", color: "#999" }}>
+                p.{unit.page_numbers.join(", ")}
+              </span>
+            )}
           </div>
 
+          {unit.prereq_reason && (
+            <p style={{ margin: "0.25rem 0 0", fontSize: "0.82rem", color: "#5e35b1" }}>
+              {unit.prereq_reason}
+            </p>
+          )}
           {unit.summary && (
             <p style={{ margin: "0.25rem 0 0", fontSize: "0.82rem", color: "#555" }}>
               {unit.summary}
@@ -118,23 +140,22 @@ export function CurriculumView({ result, slice, curriculum, onReset }: Props) {
 
   return (
     <section>
-      <h2>5. 나만의 커리큘럼</h2>
+      <h2>3. 나만의 커리큘럼</h2>
       <GenerationBanner mode={curriculum.generation_mode} note={curriculum.generation_note} />
 
       <p style={{ color: "#555" }}>
-        진단 점수 <strong>{Math.round(result.score * 100)}%</strong> · 학습 목표: {goalLabel} · 총{" "}
-        <strong>{curriculum.total_units}</strong>개 단원 (약점 우선{" "}
+        진단 점수 <strong>{Math.round(result.score * 100)}%</strong>
+        {slice.learning_goal ? <> · 학습 목표: {goalLabel}</> : null} · 총{" "}
+        <strong>{curriculum.total_units}</strong>개 단원 (약점 표시{" "}
         <strong>{curriculum.weakness_count}</strong>개)
         <span style={{ marginLeft: 8, color: "#4a90e2", fontSize: "0.88rem" }}>
-          · 단원별 <strong>학습 시작</strong> → 설명 학습 → 확인 문제 순으로 진행하세요
+          · 사전지식 단원 먼저 → PDF 원문 순서로 학습
         </span>
       </p>
 
-      {curriculum.weakness_count > 0 && (
-        <p style={{ color: "#a40", fontSize: "0.95rem" }}>
-          약점 개념을 먼저 학습한 뒤, 나머지 범위를 이어갑니다.
-        </p>
-      )}
+      <p style={{ color: "#666", fontSize: "0.92rem" }}>
+        튜터에서 틀리면 더 기초적인 선수 개념으로 내려갈 수 있습니다 (2단계, 3단계…).
+      </p>
 
       <div style={{ marginTop: "1.5rem", display: "flex", flexDirection: "column", gap: "1.5rem" }}>
         {curriculum.chapter_groups.map((group) => (
@@ -144,9 +165,9 @@ export function CurriculumView({ result, slice, curriculum, onReset }: Props) {
                 margin: "0 0 0.75rem",
                 fontSize: "1rem",
                 padding: "0.4rem 0.75rem",
-                background: "#f0f4ff",
+                background: group.chapter_title === "사전 지식" ? "#f3e5f5" : "#f0f4ff",
                 borderRadius: 6,
-                borderLeft: "4px solid #4a90e2",
+                borderLeft: `4px solid ${group.chapter_title === "사전 지식" ? "#7e57c2" : "#4a90e2"}`,
               }}
             >
               {group.chapter_title}
