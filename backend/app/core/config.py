@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Upstage Solar (메인 LLM)
     UPSTAGE_API_KEY: str = ""
     SOLAR_BASE_URL: str = "https://api.upstage.ai/v1"
-    SOLAR_MODEL: str = "solar-pro2"
+    SOLAR_MODEL: str = "solar-pro3"
     SOLAR_EMBED_QUERY_MODEL: str = "embedding-query"
     SOLAR_EMBED_PASSAGE_MODEL: str = "embedding-passage"
     UPSTAGE_PARSE_MODEL: str = "document-parse"
