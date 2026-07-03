@@ -26,6 +26,62 @@ class MockLLMClient(LLMClient):
                 },
                 ensure_ascii=False,
             )
+        if "BLOCKS_JSON" in prompt:
+            # JIT 블록 생성 프롬프트(learning/generator.py)에 대응하는 유효 응답.
+            # 프롬프트에 CONCEPT_NAME: <이름> 줄이 있으면 내용에 반영한다.
+            name = "이 개념"
+            for line in prompt.splitlines():
+                if line.startswith("CONCEPT_NAME:"):
+                    name = line.split(":", 1)[1].strip() or name
+                    break
+            return json.dumps(
+                {
+                    "blocks": [
+                        {
+                            "type": "concept",
+                            "difficulty": "mid",
+                            "data": {
+                                "title": name,
+                                "body": f"{name}의 핵심을 근거 발췌 기준으로 정리한 설명입니다.",
+                                "whyItMatters": f"{name}은(는) 이후 상위 개념의 바탕이 됩니다.",
+                            },
+                        },
+                        {
+                            "type": "analogy",
+                            "difficulty": "easy",
+                            "data": {"label": "비유", "text": f"{name}은(는) 정리함에 물건을 나누어 담는 것과 비슷합니다."},
+                        },
+                        {
+                            "type": "cloze",
+                            "difficulty": "mid",
+                            "data": {
+                                "text": f"{name}의 핵심 목적은 {{{{blank}}}} 이다.",
+                                "blanks": ["중복 제거"],
+                                "hint": "무엇을 없애기 위한 것일까요?",
+                            },
+                        },
+                        {
+                            "type": "mcq",
+                            "difficulty": "mid",
+                            "data": {
+                                "question": f"{name}에 대한 설명으로 가장 적절한 것은?",
+                                "options": ["근거 기반 정답", "그럴듯한 오답 A", "그럴듯한 오답 B", "무관한 오답 C"],
+                                "answerIndex": 0,
+                                "explanation": "근거 발췌에 직접 서술된 내용입니다.",
+                            },
+                        },
+                        {
+                            "type": "explainBack",
+                            "difficulty": "hard",
+                            "data": {
+                                "prompt": f"{name}이(가) 왜 필요한지 자신의 말로 설명해 보세요.",
+                                "rubric": ["핵심 목적", "적용 상황"],
+                            },
+                        },
+                    ]
+                },
+                ensure_ascii=False,
+            )
         return f"[mock] {prompt[:120]}"
 
     async def embed(self, text: str) -> list[float]:

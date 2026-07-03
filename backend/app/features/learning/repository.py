@@ -1,160 +1,349 @@
-"""[4.Repository] 학습 세션·튜터 스텝 DB 접근."""
+"""[4.Repository] 학습 루프 DB 접근.
+
+서비스가 필요로 하는 영속 연산만 얇게 제공한다:
+  - 챕터/절/블록 조회
+  - gen_status 원자 전이(트리거 멱등성 — 새로고침 연타 방어)
+  - 블록 일괄 저장(재생성 시 기존 학습 블록 교체)
+  - 개념 근거(청크/외부근거) 조회 — 생성 입력
+  - 확신도/variant 기록(concept_mastery, section_progress upsert)
+"""
+from __future__ import annotations
+
 import uuid
 
-from sqlalchemy import select
+from datetime import datetime, timezone
+
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.core.config import settings
-from app.core.memory_store import get_memory_store
-from app.features.learning.models import LearningItem, LearningSession, TutorStep
+from app.core.enums import GenStatus
+from app.features.curriculum.models import Chapter, Section
+from app.features.learning.generator import BlockDraft, ChunkExcerpt, ExternalRefInput
+from app.features.learning.models import (
+    Attempt,
+    Block,
+    ConceptMastery,
+    SectionProgress,
+)
+from app.features.materials.models import DocChunk
+from app.features.seed.models import Concept, Course, ExternalRef
 
 
-class LearningRepository:
-    def __init__(self, db: Session) -> None:
-        self.db = db
-        self._mem = get_memory_store()
+# ── 챕터 / 절 ────────────────────────────────────────────────────────────────
+def get_chapter(db: Session, chapter_id: uuid.UUID) -> Chapter | None:
+    return db.get(Chapter, chapter_id)
 
-    def add(self, content: str, embedding: list[float] | None = None) -> LearningItem:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.add_learning_item(content, embedding)
-        item = LearningItem(content=content, embedding=embedding)
-        self.db.add(item)
-        self.db.commit()
-        self.db.refresh(item)
-        return item
 
-    def search_similar(self, embedding: list[float], limit: int = 5) -> list[LearningItem]:
-        if not settings.PERSIST_TO_DB:
-            return []
-        stmt = (
-            select(LearningItem)
-            .order_by(LearningItem.embedding.cosine_distance(embedding))
-            .limit(limit)
+def get_section(db: Session, section_id: uuid.UUID) -> Section | None:
+    return db.get(Section, section_id)
+
+
+def get_chapter_sections(db: Session, chapter_id: uuid.UUID) -> list[Section]:
+    stmt = (
+        select(Section)
+        .where(Section.chapter_id == chapter_id)
+        .order_by(Section.order_index)
+    )
+    return list(db.scalars(stmt))
+
+
+def get_course_of_chapter(db: Session, chapter: Chapter) -> Course | None:
+    return db.get(Course, chapter.course_id)
+
+
+# ── gen_status 원자 전이 ─────────────────────────────────────────────────────
+def try_claim_generation(db: Session, chapter_id: uuid.UUID) -> bool:
+    """pending/failed → generating 조건부 전이. 이미 generating/ready면 False.
+
+    UPDATE ... WHERE gen_status IN (...) 한 방으로 동시 트리거 경합을 막는다.
+    """
+    stmt = (
+        update(Chapter)
+        .where(
+            Chapter.id == chapter_id,
+            Chapter.gen_status.in_([GenStatus.PENDING, GenStatus.FAILED]),
         )
-        return list(self.db.scalars(stmt))
+        .values(gen_status=GenStatus.GENERATING)
+    )
+    result = db.execute(stmt)
+    db.commit()
+    return result.rowcount > 0
 
-    def create_session(
-        self,
-        profile_id: uuid.UUID,
-        curriculum_unit_order: int,
-        concept_id: str,
-        *,
-        session_type: str = "pdf_concept",
-        parent_session_id: uuid.UUID | None = None,
-        depth: int = 0,
-        prereq_concept_title: str | None = None,
-    ) -> LearningSession:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.create_learning_session(
-                profile_id,
-                curriculum_unit_order,
-                concept_id,
-                session_type=session_type,
-                parent_session_id=parent_session_id,
-                depth=depth,
-                prereq_concept_title=prereq_concept_title,
+
+def set_gen_status(db: Session, chapter_id: uuid.UUID, status: str) -> None:
+    db.execute(update(Chapter).where(Chapter.id == chapter_id).values(gen_status=status))
+    db.commit()
+
+
+# ── 블록 ─────────────────────────────────────────────────────────────────────
+def replace_section_blocks(
+    db: Session,
+    *,
+    section_id: uuid.UUID,
+    concept_id: uuid.UUID | None,
+    drafts: list[BlockDraft],
+) -> list[Block]:
+    """절의 학습 블록을 새 세트로 교체(재생성 대응). 진단 블록은 절에 안 묶이므로 무관."""
+    db.query(Block).filter(Block.section_id == section_id).delete()
+    rows: list[Block] = []
+    for i, d in enumerate(drafts):
+        rows.append(
+            Block(
+                section_id=section_id,
+                order_index=i,
+                type=d.type,
+                kind="learn",
+                concept_id=concept_id,
+                source=d.source,
+                tracked=d.tracked,
+                source_chunk_ids=d.source_chunk_ids,
+                external_ref_ids=d.external_ref_ids,
+                verified=d.verified,
+                data=d.data,
+                meta=d.meta,
             )
-        session = LearningSession(
-            profile_id=profile_id,
-            curriculum_unit_order=curriculum_unit_order,
-            concept_id=concept_id,
-            status="active",
-            session_type=session_type,
-            parent_session_id=parent_session_id,
-            depth=depth,
-            prereq_concept_title=prereq_concept_title,
         )
-        self.db.add(session)
-        self.db.commit()
-        self.db.refresh(session)
-        return session
+    db.add_all(rows)
+    db.flush()
+    return rows
 
-    def get_session(self, session_id: uuid.UUID) -> LearningSession | None:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.get_learning_session(session_id)
-        return self.db.get(LearningSession, session_id)
 
-    def update_session_status(self, session: LearningSession, status: str) -> LearningSession:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.update_learning_session_status(session, status)
-        session.status = status
-        self.db.commit()
-        self.db.refresh(session)
-        return session
+def get_verified_section_blocks(db: Session, section_id: uuid.UUID) -> list[Block]:
+    """서빙 대상 = verified=true 뿐(기획서 불변식)."""
+    stmt = (
+        select(Block)
+        .where(Block.section_id == section_id, Block.verified.is_(True))
+        .order_by(Block.order_index)
+    )
+    return list(db.scalars(stmt))
 
-    def touch_session(self, session: LearningSession) -> LearningSession:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.touch_learning_session(session)
-        from datetime import datetime, timezone
 
-        session.updated_at = datetime.now(timezone.utc)
-        self.db.commit()
-        self.db.refresh(session)
-        return session
+# ── 생성 근거 ────────────────────────────────────────────────────────────────
+def get_concept(db: Session, concept_id: uuid.UUID) -> Concept | None:
+    return db.get(Concept, concept_id)
 
-    def add_step(
-        self,
-        session_id: uuid.UUID,
-        step_type: str,
-        content: str,
-        *,
-        user_response: str | None = None,
-        is_correct: bool | None = None,
-        missing_concept_analysis: dict | None = None,
-    ) -> TutorStep:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.add_tutor_step(
-                session_id,
-                step_type,
-                content,
-                user_response=user_response,
-                is_correct=is_correct,
-                missing_concept_analysis=missing_concept_analysis,
+
+def get_concept_chunks(
+    db: Session, *, course: Course, concept: Concept, limit: int = 3
+) -> list[ChunkExcerpt]:
+    """개념 관련 청크 발췌(생성 근거).
+
+    MVP: 개념 이름/키 토큰 포함 청크를 우선, 부족하면 문서 앞 청크로 보충.
+    TODO(후속): pgvector 임베딩 유사도 검색으로 교체(core/retrieval).
+    """
+    stmt = (
+        select(DocChunk)
+        .where(DocChunk.document_id == course.document_id)
+        .order_by(DocChunk.chunk_index)
+    )
+    chunks = list(db.scalars(stmt))
+    tokens = [t for t in {concept.name, concept.key} if t]
+    scored = [c for c in chunks if any(t in c.content for t in tokens)]
+    picked = scored[:limit]
+    if len(picked) < limit:
+        seen = {c.id for c in picked}
+        picked += [c for c in chunks if c.id not in seen][: limit - len(picked)]
+    return [ChunkExcerpt(id=c.id, content=c.content) for c in picked]
+
+
+def get_concept_external_refs(
+    db: Session, concept_id: uuid.UUID
+) -> list[ExternalRefInput]:
+    stmt = select(ExternalRef).where(ExternalRef.concept_id == concept_id)
+    return [
+        ExternalRefInput(id=r.id, title=r.title, url=r.url, snippet=r.snippet)
+        for r in db.scalars(stmt)
+    ]
+
+
+def get_external_refs_by_ids(
+    db: Session, ref_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, ExternalRef]:
+    if not ref_ids:
+        return {}
+    stmt = select(ExternalRef).where(ExternalRef.id.in_(ref_ids))
+    return {r.id: r for r in db.scalars(stmt)}
+
+
+# ── 학습자 상태(확신도 / variant) ────────────────────────────────────────────
+def get_mastery(
+    db: Session, *, user_id: uuid.UUID, concept_id: uuid.UUID
+) -> ConceptMastery | None:
+    return db.get(ConceptMastery, (user_id, concept_id))
+
+
+def upsert_confidence(
+    db: Session, *, user_id: uuid.UUID, concept_id: uuid.UUID, confidence: str
+) -> ConceptMastery:
+    row = db.get(ConceptMastery, (user_id, concept_id))
+    if row is None:
+        row = ConceptMastery(user_id=user_id, concept_id=concept_id, confidence=confidence)
+        db.add(row)
+    else:
+        row.confidence = confidence
+    db.flush()
+    return row
+
+
+def get_section_progress(
+    db: Session, *, user_id: uuid.UUID, section_id: uuid.UUID
+) -> SectionProgress | None:
+    return db.get(SectionProgress, (user_id, section_id))
+
+
+def upsert_section_variant(
+    db: Session, *, user_id: uuid.UUID, section_id: uuid.UUID, variant: str
+) -> SectionProgress:
+    row = db.get(SectionProgress, (user_id, section_id))
+    if row is None:
+        row = SectionProgress(
+            user_id=user_id,
+            section_id=section_id,
+            status="in_progress",
+            variant_served=variant,
+        )
+        db.add(row)
+    else:
+        row.variant_served = variant
+        if row.status == "not_started":
+            row.status = "in_progress"
+    db.flush()
+    return row
+
+
+# ── 시도(attempts) 기록/집계 ─────────────────────────────────────────────────
+def get_block(db: Session, block_id: uuid.UUID) -> Block | None:
+    return db.get(Block, block_id)
+
+
+def get_mastery_for_update(
+    db: Session, *, user_id: uuid.UUID, concept_id: uuid.UUID
+) -> ConceptMastery | None:
+    """동시 제출 race 방지: 행 잠금 후 반환(없으면 None — 호출측에서 생성)."""
+    stmt = (
+        select(ConceptMastery)
+        .where(
+            ConceptMastery.user_id == user_id,
+            ConceptMastery.concept_id == concept_id,
+        )
+        .with_for_update()
+    )
+    return db.scalars(stmt).first()
+
+
+def get_attempt_stats(
+    db: Session, *, user_id: uuid.UUID, concept_id: uuid.UUID
+) -> tuple[int, int]:
+    """(집계된 시도 수, 통과 수). learn/review의 채점된 시도만 센다."""
+    base = select(func.count()).where(
+        Attempt.user_id == user_id,
+        Attempt.concept_id == concept_id,
+        Attempt.kind.in_(["learn", "review"]),
+        (Attempt.correct.isnot(None)) | (Attempt.score.isnot(None)),
+    )
+    total = db.scalar(base) or 0
+    passed = (
+        db.scalar(
+            select(func.count()).where(
+                Attempt.user_id == user_id,
+                Attempt.concept_id == concept_id,
+                Attempt.kind.in_(["learn", "review"]),
+                (Attempt.correct.is_(True)) | (Attempt.score >= 0.6),
             )
-        step = TutorStep(
-            session_id=session_id,
-            step_type=step_type,
-            content=content,
-            user_response=user_response,
-            is_correct=is_correct,
-            missing_concept_analysis=missing_concept_analysis,
         )
-        self.db.add(step)
-        self.db.commit()
-        self.db.refresh(step)
-        return step
+        or 0
+    )
+    return total, passed
 
-    def update_step_response(
-        self,
-        step: TutorStep,
-        user_response: str,
-        is_correct: bool,
-    ) -> TutorStep:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.update_tutor_step_response(step, user_response, is_correct)
-        step.user_response = user_response
-        step.is_correct = is_correct
-        self.db.commit()
-        self.db.refresh(step)
-        return step
 
-    def list_steps(self, session_id: uuid.UUID) -> list[TutorStep]:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.list_tutor_steps(session_id)
-        stmt = (
-            select(TutorStep)
-            .where(TutorStep.session_id == session_id)
-            .order_by(TutorStep.created_at)
+def get_consecutive_wrong(
+    db: Session, *, user_id: uuid.UUID, concept_id: uuid.UUID, limit: int = 10
+) -> int:
+    """최근 시도부터 거슬러 올라가며 연속 오답 수(막힘 감지 신호)."""
+    stmt = (
+        select(Attempt.correct, Attempt.score)
+        .where(
+            Attempt.user_id == user_id,
+            Attempt.concept_id == concept_id,
+            Attempt.kind.in_(["learn", "review"]),
+            (Attempt.correct.isnot(None)) | (Attempt.score.isnot(None)),
         )
-        return list(self.db.scalars(stmt))
+        .order_by(Attempt.created_at.desc())
+        .limit(limit)
+    )
+    streak = 0
+    for correct, score in db.execute(stmt):
+        passed = bool(correct) if correct is not None else (score or 0) >= 0.6
+        if passed:
+            break
+        streak += 1
+    return streak
 
-    def get_step_by_type(self, session_id: uuid.UUID, step_type: str) -> TutorStep | None:
-        if not settings.PERSIST_TO_DB:
-            return self._mem.get_tutor_step_by_type(session_id, step_type)
-        stmt = (
-            select(TutorStep)
-            .where(TutorStep.session_id == session_id, TutorStep.step_type == step_type)
-            .order_by(TutorStep.created_at)
-            .limit(1)
-        )
-        return self.db.scalars(stmt).first()
+
+def insert_attempt(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    block_id: uuid.UUID | None,
+    concept_id: uuid.UUID,
+    kind: str,
+    correct: bool | None,
+    score: float | None,
+    user_input: dict | None,
+    feedback: dict | None,
+    meta: dict,
+) -> Attempt:
+    row = Attempt(
+        user_id=user_id,
+        block_id=block_id,
+        concept_id=concept_id,
+        kind=kind,
+        correct=correct,
+        score=score,
+        user_input=user_input,
+        feedback=feedback,
+        meta=meta,
+    )
+    db.add(row)
+    db.flush()
+    return row
+
+
+# ── 절 완료 판정 ─────────────────────────────────────────────────────────────
+def get_tracked_block_ids(db: Session, section_id: uuid.UUID) -> list[uuid.UUID]:
+    stmt = select(Block.id).where(
+        Block.section_id == section_id,
+        Block.tracked.is_(True),
+        Block.verified.is_(True),
+    )
+    return list(db.scalars(stmt))
+
+
+def get_passed_block_ids(
+    db: Session, *, user_id: uuid.UUID, block_ids: list[uuid.UUID]
+) -> set[uuid.UUID]:
+    """유저가 통과(정답 또는 score>=0.6)한 블록 ID 집합."""
+    if not block_ids:
+        return set()
+    stmt = select(Attempt.block_id).where(
+        Attempt.user_id == user_id,
+        Attempt.block_id.in_(block_ids),
+        (Attempt.correct.is_(True)) | (Attempt.score >= 0.6),
+    )
+    return {bid for bid in db.scalars(stmt) if bid is not None}
+
+
+def mark_section_progress(
+    db: Session, *, user_id: uuid.UUID, section_id: uuid.UUID, completed: bool
+) -> SectionProgress:
+    row = db.get(SectionProgress, (user_id, section_id))
+    if row is None:
+        row = SectionProgress(user_id=user_id, section_id=section_id)
+        db.add(row)
+    if completed:
+        row.status = "completed"
+        row.completed_at = datetime.now(timezone.utc)
+    elif row.status == "not_started":
+        row.status = "in_progress"
+    db.flush()
+    return row

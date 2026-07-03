@@ -1,380 +1,360 @@
-"""[3.Service] 학습 생성 + 튜터 세션."""
+"""[3.Service] 학습 서빙 유스케이스 — JIT 생성 트리거 / 확신도 / 절 서빙.
+
+흐름(기획서 §2 5~7단계):
+  POST /chapters/:id/generate → try_claim_generation(멱등) → 절별 생성 → ready
+  POST /sections/:id/confidence → variant 결정·기록
+  GET  /sections/:id → verified 블록 → variant 필터 → 정답 스트립 → 봉투 배열
+"""
 from __future__ import annotations
 
+import logging
 import uuid
+from datetime import datetime, timezone
 
-from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from app.core.database import SessionLocal
+from app.core.enums import (
+    ConfidenceLevel,
+    ContentSource,
+    GenStatus,
+    MasteryStatus,
+    ServeVariant,
+)
 from app.core.llm.factory import get_llm_client
-from app.core.vector_store import ChunkResult, search_similar_chunks
-from app.features.learning.models import LearningSession
-from app.features.learning.repository import LearningRepository
+from app.features.learning import repository as repo
+from app.features.learning.generator import GenerationInput, generate_section_blocks
+from app.features.learning.grading import GRADABLE_TYPES, GradeResult, grade_block
+from app.features.learning.mastery import (
+    MasteryState,
+    apply_boolean_attempt,
+    apply_scored_attempt,
+    unlock_for_learning,
+)
+from app.features.learning.models import ConceptMastery
+from app.features.learning.next_action import decide_after_answer
 from app.features.learning.schemas import (
-    CompleteSessionResponse,
-    GenerateRequest,
-    GenerateResponse,
-    HintResponse,
-    RespondCorrectResponse,
-    RespondIncorrectResponse,
-    StartPrerequisiteResponse,
-    StartSessionRequest,
-    StartSessionResponse,
-    WeaknessEntry,
+    AttemptFeedback,
+    AttemptRequest,
+    AttemptResponse,
+    BlockEnvelope,
+    ConceptStateOut,
+    NextActionOut,
+    SectionBlocksResponse,
 )
-from app.features.learning.tutor import (
-    generate_answer_reveal,
-    generate_hint_1,
-    generate_hint_2,
-    generate_prereq_answer_reveal,
-    generate_prereq_question,
-    generate_question,
-    infer_missing_concept,
-    infer_prerequisite_concept,
-    judge_response,
-)
-from app.features.materials.repository import MaterialsRepository
-from app.features.seed.repository import SeedRepository
-from app.features.seed.schemas import CurriculumUnit
-from app.features.seed.weakness_utils import (
-    normalize_weakness_entry,
-    normalize_weaknesses,
-    remove_weakness,
-    upsert_weakness,
-)
+from app.features.learning.serializer import filter_by_variant, to_envelope
+from app.features.review.sm2 import update_review_schedule
+
+logger = logging.getLogger(__name__)
+
+# 확신도 → variant (기획서 §6: 알면 압축/모르면 풀)
+_CONFIDENCE_TO_VARIANT: dict[str, str] = {
+    ConfidenceLevel.SURE: ServeVariant.QUICK,
+    ConfidenceLevel.AMBIGUOUS: ServeVariant.COMPRESSED,
+    ConfidenceLevel.UNKNOWN: ServeVariant.FULL,
+}
 
 
-def update_weakness_after_session(session_id: uuid.UUID, db: Session) -> CompleteSessionResponse:
-    """세션 결과에 따라 seed_profiles.weaknesses를 갱신한다."""
-    repo = LearningRepository(db)
-    seed = SeedRepository(db)
+def variant_for_confidence(confidence: str) -> str:
+    return _CONFIDENCE_TO_VARIANT.get(confidence, ServeVariant.FULL)
 
-    session = repo.get_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="학습 세션을 찾을 수 없습니다.")
-    if session.status == "completed":
-        raise HTTPException(status_code=409, detail="아직 답변이 제출되지 않았습니다.")
 
-    question_step = repo.get_step_by_type(session_id, "question")
-    if question_step is None or question_step.is_correct is None:
-        raise HTTPException(status_code=409, detail="아직 답변이 제출되지 않았습니다.")
+# ── JIT 생성 ─────────────────────────────────────────────────────────────────
+async def _generate_one_section(
+    db: Session, *, section, course, user_id: uuid.UUID
+) -> int:
+    """절 하나 생성→검증→저장. 반환: 저장된 블록 수."""
+    concept = repo.get_concept(db, section.concept_id) if section.concept_id else None
+    if concept is None:
+        return 0
 
-    profile = seed.get_profile(session.profile_id)
-    if profile is None:
-        raise HTTPException(status_code=404, detail="Seed 프로필을 찾을 수 없습니다.")
+    # 근거 확보(§2.5A [1]) — book은 청크, ai_prereq는 외부근거
+    chunks = (
+        repo.get_concept_chunks(db, course=course, concept=concept)
+        if concept.source == ContentSource.BOOK
+        else []
+    )
+    ext_refs = (
+        repo.get_concept_external_refs(db, concept.id)
+        if concept.source == ContentSource.AI_PREREQ
+        else []
+    )
 
-    concept_id = session.concept_id
-    weaknesses = list(profile.weaknesses or [])
-    is_correct = bool(question_step.is_correct)
-    reached_answer_reveal = repo.get_step_by_type(session_id, "answer_reveal") is not None
+    # 난이도 힌트: 학습자 상태(mastery.difficulty)가 있으면 반영 — JIT 개인화 입력
+    mastery = repo.get_mastery(db, user_id=user_id, concept_id=concept.id)
+    difficulty_hint = 2
+    if mastery is not None:
+        # strength 기반 근사: 약하면 기초(1), 강하면 심화(3)
+        difficulty_hint = 1 if mastery.strength < 0.35 else (3 if mastery.strength >= 0.7 else 2)
 
-    if is_correct:
-        weaknesses = remove_weakness(weaknesses, concept_id)
-        resolved = True
-    elif reached_answer_reveal:
-        hint_1 = repo.get_step_by_type(session_id, "hint_1")
-        analysis = hint_1.missing_concept_analysis if hint_1 else None
-        if analysis:
-            entry = {
-                "concept_id": concept_id,
-                "missing_concept": str(analysis.get("missing_concept") or concept_id),
-                "reason": str(analysis.get("reason") or ""),
-            }
-        else:
-            entry = normalize_weakness_entry(concept_id)
-        weaknesses = upsert_weakness(weaknesses, entry)
-        resolved = False
-    else:
-        resolved = False
+    drafts = await generate_section_blocks(
+        get_llm_client(),
+        GenerationInput(
+            concept_name=concept.name,
+            concept_description=concept.description,
+            concept_source=concept.source,
+            chunks=chunks,
+            external_refs=ext_refs,
+            difficulty_hint=difficulty_hint,
+        ),
+    )
+    repo.replace_section_blocks(
+        db, section_id=section.id, concept_id=concept.id, drafts=drafts
+    )
+    return len(drafts)
 
-    profile.weaknesses = normalize_weaknesses(weaknesses)
-    from app.core.config import settings
-    from app.core.memory_store import get_memory_store
-    if settings.PERSIST_TO_DB:
+
+async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> None:
+    """백그라운드 태스크 본체. 자체 세션을 열고 끝나면 ready/failed 마킹."""
+    db = SessionLocal()
+    try:
+        chapter = repo.get_chapter(db, chapter_id)
+        if chapter is None:
+            return
+        course = repo.get_course_of_chapter(db, chapter)
+        if course is None:
+            repo.set_gen_status(db, chapter_id, GenStatus.FAILED)
+            return
+
+        total = 0
+        for section in repo.get_chapter_sections(db, chapter_id):
+            total += await _generate_one_section(
+                db, section=section, course=course, user_id=user_id
+            )
         db.commit()
-        db.refresh(profile)
-    else:
-        get_memory_store().profiles[profile.id] = profile
+        # 블록이 하나도 안 나오면 실패로 마킹(범위 갭 — 서빙할 게 없음)
+        repo.set_gen_status(
+            db, chapter_id, GenStatus.READY if total > 0 else GenStatus.FAILED
+        )
+    except Exception:
+        logger.exception("chapter generation failed: %s", chapter_id)
+        db.rollback()
+        repo.set_gen_status(db, chapter_id, GenStatus.FAILED)
+    finally:
+        db.close()
 
-    return CompleteSessionResponse(
-        concept_id=concept_id,
-        resolved=resolved,
-        current_weaknesses=[
-            WeaknessEntry(**w) if isinstance(w, dict) else WeaknessEntry(concept_id=str(w))
-            for w in normalize_weaknesses(profile.weaknesses or [])
-        ],
+
+def claim_generation(db: Session, chapter_id: uuid.UUID) -> str:
+    """생성 트리거(멱등). 반환: 트리거 후 상태 문자열.
+
+    이미 generating/ready면 그 상태를 그대로 알려준다(중복 생성 방지).
+    """
+    chapter = repo.get_chapter(db, chapter_id)
+    if chapter is None:
+        raise LookupError("chapter not found")
+    if repo.try_claim_generation(db, chapter_id):
+        return GenStatus.GENERATING
+    db.refresh(chapter)
+    return chapter.gen_status
+
+
+# ── 확신도 → variant ─────────────────────────────────────────────────────────
+def set_confidence(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    section_id: uuid.UUID,
+    confidence: str,
+) -> tuple[str, str]:
+    """확신도 기록 + variant 결정. 반환: (confidence, variant)."""
+    section = repo.get_section(db, section_id)
+    if section is None:
+        raise LookupError("section not found")
+    if section.concept_id is not None:
+        repo.upsert_confidence(
+            db, user_id=user_id, concept_id=section.concept_id, confidence=confidence
+        )
+    variant = variant_for_confidence(confidence)
+    repo.upsert_section_variant(
+        db, user_id=user_id, section_id=section_id, variant=variant
+    )
+    db.commit()
+    return confidence, variant
+
+
+# ── 절 서빙 ──────────────────────────────────────────────────────────────────
+def serve_section(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    section_id: uuid.UUID,
+) -> SectionBlocksResponse:
+    """절 블록 봉투 배열. verified만 → variant 필터 → 정답 스트립."""
+    section = repo.get_section(db, section_id)
+    if section is None:
+        raise LookupError("section not found")
+
+    progress = repo.get_section_progress(db, user_id=user_id, section_id=section_id)
+    variant = (
+        progress.variant_served
+        if progress and progress.variant_served
+        else ServeVariant.FULL
+    )
+
+    blocks = repo.get_verified_section_blocks(db, section_id)
+    blocks = filter_by_variant(blocks, variant)
+
+    # ai_prereq 인용 배지용 외부근거 일괄 로드(N+1 방지)
+    ref_ids = [rid for b in blocks for rid in (b.external_ref_ids or [])]
+    refs = repo.get_external_refs_by_ids(db, ref_ids)
+
+    envelopes: list[BlockEnvelope] = [to_envelope(b, external_refs=refs) for b in blocks]
+    return SectionBlocksResponse(
+        section_id=str(section_id),
+        concept_id=str(section.concept_id) if section.concept_id else None,
+        variant=variant,
+        blocks=envelopes,
     )
 
 
-class LearningService:
-    def __init__(self, db: Session) -> None:
-        self.repo = LearningRepository(db)
-        self.seed = SeedRepository(db)
-        self.materials = MaterialsRepository(db)
-        self.db = db
+# ── 정답 기록 (§7 인출 / §8 추적) ────────────────────────────────────────────
+def _build_mastery_state(
+    db: Session, *, row: ConceptMastery, user_id: uuid.UUID, concept_id: uuid.UUID
+) -> MasteryState:
+    """DB 행 + attempts 집계 → 순수 MasteryState 스냅샷.
 
-    async def generate(self, req: GenerateRequest) -> GenerateResponse:
-        llm = get_llm_client()
-        content = await llm.generate(
-            f"다음 주제로 학습 항목을 만들어줘 (한국어, 3~5문장): {req.topic}"
+    시도수/연속오답은 컬럼에 저장하지 않고 append-only attempts에서 계산한다
+    (기획 원칙: 파생값은 계산으로).
+    """
+    total, passed = repo.get_attempt_stats(db, user_id=user_id, concept_id=concept_id)
+    streak = repo.get_consecutive_wrong(db, user_id=user_id, concept_id=concept_id)
+    difficulty = 1 if row.strength < 0.35 else (3 if row.strength >= 0.7 else 2)
+    return MasteryState(
+        strength=row.strength,
+        explanation_score=row.explanation_score,
+        status=row.status,
+        consecutive_wrong=streak,
+        attempts=total,
+        correct_count=passed,
+        difficulty=difficulty,
+    )
+
+
+async def record_attempt(
+    db: Session, *, user_id: uuid.UUID, req: AttemptRequest
+) -> AttemptResponse:
+    """POST /attempts 본체: 서버 채점 → 기록 → 숙련도/스케줄 갱신 → 다음 행동.
+
+    한 트랜잭션: 채점(LLM 포함)은 잠금 밖에서, 상태 갱신은 mastery 행 잠금 안에서.
+    """
+    if req.block_id is None:
+        raise ValueError("blockId가 필요합니다")
+    block = repo.get_block(db, uuid.UUID(req.block_id))
+    if block is None:
+        raise LookupError("block not found")
+    if block.type not in GRADABLE_TYPES:
+        raise ValueError(f"채점 대상 블록이 아닙니다: {block.type}")
+
+    concept_id = block.concept_id or (
+        uuid.UUID(req.concept_id) if req.concept_id else None
+    )
+    if concept_id is None:
+        raise ValueError("conceptId를 결정할 수 없습니다")
+
+    # [1] 서버 채점 — 클라이언트가 보낸 correct는 신뢰하지 않는다
+    result: GradeResult = await grade_block(
+        get_llm_client(),
+        block_type=block.type,
+        block_data=block.data or {},
+        user_input=req.user_input,
+    )
+
+    # [2] 숙련도 갱신 — 행 잠금(동시 제출 race 방지)
+    mastery = repo.get_mastery_for_update(db, user_id=user_id, concept_id=concept_id)
+    if mastery is None:
+        mastery = ConceptMastery(
+            user_id=user_id, concept_id=concept_id, status=MasteryStatus.TODO
         )
-        self.repo.add(content=content)
-        return GenerateResponse(content=content)
+        db.add(mastery)
+        db.flush()
 
-    def _get_unit(self, profile_id: uuid.UUID, unit_order: int) -> tuple[CurriculumUnit, uuid.UUID]:
-        profile = self.seed.get_profile(profile_id)
-        if profile is None:
-            raise HTTPException(status_code=404, detail="Seed 프로필을 찾을 수 없습니다.")
+    state = _build_mastery_state(
+        db, row=mastery, user_id=user_id, concept_id=concept_id
+    )
+    state = unlock_for_learning(state)
+    if result.score is not None:
+        state = apply_scored_attempt(state, score=result.score)
+    else:
+        state = apply_boolean_attempt(state, correct=bool(result.correct))
 
-        curriculum = self.seed.get_curriculum_by_profile(profile_id)
-        if curriculum is None:
-            raise HTTPException(status_code=404, detail="커리큘럼이 없습니다. 먼저 생성해 주세요.")
+    mastery.strength = state.strength
+    mastery.explanation_score = state.explanation_score
+    mastery.status = state.status
 
-        for raw in curriculum.units:
-            if raw.get("order") == unit_order:
-                unit = CurriculumUnit.model_validate(raw)
-                return unit, profile.document_id
-
-        raise HTTPException(
-            status_code=404,
-            detail=f"unit_order={unit_order} 에 해당하는 단원이 없습니다.",
+    # [3] 복습 스케줄(SM-2): review는 항상, learn은 통과 시(초기 스케줄 §9)
+    if req.kind == "review" or result.passed:
+        schedule = update_review_schedule(
+            ease=mastery.ease,
+            interval_days=mastery.interval_days,
+            correct=result.correct,
+            score=result.score,
         )
+        mastery.ease = schedule.ease
+        mastery.interval_days = schedule.interval_days
+        mastery.next_due_at = schedule.next_due_at
+        mastery.last_reviewed_at = datetime.now(timezone.utc)
 
-    def _chunks_from_unit(self, document_id: uuid.UUID, unit: CurriculumUnit) -> list[ChunkResult]:
-        if not unit.chunk_ids:
-            return []
-        id_set = {str(cid) for cid in unit.chunk_ids}
-        results: list[ChunkResult] = []
-        for ch in self.materials.list_chunks(document_id):
-            if str(ch.id) in id_set and ch.content.strip():
-                results.append(
-                    ChunkResult(
-                        chunk_id=ch.id,
-                        page_number=ch.page_number,
-                        text=ch.content,
-                        similarity_score=1.0,
-                    )
-                )
-        return results[:3]
+    # [4] 다음 행동 결정(살아있는 커리큘럼 신호)
+    action = decide_after_answer(state=state, is_correct=result.passed)
 
-    async def _fetch_chunks(
-        self, document_id: uuid.UUID, unit: CurriculumUnit
-    ) -> list[ChunkResult]:
-        query = f"{unit.title} {unit.focus or ''}".strip()
-        chunks = await search_similar_chunks(
-            query=query,
-            document_id=str(document_id),
-            top_k=3,
-            concept_id=unit.concept_id,
+    # [5] attempts 기록(append-only) — 개입 신호/행동을 meta에 남긴다(§2.5C)
+    feedback_dict = None
+    if result.score is not None:
+        feedback_dict = {
+            "missedPoints": result.missed_points or [],
+            "comment": result.comment or "",
+        }
+    repo.insert_attempt(
+        db,
+        user_id=user_id,
+        block_id=block.id,
+        concept_id=concept_id,
+        kind=req.kind,
+        correct=result.correct,
+        score=result.score,
+        user_input={"value": req.user_input} if req.user_input is not None else None,
+        feedback=feedback_dict,
+        meta={
+            "blockType": block.type,
+            "nextAction": action.action,
+            "consecutiveWrong": state.consecutive_wrong,
+            **(req.meta or {}),
+        },
+    )
+
+    # [6] 절 진행/완료 판정: tracked 블록 전부 통과 → completed
+    if block.section_id is not None:
+        tracked_ids = repo.get_tracked_block_ids(db, block.section_id)
+        passed_ids = repo.get_passed_block_ids(
+            db, user_id=user_id, block_ids=tracked_ids
         )
-        if chunks:
-            return chunks
-        return self._chunks_from_unit(document_id, unit)
-
-    async def _get_session_context(
-        self, session: LearningSession
-    ) -> tuple[str, str | None, list[ChunkResult], str | None]:
-        """(title, focus, chunks, unit_content) 반환. prerequisite 세션은 chunks=[]."""
-        if getattr(session, "session_type", "pdf_concept") == "prerequisite":
-            title = getattr(session, "prereq_concept_title", None) or session.concept_id
-            return title, None, [], None
-
-        unit, document_id = self._get_unit(session.profile_id, session.curriculum_unit_order)
-        chunks = await self._fetch_chunks(document_id, unit)
-        return unit.title, unit.focus, chunks, unit.content
-
-    async def start_session(self, req: StartSessionRequest) -> StartSessionResponse:
-        unit, document_id = self._get_unit(req.profile_id, req.unit_order)
-        chunks = await self._fetch_chunks(document_id, unit)
-
-        llm = get_llm_client()
-        question = await generate_question(
-            llm, title=unit.title, focus=unit.focus, chunks=chunks
-        )
-
-        session = self.repo.create_session(
-            profile_id=req.profile_id,
-            curriculum_unit_order=req.unit_order,
-            concept_id=unit.concept_id,
-            session_type="pdf_concept",
-        )
-        self.repo.add_step(session.id, "question", question)
-
-        return StartSessionResponse(session_id=session.id, question=question)
-
-    async def start_prerequisite_session(
-        self, parent_session_id: uuid.UUID
-    ) -> StartPrerequisiteResponse:
-        """answer_reveal 이후 호출: 선수 개념 세션을 새로 만들어 반환."""
-        parent = self.repo.get_session(parent_session_id)
-        if parent is None:
-            raise HTTPException(status_code=404, detail="학습 세션을 찾을 수 없습니다.")
-
-        hint_1 = self.repo.get_step_by_type(parent_session_id, "hint_1")
-        analysis = hint_1.missing_concept_analysis if hint_1 else None
-        missing_concept = (
-            str(analysis.get("missing_concept", "")) if analysis else ""
-        ) or getattr(parent, "prereq_concept_title", None) or parent.concept_id
-
-        parent_title = (
-            getattr(parent, "prereq_concept_title", None) or parent.concept_id
-        )
-
-        llm = get_llm_client()
-        prereq_info = await infer_prerequisite_concept(
-            llm,
-            parent_concept=parent_title,
-            missing_concept=missing_concept,
-        )
-        prereq_title: str = prereq_info["title"]
-        why: str = prereq_info["why"]
-        is_foundational: bool = prereq_info["is_foundational"]
-        new_depth: int = getattr(parent, "depth", 0) + 1
-        prereq_concept_id = f"prereq_{new_depth}_{prereq_title[:40].replace(' ', '_')}"
-
-        question = await generate_prereq_question(llm, title=prereq_title, why=why)
-
-        session = self.repo.create_session(
-            profile_id=parent.profile_id,
-            curriculum_unit_order=-1,
-            concept_id=prereq_concept_id,
-            session_type="prerequisite",
-            parent_session_id=parent.id,
-            depth=new_depth,
-            prereq_concept_title=prereq_title,
-        )
-        self.repo.add_step(session.id, "question", question)
-
-        return StartPrerequisiteResponse(
-            session_id=session.id,
-            prereq_concept_title=prereq_title,
-            why=why,
-            question=question,
-            depth=new_depth,
-            is_foundational=is_foundational,
+        repo.mark_section_progress(
+            db,
+            user_id=user_id,
+            section_id=block.section_id,
+            completed=bool(tracked_ids) and passed_ids >= set(tracked_ids),
         )
 
-    async def respond(
-        self, session_id: uuid.UUID, user_response: str
-    ) -> RespondCorrectResponse | RespondIncorrectResponse:
-        session = self.repo.get_session(session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="학습 세션을 찾을 수 없습니다.")
-        if session.status == "completed":
-            raise HTTPException(status_code=409, detail="이미 완료된 세션입니다.")
+    db.commit()
 
-        question_step = self.repo.get_step_by_type(session_id, "question")
-        if question_step is None:
-            raise HTTPException(status_code=409, detail="질문 단계가 없습니다.")
-
-        title, _focus, chunks, _content = await self._get_session_context(session)
-
-        llm = get_llm_client()
-        verdict = await judge_response(
-            llm,
-            concept=title,
-            question=question_step.content,
-            user_response=user_response,
-            chunks=chunks,
-        )
-        is_correct = bool(verdict["correct"])
-        self.repo.update_step_response(question_step, user_response, is_correct)
-
-        if is_correct:
-            self.repo.update_session_status(session, "completed")
-            return RespondCorrectResponse(feedback=str(verdict["feedback"]))
-
-        hint = await generate_hint_1(
-            llm,
-            title=title,
-            question=question_step.content,
-            user_response=user_response,
-        )
-        analysis = await infer_missing_concept(
-            llm,
-            question=question_step.content,
-            user_response=user_response,
-            concept=title,
-            chunks=chunks,
-        )
-        self.repo.add_step(
-            session_id,
-            "hint_1",
-            hint,
-            missing_concept_analysis=analysis,
-        )
-        return RespondIncorrectResponse(
-            hint=hint,
-            missing_concept=str(analysis["missing_concept"]),
-            reason=str(analysis["reason"]),
-        )
-
-    async def get_hint(self, session_id: uuid.UUID) -> HintResponse:
-        session = self.repo.get_session(session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="학습 세션을 찾을 수 없습니다.")
-
-        question_step = self.repo.get_step_by_type(session_id, "question")
-        if question_step is None:
-            raise HTTPException(status_code=409, detail="질문 단계가 없습니다.")
-
-        hint_1 = self.repo.get_step_by_type(session_id, "hint_1")
-        if hint_1 is None:
-            raise HTTPException(status_code=409, detail="먼저 답변을 제출해 주세요.")
-
-        hint_2 = self.repo.get_step_by_type(session_id, "hint_2")
-        answer_reveal = self.repo.get_step_by_type(session_id, "answer_reveal")
-
-        title, _focus, chunks, unit_content = await self._get_session_context(session)
-        llm = get_llm_client()
-        is_prereq = getattr(session, "session_type", "pdf_concept") == "prerequisite"
-
-        if hint_2 is None:
-            content = await generate_hint_2(
-                llm,
-                title=title,
-                question=question_step.content,
-                user_response=question_step.user_response or "",
-                chunks=chunks,
+    return AttemptResponse(
+        correct=result.correct,
+        score=result.score,
+        feedback=(
+            AttemptFeedback(
+                missed_points=result.missed_points or [], comment=result.comment or ""
             )
-            self.repo.add_step(session_id, "hint_2", content)
-            return HintResponse(step_type="hint_2", content=content)
-
-        if answer_reveal is None:
-            if is_prereq:
-                content = await generate_prereq_answer_reveal(
-                    llm,
-                    title=title,
-                    question=question_step.content,
-                )
-            else:
-                content = await generate_answer_reveal(
-                    llm,
-                    title=title,
-                    question=question_step.content,
-                    chunks=chunks,
-                    unit_content=unit_content,
-                )
-            self.repo.add_step(session_id, "answer_reveal", content)
-            self.repo.update_session_status(session, "completed")
-            return HintResponse(step_type="answer_reveal", content=content)
-
-        return HintResponse(step_type="answer_reveal", content=answer_reveal.content)
-
-    def complete_session(self, session_id: uuid.UUID) -> CompleteSessionResponse:
-        """세션 완료 후 약점 목록 갱신. prerequisite 세션은 부모로 복귀."""
-        session = self.repo.get_session(session_id)
-        if session is None:
-            raise HTTPException(status_code=404, detail="학습 세션을 찾을 수 없습니다.")
-
-        if getattr(session, "session_type", "pdf_concept") == "prerequisite":
-            if session.status != "completed":
-                self.repo.update_session_status(session, "completed")
-            return CompleteSessionResponse(
-                concept_id=session.concept_id,
-                resolved=True,
-                current_weaknesses=[],
-                return_to_session_id=getattr(session, "parent_session_id", None),
-            )
-
-        return update_weakness_after_session(session_id, self.db)
+            if result.score is not None
+            else None
+        ),
+        concept=ConceptStateOut(
+            concept_id=str(concept_id),
+            strength=mastery.strength,
+            status=mastery.status,
+            explanation_score=mastery.explanation_score,
+            next_due_at=(
+                mastery.next_due_at.isoformat() if mastery.next_due_at else None
+            ),
+        ),
+        next_action=NextActionOut(action=action.action, reason=action.reason),
+    )
