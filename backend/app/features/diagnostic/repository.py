@@ -91,6 +91,36 @@ class DiagnosticRepository:
         )
         return set(self.db.scalars(stmt))
 
+    def get_all_sub_ids(self, concept_ids: list[int]) -> set[int]:
+        """선수(prerequisite)이거나 섹션 하위(contains)인 개념 전부 — 진단 시작 시 잠금 대상."""
+        if not concept_ids:
+            return set()
+        stmt = select(ConceptEdge.to_concept_id).where(
+            ConceptEdge.from_concept_id.in_(concept_ids),
+            ConceptEdge.kind.in_(["prerequisite", "contains"]),
+        )
+        return set(self.db.scalars(stmt))
+
+    def get_contains_child_ids(self, concept_id: int) -> list[int]:
+        """섹션 노드의 하위(contains) 개념 id — id 순 (오답 시 대표 샘플 출제용)."""
+        stmt = (
+            select(ConceptEdge.to_concept_id)
+            .where(
+                ConceptEdge.from_concept_id == concept_id,
+                ConceptEdge.kind == "contains",
+            )
+            .order_by(ConceptEdge.to_concept_id)
+        )
+        return list(self.db.scalars(stmt))
+
+    def get_container_ids(self, concept_id: int) -> list[int]:
+        """이 개념을 하위로 갖는 섹션 노드 id."""
+        stmt = select(ConceptEdge.from_concept_id).where(
+            ConceptEdge.to_concept_id == concept_id,
+            ConceptEdge.kind == "contains",
+        )
+        return list(self.db.scalars(stmt))
+
     # ── Mastery ───────────────────────────────────────────────
     def create_masteries(
         self,

@@ -18,12 +18,36 @@ class Settings(BaseSettings):
     SOLAR_CHAT_MODEL: str = "solar-pro3"
     SOLAR_EMBED_MODEL: str = "embedding-query"
     SOLAR_EMBED_DIM: int = 4096
-    DOCUMENT_PARSE_MODEL: str = "document-parse"
+    # 주의: "document-parse" 별칭은 최신 출시보다 늦게 갱신됨(2026-07-03
+    # 실호출 확인: 별칭→260128) → 최신 버전을 명시 고정. 새 버전 출시 시 갱신.
+    DOCUMENT_PARSE_MODEL: str = "document-parse-260630"
 
     # 개념 추출 깊이 상한.
     # 명세의 "N-2 깊이 제한" — 문서 목차 깊이(N)보다 2단계 얕게 파편화해
     # 과분할/노이즈를 막는다. 추출 스키마(재귀 ConceptNode)에서 강제.
     MAX_CONCEPT_DEPTH: int = 2
+
+    # ── 개념 추출: 섹션 분할 + 커버리지 (ISSUE-008) ───────────────
+    # 전체 문서 단일 호출은 출력 토큰 한계로 ~20개 압축·누락이 생겨,
+    # 마크다운 헤딩 기준 섹션(청크)별로 나눠 호출한다.
+    # 청크 최대 문자 수. 청크 ≈ 진단 섹션 단위이기도 하므로 너무 크면 섹션이
+    # 과하게 넓어져(파트급) 게이팅이 관대해진다. 4000자 ≈ 중주제 크기.
+    EXTRACTION_SECTION_CHAR_BUDGET: int = 4000
+    EXTRACTION_MAX_CONCURRENCY: int = 3  # 섹션 추출 LLM 동시 호출 수
+    # 임베딩 코사인 유사도가 이 값 이상이면 같은 개념으로 병합
+    # (예: "데이터베이스" vs "데이터베이스 (DBMS)"). embed는 어차피 개념마다
+    # 수행하므로 추가 비용 없음.
+    CONCEPT_DEDUP_SIM_THRESHOLD: float = 0.92
+
+    # ── 조건부 섹션 계층 (ISSUE-009) ──────────────────────────────
+    # 한 청크의 타겟 개념이 이 수 이상이면 섹션 대표 개념을 depth 0 노드로
+    # 만들고 타겟들을 그 하위(kind='contains')로 내린다 → 진단 메인 수 억제.
+    # 미달(논문 등 소형 문서)이면 섹션 노드 없이 타겟이 그대로 메인
+    # → 기존 동작과 동일하게 우아하게 퇴화.
+    SECTION_NODE_MIN_FANOUT: int = 8
+    # 섹션 문항 오답 시 하위(contains) 용어 중 잠금 해제해 실제 출제할 대표 수.
+    # 나머지 하위는 오답 신호를 하향 전파만 받고 잠금 유지(학습 중 정밀화 대상).
+    BKT_GATED_CONTAINS_SAMPLE: int = 3
 
     # ── BKT(베이지안 지식 추적) 진단 ──────────────────────────────
     # 개념별 사전 숙련 확률 / 학습전이 / 슬립(앎에도 틀림) / 추측(모름에도 맞춤).

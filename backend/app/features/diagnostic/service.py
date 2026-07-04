@@ -141,8 +141,9 @@ class DiagnosticService:
         concept_ids = [c.id for c in concepts]
 
         if settings.BKT_GATED_MODE:
-            # 메인(최상위) 개념 = 누구의 선수지식도 아닌 개념. 나머지(하위)는 잠금.
-            sub_ids = self.repo.get_all_prerequisite_target_ids(concept_ids)
+            # 메인(최상위) = 누구의 선수(prerequisite)도, 섹션 하위(contains)도
+            # 아닌 개념. 나머지는 잠금 — 섹션 계층 문서에선 섹션 노드만 메인이 된다.
+            sub_ids = self.repo.get_all_sub_ids(concept_ids)
             main_concepts = [c for c in concepts if c.id not in sub_ids]
             self.repo.create_masteries(
                 session_id=session.id,
@@ -436,8 +437,12 @@ class DiagnosticService:
     ) -> None:
         """채점 결과(=LLM 판단)로 라우팅. 한 문항으로 해당 개념을 판정한다.
 
-        정답 → 이 개념의 하위(선수) 전체를 '안다'고 보고 자동 확정(출제 생략).
-        오답 → 메인(최상위)일 때만 직접 하위(선수)를 잠금 해제해 결손 확인.
+        정답 → 이 개념의 하위(선수 + 섹션 하위) 전체를 '안다'고 보고 자동 확정.
+        오답 → 메인(최상위)일 때만 한 단계 내려간다:
+               - 직접 선수(prerequisite)는 전부 잠금 해제
+               - 섹션 하위(contains)는 대표 N개만 잠금 해제 출제, 나머지는
+                 오답 신호를 하향 전파만 받고 잠금 유지 (ISSUE-009 — 학습 중
+                 확인 루프가 나중에 정밀화)
                이미 하위 단계인 개념은 '최대한 한 단계' 원칙에 따라 더 내려가지 않음.
         """
         # 게이티드 모드는 개념당 N문항(기본 1)으로 판정 → 문항 수 최소화.
@@ -449,26 +454,51 @@ class DiagnosticService:
             self._mark_subtree_known(session_id, concept_id)
             return
 
-        # 오답: 이 개념이 메인(누구의 선수도 아님)일 때만 한 단계 내려간다.
-        is_main = not self.repo.get_dependent_ids(concept_id)
+        # 오답: 메인(누구의 선수도, 어느 섹션의 하위도 아님)일 때만 내려간다.
+        is_main = not self.repo.get_dependent_ids(concept_id) and not self.repo.get_container_ids(concept_id)
         if not is_main:
             return
 
         prereq_ids = self.repo.get_prerequisite_ids(concept_id)
-        if not prereq_ids:
+        child_ids = self.repo.get_contains_child_ids(concept_id)
+        sample_ids = child_ids[: settings.BKT_GATED_CONTAINS_SAMPLE]
+        rest_ids = child_ids[len(sample_ids):]
+
+        unlock_ids = prereq_ids + sample_ids
+        if not unlock_ids and not rest_ids:
             return
 
-        for pid in prereq_ids:
-            self.repo.unlock_mastery(session_id=session_id, concept_id=pid)
+        for uid in unlock_ids:
+            self.repo.unlock_mastery(session_id=session_id, concept_id=uid)
+
+        # 샘플에서 빠진 섹션 하위: 출제 없이 오답 신호만 하향 반영(거친 씨앗).
+        # 잠금 유지 → 학습 중 확인 루프(ISSUE-005)가 이후 정밀화한다.
+        for rid in rest_ids:
+            m = self.repo.get_mastery(session_id=session_id, concept_id=rid)
+            if m is None or m.resolved:
+                continue
+            m.strength = max(
+                0.01,
+                min(
+                    0.99,
+                    bkt.propagate_down(
+                        answered_p=mastery.strength,
+                        dependent_p=m.strength,
+                        decay=settings.BKT_PROPAGATION_DECAY,
+                        hop=1,
+                    ),
+                ),
+            )
+        self.db.flush()
 
         # 잠금 해제된 하위 개념 문항을 지연 생성 (필요한 가지에만 비용 발생).
-        prereq_concepts = [concepts[pid] for pid in prereq_ids if pid in concepts]
-        await self._ensure_questions(session_id, prereq_concepts)
+        unlock_concepts = [concepts[uid] for uid in unlock_ids if uid in concepts]
+        await self._ensure_questions(session_id, unlock_concepts)
 
     def _mark_subtree_known(self, session_id: int, concept_id: int) -> None:
-        """정답이면 그 개념의 선수지식 전체를 '안다'고 보고 확정(출제 생략)."""
+        """정답이면 그 개념의 하위 전체(선수 + 섹션 하위)를 '안다'고 보고 확정."""
         visited: set[int] = {concept_id}
-        frontier = list(self.repo.get_prerequisite_ids(concept_id))
+        frontier = self.repo.get_prerequisite_ids(concept_id) + self.repo.get_contains_child_ids(concept_id)
         while frontier:
             pid = frontier.pop()
             if pid in visited:
@@ -482,6 +512,7 @@ class DiagnosticService:
                 self.db.flush()
 
             frontier.extend(self.repo.get_prerequisite_ids(pid))
+            frontier.extend(self.repo.get_contains_child_ids(pid))
 
     async def _ensure_questions(
         self, session_id: int, concepts: list[Concept]

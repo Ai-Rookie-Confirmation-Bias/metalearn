@@ -4,6 +4,10 @@ export interface ConceptOut {
   name: string;
   description: string;
   depth_level: number;
+  /** 'document' = 교재에서 추출, 'llm' = LLM이 보충한 선수개념 */
+  source: "document" | "llm";
+  /** 교재 추출 개념의 원문 섹션(헤딩 경로) */
+  source_anchor: string | null;
   prerequisite_ids: number[];
 }
 

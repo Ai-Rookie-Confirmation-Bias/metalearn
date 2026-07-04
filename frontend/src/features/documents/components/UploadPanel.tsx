@@ -31,7 +31,34 @@ function ConceptGraph({ course }: { course: CourseDetail }) {
             <strong>{c.name}</strong>{" "}
             <span style={{ color: "#888", fontSize: 12 }}>
               (depth {c.depth_level})
-            </span>
+            </span>{" "}
+            {c.source === "llm" ? (
+              <span
+                style={{
+                  fontSize: 11,
+                  color: "#b45309",
+                  background: "#fef3c7",
+                  borderRadius: 4,
+                  padding: "1px 6px",
+                }}
+              >
+                AI 보충 선수개념
+              </span>
+            ) : (
+              c.source_anchor && (
+                <span
+                  style={{
+                    fontSize: 11,
+                    color: "#475569",
+                    background: "#f1f5f9",
+                    borderRadius: 4,
+                    padding: "1px 6px",
+                  }}
+                >
+                  교재: {c.source_anchor}
+                </span>
+              )
+            )}
             <div style={{ fontSize: 13, color: "#444" }}>{c.description}</div>
             {c.prerequisite_ids.length > 0 && (
               <div style={{ fontSize: 12, color: "#2563eb" }}>

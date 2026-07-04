@@ -1,4 +1,16 @@
-"""[3.Service] Ingestion: users → documents → courses → concepts."""
+"""[3.Service] Ingestion: users → documents → courses → concepts.
+
+ISSUE-008 설계 ("넓이는 미리, 깊이는 JIT"):
+- 업로드 시점: 마크다운 헤딩 기준 섹션별 추출로 타겟 개념을 빠짐없이 확보.
+  타겟은 source='document' + 출처 섹션(source_anchor), LLM이 보충한
+  선수개념은 source='llm'으로 출처를 구분한다.
+- 커리큘럼 시점(2단계, 미구현): source_anchor로 섹션 원문을 찾아
+  하위 깊이를 JIT 확장.
+"""
+import asyncio
+import logging
+import re
+
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -7,6 +19,7 @@ from app.core.config import settings
 from app.core.llm.solar import solar_client
 from app.features.auth.repository import AuthRepository
 from app.features.diagnostic.repository import DiagnosticRepository
+from app.features.documents import sectioning
 from app.features.documents.repository import DocumentRepository
 from app.features.documents.schemas import (
     ConceptNode,
@@ -21,21 +34,44 @@ _EXTRACTION_SYSTEM = (
     "출력은 반드시 지정한 JSON 스키마만 따른다. 설명·사족·마크다운 펜스 금지."
 )
 
+_log = logging.getLogger("uvicorn.error")
 
-def _extraction_prompt(raw_text: str) -> str:
+
+def _extraction_prompt(anchor: str, section_text: str) -> str:
     return (
-        "다음 학습 자료에서 타겟 개념과 그 '직접 선수지식'을 추출하라.\n"
+        "다음은 학습 자료의 한 섹션이다.\n"
+        f"섹션 위치: {anchor}\n\n"
+        "이 섹션이 다루는 타겟 개념을 하나도 빠짐없이 전부 추출하라.\n"
         "규칙:\n"
-        f"1. 트리 중첩 깊이는 최대 {settings.MAX_CONCEPT_DEPTH}단계까지만 (N-2 제한). "
+        "1. 이 섹션에서 설명·정의·소개하는 모든 개념/용어가 타겟이다. "
+        "대표 개념 몇 개로 요약·압축하지 말 것. 사소해 보여도 본문이 다루면 포함할 것.\n"
+        "2. prerequisites 에는 해당 개념을 이해하기 위해 '직접' 선행돼야 하는 개념만. "
+        "이 자료에 없는 외부 배경지식이라도 이해에 필요하면 포함하라.\n"
+        f"3. 트리 중첩 깊이는 최대 {settings.MAX_CONCEPT_DEPTH}단계까지만 (N-2 제한). "
         f"초과 깊이는 자동 삭제되므로 반드시 {settings.MAX_CONCEPT_DEPTH}단계 이내로 유지할 것.\n"
-        "2. prerequisites 에는 해당 개념을 이해하기 위해 '직접' 선행돼야 하는 개념만.\n"
-        "3. name 은 간결한 명사구, description 은 한국어 한 문장.\n"
-        "4. 같은 개념은 한 번만 정의하고 중복 생성하지 말 것.\n\n"
-        'JSON 형식: {"concepts":[{"name":str,"description":str,'
-        '"prerequisites":[{ ...동일 구조... }]}]}\n\n'
-        "=== 자료 ===\n"
-        f"{raw_text}"
+        "4. name 은 간결한 명사구, description 은 한국어 한 문장.\n"
+        "5. 같은 개념은 한 번만 정의하고 중복 생성하지 말 것.\n"
+        "6. 원문은 PDF 파싱 과정에서 문장 속 수식의 위첨자·특수기호가 "
+        "평문화되어 있을 수 있다(예: 'x2+x'는 x^2+x, 'ex'는 e^x, "
+        "'x3-3x2'는 x^3-3x^2). 수학 맥락으로 원래 수식을 복원해 "
+        "name/description에 표준 표기(x^2, e^x 꼴)로 적을 것.\n"
+        "7. section 필드에 이 섹션 전체를 관통하는 대표 개념 하나를 제시하라. "
+        "헤딩 원문 복사가 아니라 학습 주제로서의 개념명으로 지을 것 "
+        '(예: "■ 트리 순회 방법 - 3가지" 섹션이면 "트리 순회").\n\n'
+        'JSON 형식: {"section":{"name":str,"description":str},'
+        '"concepts":[{"name":str,"description":str,'
+        '"prerequisites":[{ ...동일 구조... }]}]}\n'
+        "주의: prerequisites 는 문자열 배열이 아니라 반드시 동일 구조의 "
+        "객체 배열이어야 한다.\n\n"
+        "=== 섹션 원문 ===\n"
+        f"{section_text}"
     )
+
+
+def _normalize_name(name: str) -> str:
+    """중복 판정용 이름 정규화: 괄호 보조 표기 제거 + 공백/대소문자 정리."""
+    base = re.sub(r"\s*\([^)]*\)", " ", name)
+    return re.sub(r"\s+", " ", base).strip().lower()
 
 
 class DocumentService:
@@ -52,7 +88,7 @@ class DocumentService:
 
         course: object | None = None
         try:
-            parsed = await solar_client.parse_document(file_bytes, filename)
+            parsed, elements = await solar_client.parse_document(file_bytes, filename)
             if not parsed.strip():
                 raise ValueError("Document Parse 결과가 비어 있습니다.")
             document.raw_text = parsed
@@ -66,8 +102,17 @@ class DocumentService:
             self.diag_repo.ensure_enrollment(user_id=user.id, course_id=course.id)
             self.db.commit()
 
-            extraction = await self._extract_concepts(parsed)
-            await self._persist_graph(course.id, extraction)
+            # 1순위: 파서 요소 구조 기반 청킹. elements가 없으면 마크다운 폴백.
+            chunks = sectioning.chunk_elements(
+                elements, settings.EXTRACTION_SECTION_CHAR_BUDGET
+            )
+            if not chunks:
+                chunks = sectioning.chunk_sections(
+                    sectioning.split_sections(parsed),
+                    settings.EXTRACTION_SECTION_CHAR_BUDGET,
+                )
+            extractions = await self._extract_all(chunks)
+            await self._persist_graph(course.id, extractions)
 
             document.status = "ready"
             self.db.commit()
@@ -84,45 +129,165 @@ class DocumentService:
         assert course is not None
         return self.get_course_detail(course.id)
 
-    async def _extract_concepts(self, raw_text: str) -> ExtractionResult:
+    async def _extract_all(
+        self, chunks: list[sectioning.Chunk]
+    ) -> list[tuple[str, ExtractionResult]]:
+        """섹션 청크별 병렬 추출 (제한 동시성, 청크당 1회 재시도)."""
+        sem = asyncio.Semaphore(settings.EXTRACTION_MAX_CONCURRENCY)
+        done = 0
+
+        async def one(chunk: sectioning.Chunk) -> tuple[str, ExtractionResult]:
+            nonlocal done
+            async with sem:
+                try:
+                    result = await self._extract_concepts(chunk)
+                except Exception:  # noqa: BLE001 — 일시 오류 대비 1회 재시도
+                    _log.warning("추출 실패, 재시도: %s", chunk.anchor)
+                    result = await self._extract_concepts(chunk)
+                done += 1
+                _log.info(
+                    "추출 %d/%d 완료: %s (%d개 타겟)",
+                    done, len(chunks), chunk.anchor, len(result.concepts),
+                )
+                return chunk.anchor, result
+
+        _log.info("섹션 추출 시작: 청크 %d개", len(chunks))
+        return list(await asyncio.gather(*(one(c) for c in chunks)))
+
+    async def _extract_concepts(self, chunk: sectioning.Chunk) -> ExtractionResult:
         raw = await solar_client.generate_json(
-            _extraction_prompt(raw_text), system=_EXTRACTION_SYSTEM
+            _extraction_prompt(chunk.anchor, chunk.text), system=_EXTRACTION_SYSTEM
         )
         try:
             return ExtractionResult.model_validate(raw)
         except ValidationError as exc:
             raise ValueError(
-                f"추출 JSON이 스키마 검증을 통과하지 못했습니다: {exc}"
+                f"추출 JSON이 스키마 검증을 통과하지 못했습니다"
+                f" (섹션: {chunk.anchor}): {exc}"
             ) from exc
 
-    async def _persist_graph(self, course_id: int, extraction: ExtractionResult) -> None:
-        created: dict[str, int] = {}
+    async def _persist_graph(
+        self, course_id: int, extractions: list[tuple[str, ExtractionResult]]
+    ) -> None:
+        """추출 결과를 2단계로 저장한다.
+
+        1단계: 모든 섹션의 타겟(root)을 먼저 등록 — 교재 출처(document+anchor) 확정.
+        2단계: 선수관계 연결. 선수 노드는 기존 개념과 이름/임베딩으로 중복 판정해
+               병합하고, 새로 만들 때만 source='llm'(LLM 보충 지식)으로 남긴다.
+
+        조건부 섹션 계층 (ISSUE-009): 청크 타겟이 SECTION_NODE_MIN_FANOUT 이상이면
+        섹션 대표 개념을 depth 0으로 세우고 타겟들을 depth 1 + kind='contains'로
+        내린다. 미달 청크(논문 등)는 섹션 노드 없이 타겟이 그대로 depth 0.
+        """
+        by_norm: dict[str, int] = {}  # 정규화 이름 → concept_id
         edges: set[tuple[int, int]] = set()
 
-        async def upsert(node: ConceptNode, depth_level: int) -> int:
-            cid = created.get(node.name)
-            if cid is None:
-                embedding = await solar_client.embed(f"{node.name}\n{node.description}")
+        async def resolve(
+            node: ConceptNode, depth_level: int, source: str, anchor: str | None
+        ) -> int:
+            norm = _normalize_name(node.name)
+            cid = by_norm.get(norm)
+            if cid is not None:
+                self._merge_concept(cid, node, depth_level, source, anchor)
+                return cid
+
+            embedding = await solar_client.embed(f"{node.name}\n{node.description}")
+            near = self.repo.find_nearest_concept(course_id=course_id, embedding=embedding)
+            if near is not None and near[1] >= settings.CONCEPT_DEDUP_SIM_THRESHOLD:
+                cid = near[0].id
+                self._merge_concept(cid, node, depth_level, source, anchor)
+            else:
                 concept = self.repo.add_concept(
                     course_id=course_id,
                     name=node.name,
                     description=node.description,
                     depth_level=depth_level,
                     embedding=embedding,
+                    source=source,
+                    source_anchor=anchor,
                 )
-                created[node.name] = concept.id
                 cid = concept.id
+            by_norm[norm] = cid
+            if len(by_norm) % 100 == 0:
+                _log.info("개념 저장 진행: %d개 (임베딩 포함)", len(by_norm))
+            return cid
 
+        async def upsert(
+            node: ConceptNode, depth_level: int, source: str, anchor: str | None
+        ) -> int:
+            cid = await resolve(node, depth_level, source, anchor)
             for child in node.prerequisites:
-                child_id = await upsert(child, depth_level + 1)
+                child_id = await upsert(child, depth_level + 1, "llm", None)
                 edge = (cid, child_id)
                 if edge not in edges and cid != child_id:
                     self.repo.add_edge(from_concept_id=cid, to_concept_id=child_id)
                     edges.add(edge)
             return cid
 
-        for root in extraction.concepts:
-            await upsert(root, 0)
+        def sectioned(extraction: ExtractionResult) -> bool:
+            return (
+                extraction.section is not None
+                and len(extraction.concepts) >= settings.SECTION_NODE_MIN_FANOUT
+            )
+
+        # 1단계: 섹션 노드 + 타겟 전부 먼저 (교재 출처 확정 — 선수로도 등장하는
+        # 개념이 llm 출처로 먼저 생기는 것을 방지)
+        for anchor, extraction in extractions:
+            root_depth = 0
+            if sectioned(extraction):
+                root_depth = 1
+                assert extraction.section is not None
+                await resolve(
+                    ConceptNode(
+                        name=extraction.section.name,
+                        description=extraction.section.description,
+                    ),
+                    0,
+                    "document",
+                    anchor,
+                )
+            for root in extraction.concepts:
+                await resolve(root, root_depth, "document", anchor)
+
+        # 2단계: 선수 연결 + 섹션 contains 연결
+        for anchor, extraction in extractions:
+            root_depth = 0
+            section_id: int | None = None
+            if sectioned(extraction):
+                root_depth = 1
+                assert extraction.section is not None
+                section_id = by_norm[_normalize_name(extraction.section.name)]
+            for root in extraction.concepts:
+                cid = await upsert(root, root_depth, "document", anchor)
+                if section_id is not None and section_id != cid:
+                    edge = (section_id, cid)
+                    if edge not in edges:
+                        self.repo.add_edge(
+                            from_concept_id=section_id,
+                            to_concept_id=cid,
+                            kind="contains",
+                        )
+                        edges.add(edge)
+
+    def _merge_concept(
+        self,
+        concept_id: int,
+        node: ConceptNode,
+        depth_level: int,
+        source: str,
+        anchor: str | None,
+    ) -> None:
+        """중복 판정된 기존 개념에 병합. 교재(document) 출처가 llm보다 우선."""
+        concept = self.repo.get_concept(concept_id)
+        if concept is None:
+            return
+        if source == "document" and concept.source == "llm":
+            concept.source = "document"
+            concept.source_anchor = anchor
+            concept.description = node.description  # 교재 설명이 권위
+        if depth_level < concept.depth_level:
+            concept.depth_level = depth_level
+        self.db.flush()
 
     def get_course_detail(self, course_id: int) -> CourseDetail:
         course = self.repo.get_course(course_id)
@@ -135,6 +300,8 @@ class DocumentService:
                 name=c.name,
                 description=c.description,
                 depth_level=c.depth_level,
+                source=c.source,
+                source_anchor=c.source_anchor,
                 prerequisite_ids=[e.to_concept_id for e in c.prerequisite_edges],
             )
             for c in sorted(course.concepts, key=lambda c: (c.depth_level, c.id))

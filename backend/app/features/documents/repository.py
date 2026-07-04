@@ -58,6 +58,8 @@ class DocumentRepository:
         description: str,
         depth_level: int,
         embedding: list[float] | None,
+        source: str = "document",
+        source_anchor: str | None = None,
     ) -> Concept:
         concept = Concept(
             course_id=course_id,
@@ -65,10 +67,32 @@ class DocumentRepository:
             description=description,
             depth_level=depth_level,
             embedding=embedding,
+            source=source,
+            source_anchor=source_anchor,
         )
         self.db.add(concept)
         self.db.flush()
         return concept
+
+    def get_concept(self, concept_id: int) -> Concept | None:
+        return self.db.get(Concept, concept_id)
+
+    def find_nearest_concept(
+        self, *, course_id: int, embedding: list[float]
+    ) -> tuple[Concept, float] | None:
+        """코스 내 최근접 개념과 코사인 유사도(1-거리)를 반환. 없으면 None."""
+        dist = Concept.embedding.cosine_distance(embedding)
+        stmt = (
+            select(Concept, dist.label("dist"))
+            .where(Concept.course_id == course_id, Concept.embedding.is_not(None))
+            .order_by(dist)
+            .limit(1)
+        )
+        row = self.db.execute(stmt).first()
+        if row is None:
+            return None
+        concept, distance = row
+        return concept, 1.0 - float(distance)
 
     def add_edge(
         self, *, from_concept_id: int, to_concept_id: int, kind: str = "prerequisite"

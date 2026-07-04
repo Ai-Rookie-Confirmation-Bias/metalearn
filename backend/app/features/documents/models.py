@@ -67,6 +67,10 @@ class Concept(Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     depth_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 출처: 'document' = 교재에서 직접 추출, 'llm' = LLM이 보충한 선수개념.
+    source: Mapped[str] = mapped_column(String(16), nullable=False, default="document")
+    # 교재 추출 개념의 원문 섹션(헤딩 경로). JIT 깊이 확장 시 섹션 텍스트 조회 키.
+    source_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
     embedding: Mapped[list[float] | None] = mapped_column(
         HALFVEC(settings.SOLAR_EMBED_DIM), nullable=True
     )
