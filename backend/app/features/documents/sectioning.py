@@ -37,6 +37,7 @@ _MAX_REAL_PARTS = 12
 class Section:
     path: list[str]  # 헤딩 경로 (최상위 → 자신)
     text: str        # 헤딩 줄 포함 원문
+    part: int = 0    # 정제 스캔이 부여한 파트 번호 (경계 넘는 병합 금지용)
 
 
 @dataclass
@@ -59,30 +60,40 @@ def _element_text(element: dict[str, Any]) -> str:
 def chunk_elements(elements: list[dict[str, Any]], char_budget: int) -> list[Chunk]:
     """Document Parse 요소 배열을 청크로 병합한다.
 
-    - header/footer/footnote 제외 (페이지 장식 노이즈 — 실측: 마크다운
-      경로에선 전 청크 오염, 요소 경로에선 0)
-    - heading* 요소가 섹션 경계, 문자 예산으로 인접 섹션 병합
+    - removed 마킹된 요소 제외 (정제 v1 — 장식·목차·저작권·서문).
+      정제 안 거친 입력 대비로 header/footer/footnote 카테고리도 제외
+      (페이지 장식 노이즈 — 실측: 마크다운 경로에선 전 청크 오염, 요소 경로 0)
+    - heading* 요소가 섹션 경계, 문자 예산으로 인접 섹션 병합.
+      단, 정제 스캔이 부여한 part가 바뀌면 병합하지 않는다 (ISSUE-013 —
+      이질 파트가 한 청크에 섞이면 크로스 파트 선수관계 오염)
     - 요소는 절대 분할하지 않음 → 수식($$...$$)·표 원자성 보장.
       예산을 넘는 단일 섹션은 통째로 한 청크가 된다.
     """
     sections: list[Section] = []
     cur_title: str | None = None
+    cur_part = 0
     buf: list[str] = []
 
     def flush() -> None:
         nonlocal buf
         text = "\n\n".join(buf).strip()
         if text:
-            sections.append(Section(path=[cur_title or "(서문)"], text=text))
+            sections.append(
+                Section(path=[cur_title or "(서문)"], text=text, part=cur_part)
+            )
         buf = []
 
     for element in elements:
         category = element.get("category")
-        if category in _SKIP_CATEGORIES:
+        if element.get("removed") or category in _SKIP_CATEGORIES:
             continue
         text = _element_text(element)
         if not text:
             continue
+        part = int(element.get("part") or 0)
+        if part != cur_part:
+            flush()
+            cur_part = part
         if category in _HEADING_CATEGORIES:
             flush()
             cur_title = text.lstrip("# ").strip()[:80]
@@ -103,7 +114,10 @@ def chunk_elements(elements: list[dict[str, Any]], char_budget: int) -> list[Chu
         group, group_size = [], 0
 
     for sec in sections:
-        if group and group_size + len(sec.text) > char_budget:
+        if group and (
+            group_size + len(sec.text) > char_budget
+            or sec.part != group[-1].part
+        ):
             close_group()
         group.append(sec)
         group_size += len(sec.text)

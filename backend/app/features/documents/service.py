@@ -19,7 +19,7 @@ from app.core.config import settings
 from app.core.llm.solar import solar_client
 from app.features.auth.repository import AuthRepository
 from app.features.diagnostic.repository import DiagnosticRepository
-from app.features.documents import sectioning
+from app.features.documents import refinement, sectioning
 from app.features.documents.repository import DocumentRepository
 from app.features.documents.schemas import (
     ConceptNode,
@@ -94,6 +94,13 @@ class DocumentService:
             document.raw_text = parsed
             self.db.commit()
 
+            # 정제 v1 (ISSUE-014): elements를 마킹 정제해 운영용 원본으로 저장.
+            # 추출이 실패해도 정제본은 남아 재시도 시 재파싱이 필요 없다.
+            refined, profile = await refinement.refine(elements)
+            document.refined_elements = refined
+            document.profile = profile
+            self.db.commit()
+
             course = self.repo.create_course(
                 document_id=document.id,
                 user_id=user.id,
@@ -102,9 +109,9 @@ class DocumentService:
             self.diag_repo.ensure_enrollment(user_id=user.id, course_id=course.id)
             self.db.commit()
 
-            # 1순위: 파서 요소 구조 기반 청킹. elements가 없으면 마크다운 폴백.
+            # 1순위: 정제된 요소 기반 청킹. elements가 없으면 마크다운 폴백.
             chunks = sectioning.chunk_elements(
-                elements, settings.EXTRACTION_SECTION_CHAR_BUDGET
+                refined["elements"], settings.EXTRACTION_SECTION_CHAR_BUDGET
             )
             if not chunks:
                 chunks = sectioning.chunk_sections(

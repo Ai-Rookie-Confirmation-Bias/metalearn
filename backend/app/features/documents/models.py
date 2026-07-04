@@ -1,8 +1,11 @@
 """[5.Entity] 콘텐츠 + 개념 그래프 (팀 스키마: users → documents → courses → concepts)."""
 from datetime import datetime
 
+from typing import Any
+
 from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, UniqueConstraint, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.config import settings
@@ -21,6 +24,13 @@ class Document(Base):
     filename: Mapped[str] = mapped_column(String(512), nullable=False)
     storage_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     raw_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 정제 v1 (ISSUE-014): 정제된 elements = 운영용 원본. raw_text는 보존용.
+    # 제거 대상은 삭제 대신 removed 마킹, 파트 경계는 part 필드로 표시.
+    refined_elements: Mapped[list[dict[str, Any]] | None] = mapped_column(
+        JSONB, nullable=True
+    )
+    # 문서 성격 라벨: linked(연결형)|enumerative(나열형)|mixed. v1은 저장만.
+    profile: Mapped[str | None] = mapped_column(String(16), nullable=True)
     status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing")
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
