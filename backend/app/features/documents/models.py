@@ -42,6 +42,33 @@ class Document(Base):
     )
 
 
+class DocChunk(Base):
+    """RAG 문서 청크 (팀 스키마 doc_chunks 정렬) — 추출·생성의 원문 근거 단위.
+
+    element_from/to는 refined_elements 배열의 요소 번호 범위 — 필요 시 더
+    깊은 원본(요소 좌표·페이지)으로 드릴다운하는 정밀 주소. 마크다운 폴백
+    청킹에서는 요소 좌표가 없어 NULL.
+    """
+
+    __tablename__ = "doc_chunks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    document_id: Mapped[int] = mapped_column(
+        ForeignKey("documents.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding: Mapped[list[float] | None] = mapped_column(
+        HALFVEC(settings.SOLAR_EMBED_DIM), nullable=True
+    )
+    element_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    element_to: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    heading: Mapped[str | None] = mapped_column(Text, nullable=True)
+    part_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_from: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_to: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+
 class Course(Base):
     """문서 기반 학습 코스(개념·진단의 부모 단위)."""
 
@@ -79,8 +106,12 @@ class Concept(Base):
     depth_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 출처: 'document' = 교재에서 직접 추출, 'llm' = LLM이 보충한 선수개념.
     source: Mapped[str] = mapped_column(String(16), nullable=False, default="document")
-    # 교재 추출 개념의 원문 섹션(헤딩 경로). JIT 깊이 확장 시 섹션 텍스트 조회 키.
+    # 교재 추출 개념의 원문 섹션(헤딩 경로) — 사람이 읽는 표시용.
     source_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 원문 청크 FK — JIT/문제 근거 주입 시 원문 조회 키 (anchor 문자열의 정밀판).
+    source_chunk_id: Mapped[int | None] = mapped_column(
+        ForeignKey("doc_chunks.id", ondelete="SET NULL"), nullable=True
+    )
     embedding: Mapped[list[float] | None] = mapped_column(
         HALFVEC(settings.SOLAR_EMBED_DIM), nullable=True
     )

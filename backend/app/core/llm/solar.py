@@ -87,6 +87,22 @@ class SolarClient(LLMClient):
             )
             return resp.json()["data"][0]["embedding"]
 
+    async def embed_batch(self, texts: list[str]) -> list[list[float]]:
+        """여러 텍스트를 한 호출로 임베딩 (ISSUE-010: 개념당 1호출 → 배치).
+
+        입력 순서대로 반환한다 (응답의 index 필드로 정렬 보장).
+        """
+        async with httpx.AsyncClient(
+            base_url=self._base, headers=self._headers, timeout=_BATCH_TIMEOUT
+        ) as c:
+            resp = await _post_retrying(
+                c,
+                "/embeddings",
+                json={"model": settings.SOLAR_EMBED_MODEL, "input": texts},
+            )
+            data = sorted(resp.json()["data"], key=lambda d: d["index"])
+            return [d["embedding"] for d in data]
+
     async def parse_document(
         self, file_bytes: bytes, filename: str
     ) -> tuple[str, list[dict[str, Any]]]:

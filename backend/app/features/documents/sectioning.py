@@ -38,12 +38,21 @@ class Section:
     path: list[str]  # 헤딩 경로 (최상위 → 자신)
     text: str        # 헤딩 줄 포함 원문
     part: int = 0    # 정제 스캔이 부여한 파트 번호 (경계 넘는 병합 금지용)
+    el_from: int | None = None  # refined_elements 요소 번호 범위 (드릴다운 좌표)
+    el_to: int | None = None
+    page_from: int | None = None
+    page_to: int | None = None
 
 
 @dataclass
 class Chunk:
     anchor: str  # 대표 헤딩 경로. 병합 청크는 "첫 경로 ~ 끝 제목", 분할은 "(part n)"
     text: str
+    part: int = 0
+    el_from: int | None = None  # 요소 좌표 — doc_chunks 영속화용. 마크다운 폴백은 None
+    el_to: int | None = None
+    page_from: int | None = None
+    page_to: int | None = None
 
 
 # ── 요소(elements) 기반 청킹 — 1순위 경로 ───────────────────────────
@@ -73,17 +82,28 @@ def chunk_elements(elements: list[dict[str, Any]], char_budget: int) -> list[Chu
     cur_title: str | None = None
     cur_part = 0
     buf: list[str] = []
+    buf_meta: list[tuple[int, int | None]] = []  # (요소 번호, 페이지)
 
     def flush() -> None:
-        nonlocal buf
+        nonlocal buf, buf_meta
         text = "\n\n".join(buf).strip()
         if text:
+            idxs = [i for i, _ in buf_meta]
+            pages = [p for _, p in buf_meta if p is not None]
             sections.append(
-                Section(path=[cur_title or "(서문)"], text=text, part=cur_part)
+                Section(
+                    path=[cur_title or "(서문)"],
+                    text=text,
+                    part=cur_part,
+                    el_from=min(idxs),
+                    el_to=max(idxs),
+                    page_from=min(pages) if pages else None,
+                    page_to=max(pages) if pages else None,
+                )
             )
-        buf = []
+        buf, buf_meta = [], []
 
-    for element in elements:
+    for i, element in enumerate(elements):
         category = element.get("category")
         if element.get("removed") or category in _SKIP_CATEGORIES:
             continue
@@ -98,6 +118,7 @@ def chunk_elements(elements: list[dict[str, Any]], char_budget: int) -> list[Chu
             flush()
             cur_title = text.lstrip("# ").strip()[:80]
         buf.append(text)
+        buf_meta.append((i, element.get("page")))
     flush()
 
     chunks: list[Chunk] = []
@@ -110,7 +131,18 @@ def chunk_elements(elements: list[dict[str, Any]], char_budget: int) -> list[Chu
             return
         first, last = group[0].path[0], group[-1].path[0]
         anchor = first if first == last else f"{first} ~ {last}"
-        chunks.append(Chunk(anchor=anchor, text="\n\n".join(s.text for s in group)))
+        pages = [p for s in group for p in (s.page_from, s.page_to) if p is not None]
+        chunks.append(
+            Chunk(
+                anchor=anchor,
+                text="\n\n".join(s.text for s in group),
+                part=group[0].part,
+                el_from=group[0].el_from,
+                el_to=group[-1].el_to,
+                page_from=min(pages) if pages else None,
+                page_to=max(pages) if pages else None,
+            )
+        )
         group, group_size = [], 0
 
     for sec in sections:

@@ -34,10 +34,19 @@ class Settings(BaseSettings):
     # 과하게 넓어져(파트급) 게이팅이 관대해진다. 4000자 ≈ 중주제 크기.
     EXTRACTION_SECTION_CHAR_BUDGET: int = 4000
     EXTRACTION_MAX_CONCURRENCY: int = 3  # 섹션 추출 LLM 동시 호출 수
+    # 임베딩 배치 크기 (ISSUE-010): 개념당 1호출 → N개씩 묶어 호출 수 절감.
+    EMBED_BATCH_SIZE: int = 64
     # 임베딩 코사인 유사도가 이 값 이상이면 같은 개념으로 병합
     # (예: "데이터베이스" vs "데이터베이스 (DBMS)"). embed는 어차피 개념마다
     # 수행하므로 추가 비용 없음.
     CONCEPT_DEDUP_SIM_THRESHOLD: float = 0.92
+
+    # ── 일괄 dedup 패스 (ISSUE-011) ──────────────────────────────
+    # 실측: 진짜 중복이 0.85~0.92 구간에 분포하고 같은 구간에 별개 개념도
+    # 밀집(단일 문턱으로 분리 불가) → 유사도는 후보 수집만, 판정은 LLM이.
+    DEDUP_CANDIDATE_SIM_THRESHOLD: float = 0.85
+    DEDUP_MAX_PAIRS: int = 200        # 코스당 후보쌍 상한 (프롬프트 폭주 방지)
+    DEDUP_JUDGE_BATCH_SIZE: int = 50  # LLM 판정 1회당 쌍 수
 
     # ── 조건부 섹션 계층 (ISSUE-009) ──────────────────────────────
     # 한 청크의 타겟 개념이 이 수 이상이면 섹션 대표 개념을 depth 0 노드로

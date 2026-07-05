@@ -36,6 +36,10 @@ _EXTRACTION_SYSTEM = (
 
 _log = logging.getLogger("uvicorn.error")
 
+# 청크 임베딩(RAG 검색용) 입력 절단·배치 크기 — 임베딩 모델 토큰 한계 대비.
+_CHUNK_EMBED_MAX_CHARS = 2000
+_CHUNK_EMBED_BATCH = 16
+
 
 def _extraction_prompt(anchor: str, section_text: str) -> str:
     return (
@@ -68,10 +72,45 @@ def _extraction_prompt(anchor: str, section_text: str) -> str:
     )
 
 
+_DEDUP_SYSTEM = (
+    "너는 지식 그래프의 중복 개념 판정기다. "
+    "출력은 반드시 지정한 JSON 스키마만 따른다."
+)
+
+
+def _dedup_prompt(pairs: list) -> str:
+    lines = [
+        "아래 개념 쌍들이 '완전히 같은 개념의 다른 표기'인지 판정하라.\n",
+        "같음(병합)으로 판정: 띄어쓰기·기호 차이, 약어와 전체 명칭"
+        "(예: DRM = 디지털 저작권 관리(DRM)), 완전 동의어 표기.\n",
+        "다름으로 판정: 포함·상하위 관계(예: '테스트 드라이버' vs '드라이버'), "
+        "인접·대비 개념(예: 전위 순회 vs 후위 순회, /24 vs /31 서브넷), "
+        "속성·범위가 다른 세부 변형. 애매하면 다름으로.\n",
+        '출력 JSON: {"same": [같은 쌍의 번호, ...]}\n\n',
+    ]
+    for i, (a, b, _sim) in enumerate(pairs):
+        lines.append(
+            f"[{i}] A: {a.name} — {a.description[:80]}\n"
+            f"    B: {b.name} — {b.description[:80]}\n"
+        )
+    return "".join(lines)
+
+
+def _dedup_rank(concept) -> tuple[int, int, int]:
+    """병합 시 남길 노드 우선순위: 교재 출처 > 얕은 depth > 먼저 생성."""
+    return (0 if concept.source == "document" else 1, concept.depth_level, concept.id)
+
+
 def _normalize_name(name: str) -> str:
-    """중복 판정용 이름 정규화: 괄호 보조 표기 제거 + 공백/대소문자 정리."""
+    """중복 판정용 이름 정규화: 괄호 보조 표기·대괄호 기호·공백 제거 + 소문자.
+
+    공백까지 전부 제거하는 이유(ISSUE-011 실측): "일계도함수/일계 도함수",
+    "로그함수/로그 함수" 같은 표면 변형이 임베딩 유사도로는 0.75~0.81이라
+    문턱(0.92)에 안 걸린다 — 표면 중복은 정규화가 잡아야 한다.
+    """
     base = re.sub(r"\s*\([^)]*\)", " ", name)
-    return re.sub(r"\s+", " ", base).strip().lower()
+    base = base.replace("[", " ").replace("]", " ")
+    return re.sub(r"\s+", "", base).lower()
 
 
 class DocumentService:
@@ -118,8 +157,20 @@ class DocumentService:
                     sectioning.split_sections(parsed),
                     settings.EXTRACTION_SECTION_CHAR_BUDGET,
                 )
+            # 청크 영속화 (RAG 계층 — 팀 스키마 doc_chunks): 개념의 원문
+            # 근거 단위. source_chunk_id FK의 대상이므로 추출 전에 저장.
+            chunk_rows = self.repo.add_chunks(
+                document_id=document.id,
+                chunks=chunks,
+                embeddings=await self._embed_chunks(chunks),
+            )
+            self.db.commit()
+
             extractions = await self._extract_all(chunks)
-            await self._persist_graph(course.id, extractions)
+            await self._persist_graph(
+                course.id, extractions, chunk_ids=[row.id for row in chunk_rows]
+            )
+            await self._dedup_pass(course.id)
 
             document.status = "ready"
             self.db.commit()
@@ -173,8 +224,117 @@ class DocumentService:
                 f" (섹션: {chunk.anchor}): {exc}"
             ) from exc
 
+    async def _dedup_pass(self, course_id: int) -> None:
+        """일괄 중복 청소 (ISSUE-011): 유사도는 후보 수집만, 판정은 LLM이.
+
+        실측 근거: 진짜 중복이 0.85~0.92 구간에 별개 개념과 섞여 분포해
+        단일 문턱으로는 분리 불가 → 후보쌍을 LLM에 배치로 물어 확정 병합.
+        ingest 직후에만 실행 (진단/학습 데이터가 생기기 전 — merge가 노드를
+        삭제하므로).
+        """
+        pairs = self.repo.find_similar_pairs(
+            course_id=course_id,
+            min_sim=settings.DEDUP_CANDIDATE_SIM_THRESHOLD,
+            limit=settings.DEDUP_MAX_PAIRS,
+        )
+        if not pairs:
+            return
+        same_ids: list[tuple[int, int]] = []
+        for i in range(0, len(pairs), settings.DEDUP_JUDGE_BATCH_SIZE):
+            batch = pairs[i : i + settings.DEDUP_JUDGE_BATCH_SIZE]
+            try:
+                raw = await solar_client.generate_json(
+                    _dedup_prompt(batch), system=_DEDUP_SYSTEM
+                )
+            except Exception as exc:  # noqa: BLE001 — 청소 실패는 비치명
+                _log.warning("중복 판정 실패, 배치 건너뜀: %s", exc)
+                continue
+            for idx in raw.get("same") or []:
+                if isinstance(idx, int) and 0 <= idx < len(batch):
+                    a, b, _sim = batch[idx]
+                    same_ids.append((a.id, b.id))
+
+        # 체인 병합(A~B, B~C) 대비: 삭제된 id를 최종 생존 id로 따라간다.
+        redirect: dict[int, int] = {}
+
+        def final_id(cid: int) -> int:
+            while cid in redirect:
+                cid = redirect[cid]
+            return cid
+
+        merged = 0
+        for a_id, b_id in same_ids:
+            ka, kb = final_id(a_id), final_id(b_id)
+            if ka == kb:
+                continue
+            a, b = self.repo.get_concept(ka), self.repo.get_concept(kb)
+            if a is None or b is None:
+                continue
+            keep, drop = (a, b) if _dedup_rank(a) <= _dedup_rank(b) else (b, a)
+            if drop.depth_level < keep.depth_level:
+                keep.depth_level = drop.depth_level
+            self.repo.merge_concepts(keep=keep, drop=drop)
+            redirect[drop.id] = keep.id
+            merged += 1
+        _log.info("중복 청소: 후보 %d쌍 → LLM 동일 판정 %d → 병합 %d건",
+                  len(pairs), len(same_ids), merged)
+
+    async def _embed_all(
+        self, extractions: list[tuple[str, ExtractionResult]]
+    ) -> dict[str, list[float]]:
+        """개념 텍스트 배치 임베딩 (ISSUE-010: 개념당 1호출 → 64개씩 묶음).
+
+        _persist_graph의 resolve와 동일한 순회 순서로 정규화 이름당 첫
+        텍스트만 수집한다 — 기존 순차 embed와 같은 텍스트가 임베딩되도록.
+        캐시에 없는 텍스트는 resolve가 단건 호출로 폴백하므로 정합성 무손실.
+        """
+        texts: list[str] = []
+        seen: set[str] = set()
+
+        def collect(name: str, description: str) -> None:
+            norm = _normalize_name(name)
+            if norm not in seen:
+                seen.add(norm)
+                texts.append(f"{name}\n{description}")
+
+        def walk(node: ConceptNode) -> None:
+            collect(node.name, node.description)
+            for child in node.prerequisites:
+                walk(child)
+
+        for _, extraction in extractions:
+            if extraction.section is not None:
+                collect(extraction.section.name, extraction.section.description)
+            for root in extraction.concepts:
+                collect(root.name, root.description)
+        for _, extraction in extractions:
+            for root in extraction.concepts:
+                walk(root)
+
+        cache: dict[str, list[float]] = {}
+        for i in range(0, len(texts), settings.EMBED_BATCH_SIZE):
+            batch = texts[i : i + settings.EMBED_BATCH_SIZE]
+            cache.update(zip(batch, await solar_client.embed_batch(batch)))
+            _log.info("임베딩 배치 %d/%d", len(cache), len(texts))
+        return cache
+
+    async def _embed_chunks(
+        self, chunks: list[sectioning.Chunk]
+    ) -> list[list[float]]:
+        """청크 본문 임베딩 (doc_chunks의 RAG 검색 벡터). 입력은 절단."""
+        texts = [c.text[:_CHUNK_EMBED_MAX_CHARS] for c in chunks]
+        vectors: list[list[float]] = []
+        for i in range(0, len(texts), _CHUNK_EMBED_BATCH):
+            vectors.extend(
+                await solar_client.embed_batch(texts[i : i + _CHUNK_EMBED_BATCH])
+            )
+        return vectors
+
     async def _persist_graph(
-        self, course_id: int, extractions: list[tuple[str, ExtractionResult]]
+        self,
+        course_id: int,
+        extractions: list[tuple[str, ExtractionResult]],
+        chunk_ids: list[int] | None = None,
     ) -> None:
         """추출 결과를 2단계로 저장한다.
 
@@ -188,21 +348,28 @@ class DocumentService:
         """
         by_norm: dict[str, int] = {}  # 정규화 이름 → concept_id
         edges: set[tuple[int, int]] = set()
+        embed_cache = await self._embed_all(extractions)
+        ids = chunk_ids or [None] * len(extractions)
 
         async def resolve(
-            node: ConceptNode, depth_level: int, source: str, anchor: str | None
+            node: ConceptNode,
+            depth_level: int,
+            source: str,
+            anchor: str | None,
+            chunk_id: int | None,
         ) -> int:
             norm = _normalize_name(node.name)
             cid = by_norm.get(norm)
             if cid is not None:
-                self._merge_concept(cid, node, depth_level, source, anchor)
+                self._merge_concept(cid, node, depth_level, source, anchor, chunk_id)
                 return cid
 
-            embedding = await solar_client.embed(f"{node.name}\n{node.description}")
+            key = f"{node.name}\n{node.description}"
+            embedding = embed_cache.get(key) or await solar_client.embed(key)
             near = self.repo.find_nearest_concept(course_id=course_id, embedding=embedding)
             if near is not None and near[1] >= settings.CONCEPT_DEDUP_SIM_THRESHOLD:
                 cid = near[0].id
-                self._merge_concept(cid, node, depth_level, source, anchor)
+                self._merge_concept(cid, node, depth_level, source, anchor, chunk_id)
             else:
                 concept = self.repo.add_concept(
                     course_id=course_id,
@@ -212,6 +379,7 @@ class DocumentService:
                     embedding=embedding,
                     source=source,
                     source_anchor=anchor,
+                    source_chunk_id=chunk_id,
                 )
                 cid = concept.id
             by_norm[norm] = cid
@@ -220,11 +388,15 @@ class DocumentService:
             return cid
 
         async def upsert(
-            node: ConceptNode, depth_level: int, source: str, anchor: str | None
+            node: ConceptNode,
+            depth_level: int,
+            source: str,
+            anchor: str | None,
+            chunk_id: int | None,
         ) -> int:
-            cid = await resolve(node, depth_level, source, anchor)
+            cid = await resolve(node, depth_level, source, anchor, chunk_id)
             for child in node.prerequisites:
-                child_id = await upsert(child, depth_level + 1, "llm", None)
+                child_id = await upsert(child, depth_level + 1, "llm", None, None)
                 edge = (cid, child_id)
                 if edge not in edges and cid != child_id:
                     self.repo.add_edge(from_concept_id=cid, to_concept_id=child_id)
@@ -239,7 +411,7 @@ class DocumentService:
 
         # 1단계: 섹션 노드 + 타겟 전부 먼저 (교재 출처 확정 — 선수로도 등장하는
         # 개념이 llm 출처로 먼저 생기는 것을 방지)
-        for anchor, extraction in extractions:
+        for (anchor, extraction), chunk_id in zip(extractions, ids):
             root_depth = 0
             if sectioned(extraction):
                 root_depth = 1
@@ -252,12 +424,13 @@ class DocumentService:
                     0,
                     "document",
                     anchor,
+                    chunk_id,
                 )
             for root in extraction.concepts:
-                await resolve(root, root_depth, "document", anchor)
+                await resolve(root, root_depth, "document", anchor, chunk_id)
 
         # 2단계: 선수 연결 + 섹션 contains 연결
-        for anchor, extraction in extractions:
+        for (anchor, extraction), chunk_id in zip(extractions, ids):
             root_depth = 0
             section_id: int | None = None
             if sectioned(extraction):
@@ -265,7 +438,7 @@ class DocumentService:
                 assert extraction.section is not None
                 section_id = by_norm[_normalize_name(extraction.section.name)]
             for root in extraction.concepts:
-                cid = await upsert(root, root_depth, "document", anchor)
+                cid = await upsert(root, root_depth, "document", anchor, chunk_id)
                 if section_id is not None and section_id != cid:
                     edge = (section_id, cid)
                     if edge not in edges:
@@ -283,6 +456,7 @@ class DocumentService:
         depth_level: int,
         source: str,
         anchor: str | None,
+        chunk_id: int | None = None,
     ) -> None:
         """중복 판정된 기존 개념에 병합. 교재(document) 출처가 llm보다 우선."""
         concept = self.repo.get_concept(concept_id)
@@ -291,6 +465,7 @@ class DocumentService:
         if source == "document" and concept.source == "llm":
             concept.source = "document"
             concept.source_anchor = anchor
+            concept.source_chunk_id = chunk_id
             concept.description = node.description  # 교재 설명이 권위
         if depth_level < concept.depth_level:
             concept.depth_level = depth_level
