@@ -273,6 +273,7 @@ class DocumentService:
             keep, drop = (a, b) if _dedup_rank(a) <= _dedup_rank(b) else (b, a)
             if drop.depth_level < keep.depth_level:
                 keep.depth_level = drop.depth_level
+            _log.info("중복 병합: %r ← %r", keep.name, drop.name)
             self.repo.merge_concepts(keep=keep, drop=drop)
             redirect[drop.id] = keep.id
             merged += 1

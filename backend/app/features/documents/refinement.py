@@ -99,20 +99,33 @@ def _scan_prompt(elements: list[dict[str, Any]]) -> str:
         for i, el in enumerate(elements[:_SCAN_HEAD_ELEMENTS])
         if not el.get("removed")
     ]
+    # 객관 통계 주입: 판정을 인상이 아니라 수치에 접지시켜 실행 간 편차를
+    # 줄인다 (실측: 같은 문서에서 프로파일 linked↔enumerative 널뛰기).
+    stats = Counter(str(el.get("category")) for el in elements)
     return (
-        "학습 자료 문서를 파서가 요소 배열로 분해했다. 아래는 문서의 "
-        "헤딩(제목) 목록 전체와, 앞부분 요소들의 원문이다.\n"
+        "학습 자료 문서를 파서가 요소 배열로 분해했다. 아래는 문서 통계, "
+        "헤딩(제목) 목록 전체, 앞부분 요소들의 원문이다.\n"
+        f"문서 통계: 총 {len(elements)}요소 — "
+        f"수식 {stats.get('equation', 0)}, 표 {stats.get('table', 0)}, "
+        f"문단 {stats.get('paragraph', 0)}, 헤딩 "
+        f"{stats.get('heading1', 0) + stats.get('heading2', 0) + stats.get('heading3', 0)}\n\n"
         "다음 세 가지를 판정하라:\n"
-        "1. body_start_element: 실제 학습 본문이 시작되는 요소 번호. "
-        "표지·인사말·목차·저작권 고지·구매 안내 등 비학습 콘텐츠가 끝난 "
-        "직후의 요소다. 문서가 처음부터 본문이면 0.\n"
-        "2. profile: 문서의 지배적 성격. "
-        '"linked"=개념이 선수 사슬로 쌓이는 문서(수학·물리 교재처럼 앞 개념 '
-        '없이 뒤 개념 이해 불가), "enumerative"=병렬 나열·암기형(자격증 '
-        '요약노트·용어집처럼 항목 간 의존이 약함), "mixed"=두 성격이 비등.\n'
-        "3. parts: 최상위 주제 단위(목차의 장/파트)가 시작되는 헤딩 요소 "
-        "번호 목록. 목차가 있으면 목차 항목과 헤딩을 대조해 찾아라. "
-        "명확한 파트 구분이 없으면 빈 배열.\n\n"
+        "1. body_start_element: 실제 학습 본문이 시작되는 요소 번호.\n"
+        "   - 비학습 콘텐츠는 오직: 표지, 저자 인사말, 목차, 저작권 고지, 구매 안내.\n"
+        "   - 주의: '준비 학습', '생각 열기', 연습 문제, 수식·표·그래프가 있는 "
+        "요소는 학습 본문이다 — 절대 비학습으로 분류하지 말 것.\n"
+        "   - 애매하면 본문 시작을 앞당겨라(덜 지우는 쪽이 안전). "
+        "문서가 처음부터 본문이면 0.\n"
+        "2. profile: 문서의 지배적 성격. 통계를 근거로 판정하라.\n"
+        '   - "linked": 개념이 선수 사슬로 쌓임 — 수식 비중이 높고 예제·증명이 '
+        "순차 전개되는 수학·과학 교재 유형.\n"
+        '   - "enumerative": 병렬 나열·암기형 — 짧은 정의·표가 많고 헤딩이 '
+        "수십 개 이상 반복되는 요약노트·용어집 유형.\n"
+        '   - "mixed": 두 성격이 실제로 비등할 때만. 확신이 서면 mixed를 피할 것.\n'
+        "3. parts: 최상위 주제 단위(목차의 장/파트)가 시작되는 헤딩 요소 번호 목록.\n"
+        "   - 목차가 있으면 반드시 목차 항목과 헤딩을 대조해서 찾아라 "
+        "(목차 항목 수 = parts 수가 되는 것이 정상).\n"
+        "   - 소제목·절 단위는 파트가 아니다. 단일 장 문서면 빈 배열.\n\n"
         'JSON 형식: {"body_start_element": int, '
         '"profile": "linked|enumerative|mixed", '
         '"parts": [{"title": str, "start_element": int}]}\n\n'
@@ -121,14 +134,38 @@ def _scan_prompt(elements: list[dict[str, Any]]) -> str:
     )
 
 
-def _sanitize_scan(raw: dict[str, Any], total: int) -> dict[str, Any]:
+# front matter 제거 구간에 이 카테고리가 있으면 판정 기각 — 표지/인사말에는
+# 수식·표가 없다. 실측 사고: 미적분 '준비 학습'(표 2개 포함)이 서문으로
+# 오판돼 교재 개념 80→49 급감 (removed 마킹 덕에 무손실 복구).
+_BODY_EVIDENCE_CATEGORIES = {"table", "equation", "chart"}
+
+# 파트(장) 개수 상식 상한 — 초과하면 소제목을 파트로 오인한 것 (실측: 단일
+# 단원 미적분에서 57개). 틀린 경계로 청크를 잘게 쪼개느니 경계 없이 간다.
+_MAX_PARTS = 20
+
+
+def _sanitize_scan(
+    raw: dict[str, Any], elements: list[dict[str, Any]]
+) -> dict[str, Any]:
     """LLM 판정에 가드레일 적용. 수상한 판정은 기각(=아무것도 안 지움)."""
+    total = len(elements)
     scan: dict[str, Any] = {"body_start_element": 0, "profile": None, "parts": []}
 
     body_start = raw.get("body_start_element")
     limit = max(_SCAN_HEAD_ELEMENTS, int(total * _FRONT_MATTER_MAX_RATIO))
     if isinstance(body_start, int) and 0 <= body_start <= limit:
-        scan["body_start_element"] = body_start
+        evidence = [
+            el.get("category")
+            for el in elements[:body_start]
+            if el.get("category") in _BODY_EVIDENCE_CATEGORIES
+        ]
+        if evidence:
+            _log.warning(
+                "스캔 기각: 서문 구간(~%d)에 본문 증거 요소 %s — 지우지 않음",
+                body_start, evidence,
+            )
+        else:
+            scan["body_start_element"] = body_start
     elif body_start:
         _log.warning("스캔 기각: body_start_element=%s (한계 %d)", body_start, limit)
 
@@ -136,8 +173,12 @@ def _sanitize_scan(raw: dict[str, Any], total: int) -> dict[str, Any]:
     if profile in PROFILES:
         scan["profile"] = profile
 
+    raw_parts = raw.get("parts") or []
+    if len(raw_parts) > _MAX_PARTS:
+        _log.warning("스캔 기각: parts %d개 (상한 %d) — 파트 경계 미적용", len(raw_parts), _MAX_PARTS)
+        raw_parts = []
     prev = -1
-    for part in raw.get("parts") or []:
+    for part in raw_parts:
         start = part.get("start_element") if isinstance(part, dict) else None
         if isinstance(start, int) and prev < start < total:
             scan["parts"].append(
@@ -175,7 +216,7 @@ async def refine(
             raw = await solar_client.generate_json(
                 _scan_prompt(refined), system=_SCAN_SYSTEM
             )
-            scan = _sanitize_scan(raw, total=len(refined))
+            scan = _sanitize_scan(raw, refined)
         except Exception as exc:  # noqa: BLE001 — 스캔 실패는 비치명
             _log.warning("문서 스캔 실패, 규칙 정제만 적용: %s", exc)
     if scan is not None:
