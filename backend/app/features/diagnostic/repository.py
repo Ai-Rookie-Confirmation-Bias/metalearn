@@ -10,12 +10,22 @@ from app.features.diagnostic.models import (
     DiagnosticSession,
     Enrollment,
 )
-from app.features.documents.models import Concept, ConceptEdge, Course
+from app.features.documents.models import Concept, ConceptEdge, Course, DocChunk
 
 
 class DiagnosticRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
+
+    # ── 원문 근거 (RAG 주입) ──────────────────────────────────
+    def get_chunk_contents(self, chunk_ids: set[int]) -> dict[int, str]:
+        """doc_chunks 원문 조회 — 문항 생성 프롬프트에 근거로 주입."""
+        if not chunk_ids:
+            return {}
+        rows = self.db.scalars(
+            select(DocChunk).where(DocChunk.id.in_(chunk_ids))
+        ).all()
+        return {row.id: row.content for row in rows}
 
     # ── Enrollment ────────────────────────────────────────────
     def ensure_enrollment(self, *, user_id: int, course_id: int) -> Enrollment:

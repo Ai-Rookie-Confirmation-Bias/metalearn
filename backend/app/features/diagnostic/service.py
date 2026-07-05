@@ -6,6 +6,9 @@
   - 각 개념의 strength이 경계(>=HIGH / <=LOW)에 닿을 때까지 반복, 닿으면 확정.
   - 모든 개념이 확정되면 세션 종료. (피로도 무시 / 정확도 올인)
 """
+import logging
+import re
+
 from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
@@ -36,6 +39,8 @@ from app.features.diagnostic.schemas import (
 )
 from app.features.documents.models import Concept
 
+_log = logging.getLogger("uvicorn.error")
+
 _QUIZ_SYSTEM = (
     "너는 특정 개념의 숙지 여부를 변별하는 진단 문항 출제기다. "
     "개념 특성에 맞는 최적의 문항 유형을 스스로 고른다. "
@@ -54,11 +59,87 @@ _JUDGE_SYSTEM = (
     "출력은 JSON만."
 )
 
+_VERIFY_SYSTEM = (
+    "너는 진단 문항 검수자다. 각 문항의 정답이 실제로 옳은지만 검사한다. "
+    "출력은 지정한 JSON 스키마만 따른다."
+)
 
-def _quiz_prompt(concept: Concept) -> str:
+
+def _verify_prompt(drafts: list) -> str:
+    """생성 문항 셀프체크 프롬프트 (ISSUE-016 ① — mcq 수학 오류 차단).
+
+    "훑고 판정"은 오류를 놓친다(실측: 오답 mcq 통과). 문항마다 자기 답을
+    '먼저 도출해 적게' 강제하고 마킹과 비교시키는 구조화 검증.
+    """
+    lines = [
+        "아래 진단 문항들을 검수하라. 각 문항마다:\n",
+        "1. 출제 정보(answer_index/expected_answer)를 보지 말고 문제를 직접 풀어 "
+        "my_answer에 너의 정답을 적어라. 수학 문항은 계산을 거친 최종값만. "
+        "mcq는 보기 문구와 같은 형식으로 적어라 (예: 'y = 3x - 1').\n",
+        "2. cloze/inverse: expected_answer가 my_answer와 의미상 일치하면 "
+        "valid=true, 아니면 false. mcq의 valid는 항상 true로 두라 "
+        "(mcq 대조는 시스템이 수행한다).\n",
+        '출력 JSON: {"reviews": [{"i": 문항번호, "my_answer": str, "valid": bool}, ...]} '
+        "— 모든 문항에 대해 하나씩.\n\n",
+    ]
+    for i, (_concept, d) in enumerate(drafts):
+        lines.append(f"[{i}] ({d.qtype}) {d.question}\n")
+        options = getattr(d, "options", None)
+        if options is not None:
+            lines.append(
+                f"    options={options}, answer_index={getattr(d, 'answer_index', None)}\n"
+            )
+        else:
+            lines.append(f"    expected_answer={getattr(d, 'expected_answer', '')}\n")
+    return "".join(lines)
+
+
+# 문항 근거로 주입하는 교재 원문 발췌 상한 (프롬프트 폭주 방지).
+_EXCERPT_MAX_CHARS = 1500
+
+# ── 해설 정리 (ISSUE-016 ②) ─────────────────────────────────────────
+_EXPLANATION_MAX_CHARS = 350
+# 추론 모델의 자기교정 독백이 해설에 새는 신호 — 마커부터 잘라낸다
+# (실측 session 21: "다시 계산: … 문제 오류 가능성 …" 수백 자 노출).
+_MONOLOGUE_MARKERS = ("다시 계산", "다시 확인", "재검토", "문제 오류", "옵션에 없")
+_INTERNAL_REF_RE = re.compile(r"원문\s*\d+")
+
+
+def _norm_answer(text: str) -> str:
+    """mcq 답 대조용 정규화: 공백 제거 + 소문자."""
+    return re.sub(r"\s+", "", text).lower()
+
+
+def _answers_match(a: str, b: str) -> bool:
+    """정규화된 두 답이 같은가 — 표기 여유(y= 접두 유무 등)는 포함 관계로 흡수."""
+    if a == b:
+        return True
+    return len(a) >= 3 and len(b) >= 3 and (a in b or b in a)
+
+
+def _clean_explanation(text: str | None) -> str:
+    """해설 후처리: 내부 참조 치환 + 자기교정 독백 컷 + 길이 상한."""
+    cleaned = _INTERNAL_REF_RE.sub("교재", text or "")
+    positions = [cleaned.find(m) for m in _MONOLOGUE_MARKERS if m in cleaned]
+    if positions:
+        cleaned = cleaned[: min(positions)].rstrip(" ,.;:·—-")
+    return cleaned[:_EXPLANATION_MAX_CHARS].strip()
+
+
+def _quiz_prompt(concept: Concept, excerpt: str | None = None) -> str:
+    grounding = (
+        "\n\n=== 교재 원문 발췌 (이 개념의 출처) ===\n"
+        f"{excerpt[:_EXCERPT_MAX_CHARS]}\n"
+        "=== 발췌 끝 ===\n"
+        "규칙: 문항·정답·해설은 위 원문 내용에 근거할 것. "
+        "원문과 어긋나는 사실을 지어내지 말 것.\n"
+        if excerpt
+        else ""
+    )
     return (
         f"개념 '{concept.name}'의 숙지 여부를 가장 잘 변별하는 진단 문항 1개를 한국어로 출제하라.\n"
-        f"개념 설명: {concept.description}\n\n"
+        f"개념 설명: {concept.description}\n"
+        f"{grounding}\n"
         "유형(qtype) 선택:\n"
         '- "mcq": 4지선다 — 보기는 options 배열에 4개. question 본문에 1.2.3.4. 목록 넣지 말 것.\n'
         '- "cloze": 빈칸 인출 — ____ 포함, 번호 선택지 금지.\n'
@@ -68,11 +149,18 @@ def _quiz_prompt(concept: Concept) -> str:
         '- cloze: {"qtype":"cloze","question":"... ____ ...","expected_answer":str,'
         '"acceptable_answers":[str,...],"explanation":str}\n'
         '- inverse: {"qtype":"inverse","question":str,"expected_answer":str,"explanation":str}\n\n'
-        "규칙: 정답 노출 금지. 4지선다는 반드시 mcq + options 배열."
+        "규칙: 정답 노출 금지. 4지선다는 반드시 mcq + options 배열. "
+        "explanation은 정답 근거 1~2문장만 — 계산 재검토·자기 교정 과정·"
+        "'원문 N' 같은 내부 참조 금지."
     )
 
 
-def _batch_quiz_prompt(concepts: list[Concept], per_concept: int) -> str:
+def _batch_quiz_prompt(
+    concepts: list[Concept],
+    per_concept: int,
+    excerpts: dict[int, str] | None = None,
+) -> str:
+    excerpts = excerpts or {}
     lines = [
         f"아래 {len(concepts)}개 개념 각각에 대해 진단 문항 {per_concept}개씩 한국어로 출제하라.\n",
         f'출력 JSON: {{"concepts":[{{"concept_name":str,"items":[문항,...]}}]}}\n',
@@ -84,11 +172,33 @@ def _batch_quiz_prompt(concepts: list[Concept], per_concept: int) -> str:
         '- cloze: {"qtype":"cloze","question":"... ____ ...","expected_answer":str,'
         '"acceptable_answers":[str,...],"explanation":str}\n',
         '- inverse: {"qtype":"inverse","question":str,"expected_answer":str,"explanation":str}\n\n',
-        "개념 목록:\n",
     ]
+    # 같은 청크를 공유하는 개념이 많으므로(섹션 대표+하위) 원문은 한 번만 싣고
+    # 개념 줄에서 태그로 참조 — 프롬프트 중복 방지.
+    ref_of: dict[int, int] = {}  # chunk_id → 원문 번호
     for c in concepts:
-        lines.append(f'- concept_name="{c.name}": {c.description}\n')
-    lines.append("\n규칙: 정답 노출 금지. 4지선다는 mcq + options 배열.")
+        cid = c.source_chunk_id
+        if cid is not None and cid in excerpts and cid not in ref_of:
+            ref_of[cid] = len(ref_of) + 1
+    if ref_of:
+        lines.append("=== 교재 원문 발췌 ===\n")
+        for cid, n in ref_of.items():
+            lines.append(f"[원문 {n}]\n{excerpts[cid][:_EXCERPT_MAX_CHARS]}\n\n")
+        lines.append(
+            "규칙: 원문 태그가 붙은 개념의 문항·정답·해설은 해당 원문에 근거할 것. "
+            "원문과 어긋나는 사실 금지.\n\n"
+        )
+    lines.append("개념 목록:\n")
+    for c in concepts:
+        tag = ""
+        if c.source_chunk_id in ref_of:
+            tag = f" (원문 {ref_of[c.source_chunk_id]})"
+        lines.append(f'- concept_name="{c.name}"{tag}: {c.description}\n')
+    lines.append(
+        "\n규칙: 정답 노출 금지. 4지선다는 mcq + options 배열. "
+        "explanation은 정답 근거 1~2문장만 — 계산 재검토·자기 교정 과정·"
+        "'원문 N' 같은 내부 참조 금지."
+    )
     return "".join(lines)
 
 
@@ -533,27 +643,64 @@ class DiagnosticService:
         pool_size = settings.BKT_POOL_SIZE_PER_CONCEPT
         chunk_size = settings.BKT_BATCH_CONCEPT_CHUNK
         name_to_concept = {c.name: c for c in pending}
+        # 원문 근거 주입 (RAG): 개념의 출처 청크 원문을 문항 프롬프트에 싣는다.
+        excerpts = self.repo.get_chunk_contents(
+            {c.source_chunk_id for c in pending if c.source_chunk_id is not None}
+        )
 
-        for i in range(0, len(pending), chunk_size):
-            chunk = pending[i : i + chunk_size]
+        async def generate_batch(chunk: list[Concept]) -> BatchQuizResponse:
             raw = await solar_client.generate_json(
-                _batch_quiz_prompt(chunk, pool_size),
+                _batch_quiz_prompt(chunk, pool_size, excerpts),
                 system=_BATCH_QUIZ_SYSTEM,
                 timeout=240.0,
             )
-            try:
-                batch = BatchQuizResponse.model_validate(raw)
-            except ValidationError as exc:
-                raise HTTPException(
-                    status_code=502,
-                    detail=f"배치 문항 생성 JSON 검증 실패: {exc}",
-                ) from exc
+            return BatchQuizResponse.model_validate(raw)
 
+        for i in range(0, len(pending), chunk_size):
+            chunk = pending[i : i + chunk_size]
+            # LLM 출력 플레이크 1회 재시도 (추출 경로와 동일 패턴).
+            # ValueError는 JSON 절단(JSONDecodeError 포함) — 실측: 스키마 오형
+            # (ValidationError)과 응답 절단 두 유형 모두 발생.
+            try:
+                batch = await generate_batch(chunk)
+            except (ValidationError, ValueError):
+                _log.warning("배치 문항 생성 실패, 재시도: %d~", i)
+                try:
+                    batch = await generate_batch(chunk)
+                except (ValidationError, ValueError) as exc:
+                    raise HTTPException(
+                        status_code=502,
+                        detail=f"배치 문항 생성 실패: {exc}",
+                    ) from exc
+
+            drafts: list[tuple[Concept, QuizDraft]] = []
             for concept_set in batch.concepts:
                 concept = name_to_concept.get(concept_set.concept_name)
                 if concept is None:
                     continue
                 for item in concept_set.items[:pool_size]:
+                    drafts.append((concept, item))
+
+            # 검증 패스 (ISSUE-016): 정답 오류 문항은 단건 재생성으로 교체.
+            invalid = await self._verify_drafts(drafts) if drafts else set()
+            regen: list[tuple[Concept, QuizDraft]] = []
+            for j, (concept, item) in enumerate(drafts):
+                if j not in invalid:
+                    self._persist_draft(session_id, concept.id, item)
+                    continue
+                _log.info("문항 검증 불합격 → 재생성: %s", concept.name)
+                try:
+                    regen.append((concept, await self._generate_draft(concept)))
+                except (ValidationError, ValueError):
+                    _log.warning("재생성 실패 — 원본 문항 유지: %s", concept.name)
+                    self._persist_draft(session_id, concept.id, item)
+            if regen:
+                # 재생성분도 1회 재검증 (실측: 미검증 재생성에서 오류 재유입).
+                # 2회째도 불합격이면 로그 남기고 사용 — 무한 루프 방지.
+                still = await self._verify_drafts(regen)
+                for j, (concept, item) in enumerate(regen):
+                    if j in still:
+                        _log.warning("재생성 문항도 검증 불합격, 그대로 사용: %s", concept.name)
                     self._persist_draft(session_id, concept.id, item)
 
         # 누락 개념은 단건 생성으로 보충 (드문 경우)
@@ -561,10 +708,58 @@ class DiagnosticService:
             if not self.repo.has_questions_for_concept(session_id, concept.id):
                 await self._generate_question(session_id, concept)
 
+    async def _verify_drafts(
+        self, drafts: list[tuple[Concept, QuizDraft]]
+    ) -> set[int]:
+        """생성 문항 셀프체크 — 불합격 인덱스 집합. 검증 호출 실패는 비치명."""
+        try:
+            raw = await solar_client.generate_json(
+                _verify_prompt(drafts), system=_VERIFY_SYSTEM, timeout=240.0
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("문항 검증 호출 실패 — 검증 생략: %s", exc)
+            return set()
+        invalid: set[int] = set()
+        for review in raw.get("reviews") or []:
+            if not isinstance(review, dict):
+                continue
+            i = review.get("i")
+            if not (isinstance(i, int) and 0 <= i < len(drafts)):
+                continue
+            _concept, draft = drafts[i]
+            options = getattr(draft, "options", None)
+            if options:
+                # mcq 대조는 코드가 한다 — 실측: 검수 LLM이 정답을 옳게
+                # 계산해 놓고도 answer_index 비교에서 valid=true 오판.
+                my = _norm_answer(str(review.get("my_answer") or ""))
+                if not my:
+                    continue
+                matches = [
+                    k for k, opt in enumerate(options)
+                    if _answers_match(my, _norm_answer(str(opt)))
+                ]
+                if getattr(draft, "answer_index", None) in matches:
+                    continue
+                invalid.add(i)
+                _log.info(
+                    "문항 검증 불합격 [%d] mcq: 검수자 답=%r ↔ 마킹=%r",
+                    i, review.get("my_answer"),
+                    options[draft.answer_index] if 0 <= draft.answer_index < len(options) else None,
+                )
+            elif review.get("valid") is False:
+                invalid.add(i)
+                _log.info(
+                    "문항 검증 불합격 [%d]: 검수자 답=%r", i, review.get("my_answer")
+                )
+        if invalid:
+            _log.info("문항 검증: %d/%d 불합격", len(invalid), len(drafts))
+        return invalid
+
     def _persist_draft(
         self, session_id: int, concept_id: int, draft: QuizDraft
     ) -> DiagnosticQuestion:
         draft = coerce_quiz_draft(draft)
+        draft.explanation = _clean_explanation(draft.explanation)
         if isinstance(draft, McqDraft):
             return self.repo.create_question(
                 session_id=session_id,
@@ -594,14 +789,23 @@ class DiagnosticService:
             expected_answer=draft.expected_answer,
         )
 
+    async def _generate_draft(self, concept: Concept) -> QuizDraft:
+        """단건 문항 생성 (저장 없이 초안 반환 — 재생성·검증 경로용)."""
+        excerpt = None
+        if concept.source_chunk_id is not None:
+            excerpt = self.repo.get_chunk_contents({concept.source_chunk_id}).get(
+                concept.source_chunk_id
+            )
+        raw = await solar_client.generate_json(
+            _quiz_prompt(concept, excerpt), system=_QUIZ_SYSTEM
+        )
+        return QUIZ_ADAPTER.validate_python(raw)
+
     async def _generate_question(
         self, session_id: int, concept: Concept
     ) -> DiagnosticQuestion:
-        raw = await solar_client.generate_json(
-            _quiz_prompt(concept), system=_QUIZ_SYSTEM
-        )
         try:
-            draft = QUIZ_ADAPTER.validate_python(raw)
+            draft = await self._generate_draft(concept)
         except ValidationError as exc:
             raise HTTPException(
                 status_code=502, detail=f"문항 생성 JSON 검증 실패: {exc}"
