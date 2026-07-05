@@ -33,6 +33,11 @@ class Enrollment(Base):
         String(32), nullable=False, default="not_started"
     )
     diag_q_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # 계약(ii.md): 진단 완료 시점에 확정 — 씨앗의 천장/바닥 좌표.
+    floor_concept_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    ceiling_concept_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    floor_found: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    purpose: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

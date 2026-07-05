@@ -102,6 +102,8 @@ class Concept(Base):
         ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(256), nullable=False)
+    # 계약(ii.md): 코스 내 유니크 영문 슬러그 — 커리큘럼 생성 프롬프트 키.
+    key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     description: Mapped[str] = mapped_column(Text, nullable=False)
     depth_level: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # 출처: 'document' = 교재에서 직접 추출, 'llm' = LLM이 보충한 선수개념.
@@ -125,6 +127,37 @@ class Concept(Base):
         foreign_keys="ConceptEdge.from_concept_id",
         cascade="all, delete-orphan",
     )
+
+
+class Chapter(Base):
+    """커리큘럼 챕터(장) — 씨앗이 생성, gen_status 전이는 커리큘럼 파트 소관 (ii.md)."""
+
+    __tablename__ = "chapters"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    course_id: Mapped[int] = mapped_column(
+        ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    origin: Mapped[str] = mapped_column(String(16), nullable=False, default="book")
+    gen_status: Mapped[str] = mapped_column(String(16), nullable=False, default="pending")
+
+
+class Section(Base):
+    """커리큘럼 절 — 절 ↔ 대표 개념 1:1 (concept_id 없으면 생성기가 스킵)."""
+
+    __tablename__ = "sections"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    chapter_id: Mapped[int] = mapped_column(
+        ForeignKey("chapters.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    concept_id: Mapped[int | None] = mapped_column(
+        ForeignKey("concepts.id", ondelete="CASCADE"), nullable=True
+    )
+    order_index: Mapped[int] = mapped_column(Integer, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
 
 
 class ConceptEdge(Base):
