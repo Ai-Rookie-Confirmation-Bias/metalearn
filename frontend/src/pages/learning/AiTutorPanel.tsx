@@ -2,11 +2,33 @@ import { useState } from "react";
 import { clsx } from "clsx";
 import { RobotIcon, PaperPlaneRightIcon } from "@phosphor-icons/react";
 
-// 우측 패널 — AI 튜터(채팅) / 나의 요약 노트 탭.
-// ⚠️ 채팅은 아직 UI mock(전송 안 됨). 실제 튜터 연결은 백엔드(LLM) 단계.
-export function AiTutorPanel() {
+import type { AttemptResponse } from "@/features/learning/api/submitAttempt";
+
+// 서버 채점 신호(cause/feedback)를 튜터의 적응형 코멘트로 변환. 채팅 Q&A는 아직 mock(백엔드 LLM).
+function tutorMessage(signal: AttemptResponse | null | undefined): string {
+  if (!signal) {
+    return "위의 빈칸 문제나 객관식 퀴즈가 어렵다면 언제든 질문해 주세요! 힌트를 드릴게요.";
+  }
+  if (signal.feedback?.comment) return signal.feedback.comment;
+  switch (signal.cause?.type) {
+    case "prerequisite":
+      return "지금 막힌 건 이 개념 자체보다 선수 개념이 아직 약해서예요. 선행을 먼저 다지면 여기가 쉬워져요.";
+    case "content":
+      return "선수 개념은 충분해요. 이 개념 자체를 조금 더 볼까요? 위 설명을 다시 읽으면 도움이 돼요.";
+    case "hold":
+      return "아직 판단하기엔 시도가 적어요. 한 문제 더 풀어볼까요?";
+    default:
+      return signal.correct
+        ? "좋아요! 정확히 이해했어요. 다음으로 가볼까요?"
+        : "다시 한 번 시도해봐요. 필요하면 힌트를 드릴게요.";
+  }
+}
+
+// 우측 패널 — AI 튜터(적응형 코멘트) / 나의 요약 노트 탭.
+export function AiTutorPanel({ signal }: { signal?: AttemptResponse | null }) {
   const [tab, setTab] = useState<"ai" | "note">("ai");
   const [note, setNote] = useState("");
+  const message = tutorMessage(signal);
 
   return (
     <aside className="flex w-[340px] flex-shrink-0 flex-col border-l border-border-primary bg-white shadow-[-4px_0_15px_rgba(0,0,0,0.02)]">
@@ -51,7 +73,7 @@ export function AiTutorPanel() {
           <div className="flex flex-1 flex-col gap-4 overflow-y-auto bg-[#fafafa] p-6">
             <div className="flex max-w-[90%] flex-col gap-1 self-start">
               <div className="rounded-2xl rounded-tl-[4px] border border-border-primary bg-white px-4 py-3.5 text-[0.9rem] leading-normal text-text-primary shadow-sm">
-                위의 빈칸 문제나 객관식 퀴즈가 어렵다면 언제든 저에게 질문해 주세요! 힌트를 드릴게요.
+                {message}
               </div>
               <span className="px-1 text-[0.7rem] text-text-tertiary">방금 전</span>
             </div>

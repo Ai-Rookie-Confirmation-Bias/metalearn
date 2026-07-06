@@ -14,6 +14,7 @@ import { useQueryClient } from "@tanstack/react-query";
 
 import { BlockRenderer } from "@/features/learning/blocks/registry";
 import type { AnswerEvent, AttemptResult, OnAnswer } from "@/features/learning/blocks/types";
+import type { AttemptResponse } from "@/features/learning/api/submitAttempt";
 import { CurriculumPanel } from "@/pages/learning/CurriculumPanel";
 import { AiTutorPanel } from "@/pages/learning/AiTutorPanel";
 import type { Chapter as PanelChapter } from "@/pages/learning/mock";
@@ -37,6 +38,8 @@ export function LearningPage() {
 
   // 휘발성 UI(현재 보고 있는 절)만 클라 상태. 진행/완료/잠금은 전부 서버(트리) 미러.
   const [currentSectionId, setCurrentSectionId] = useState<string | null>(null);
+  // 살아있는 커리큘럼 신호(서버 attempt 응답) — 원인 국소화·선행 삽입·복귀 표면화
+  const [signal, setSignal] = useState<AttemptResponse | null>(null);
 
   // 시작 절 초기화(첫 미완료부터) — 진행도는 저장하지 않고 트리에서 읽는다.
   useEffect(() => {
@@ -60,7 +63,14 @@ export function LearningPage() {
   const onAnswer: OnAnswer = async (e: AnswerEvent): Promise<AttemptResult> => {
     const r = await submit.mutateAsync(e);
     queryClient.invalidateQueries({ queryKey: ["courseTree"] });
+    setSignal(r); // 원인 국소화/선행 삽입/복귀 신호 표면화
     return r;
+  };
+
+  // 살아있는 커리큘럼: 서버가 선행 삽입/복귀를 알려주면 해당 절로 이동
+  const goToSection = (sectionId: string) => {
+    setSignal(null);
+    setCurrentSectionId(sectionId);
   };
 
   // ── 파생(전부 서버 트리에서) ──
@@ -166,6 +176,37 @@ export function LearningPage() {
               {currentSection?.title ?? ""}
             </h2>
 
+            {/* 살아있는 커리큘럼 — 서버가 선수결손 감지 시 선행 절 삽입 후 이동 유도 */}
+            {signal?.prerequisite && (
+              <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-[#f59e0b]/40 bg-[#f59e0b]/10 px-5 py-4">
+                <div className="text-[0.9rem] text-[#b45309]">
+                  <b>선수 개념 결손이 감지됐어요.</b> "{signal.prerequisite.title}"을(를) 먼저 다지면
+                  이 개념이 훨씬 쉬워져요.
+                </div>
+                <button
+                  type="button"
+                  onClick={() => goToSection(signal.prerequisite!.sectionId)}
+                  className="shrink-0 rounded-xl bg-[#b45309] px-4 py-2 text-[0.85rem] font-semibold text-white"
+                >
+                  선행 먼저 학습
+                </button>
+              </div>
+            )}
+            {signal?.resumeSectionId && (
+              <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-[#10b981]/40 bg-[#10b981]/10 px-5 py-4">
+                <div className="text-[0.9rem] text-[#047857]">
+                  <b>선행 학습을 마쳤어요.</b> 원래 배우던 절로 돌아갈까요?
+                </div>
+                <button
+                  type="button"
+                  onClick={() => goToSection(signal.resumeSectionId!)}
+                  className="shrink-0 rounded-xl bg-[#047857] px-4 py-2 text-[0.85rem] font-semibold text-white"
+                >
+                  원래 절로 복귀
+                </button>
+              </div>
+            )}
+
             {blocksLoading ? (
               <div className="py-16 text-center text-text-tertiary">불러오는 중…</div>
             ) : blocks.length === 0 ? (
@@ -237,7 +278,7 @@ export function LearningPage() {
           </div>
         </main>
 
-        <AiTutorPanel />
+        <AiTutorPanel signal={signal} />
       </div>
     </div>
   );
