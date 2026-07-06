@@ -190,6 +190,35 @@ def get_concept_chunks(
     return [ChunkExcerpt(id=c.id, content=c.content) for c in picked]
 
 
+def search_concept_chunks(
+    db: Session,
+    *,
+    course: Course,
+    concept: Concept,
+    query_embedding: list[float] | None,
+    limit: int = 3,
+) -> list[ChunkExcerpt]:
+    """개념 근거 청크 검색(RAG, ISSUE-004). 임베딩 유사도(pgvector cosine) 우선.
+
+    임베딩이 없거나(상류 미색인) 결과가 비면 키워드+앞청크(get_concept_chunks)로 폴백.
+    문서 필터 후 풀스캔(4096차원은 인덱스 불가) — 문서 단위라 규모 감당.
+    """
+    if query_embedding is not None:
+        stmt = (
+            select(DocChunk)
+            .where(
+                DocChunk.document_id == course.document_id,
+                DocChunk.embedding.isnot(None),
+            )
+            .order_by(DocChunk.embedding.cosine_distance(query_embedding))
+            .limit(limit)
+        )
+        picked = list(db.scalars(stmt))
+        if picked:
+            return [ChunkExcerpt(id=c.id, content=c.content) for c in picked]
+    return get_concept_chunks(db, course=course, concept=concept, limit=limit)
+
+
 def get_concept_external_refs(
     db: Session, concept_id: uuid.UUID
 ) -> list[ExternalRefInput]:

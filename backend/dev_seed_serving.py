@@ -94,6 +94,23 @@ chunks = [
 db.add_all(chunks)
 db.flush()
 
+# 청크 passage 임베딩 — 상류(parsing) RAG 색인의 스탠드인. RAG 검색 테스트용, best-effort.
+import asyncio  # noqa: E402
+
+from app.core.llm.factory import get_llm_client  # noqa: E402
+
+try:
+    async def _embed_chunks() -> None:
+        _llm = get_llm_client()
+        for _c in chunks:
+            _c.embedding = await _llm.embed(_c.content, purpose="passage")
+
+    asyncio.run(_embed_chunks())
+    db.flush()
+    print("CHUNK_EMBED=ok")
+except Exception as _e:  # noqa: BLE001
+    print(f"CHUNK_EMBED=skip ({_e})")
+
 course = Course(document_id=doc.id, user_id=DEV_USER_ID, title=TITLE, category="IT")
 db.add(course)
 db.flush()
