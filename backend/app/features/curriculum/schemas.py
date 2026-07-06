@@ -44,3 +44,46 @@ class CourseTreeResponse(_CamelModel):
     course_id: str
     title: str
     chapters: list[ChapterNode] = Field(default_factory=list)
+
+
+# ── 책장 목록 (GET /courses, API.md line 27) ─────────────────────────────────
+class CourseListItem(_CamelModel):
+    """책장 카드 1개 — 진행률 + 마지막 활동(계산값)."""
+
+    course_id: str
+    title: str
+    category: str | None = None
+    concept_count: int = 0
+    total_sections: int = 0
+    completed_sections: int = 0
+    progress: float = 0.0  # 0~1 = completed/total
+    # MAX(attempts.created_at) — 저장 아닌 계산값
+    last_activity_at: str | None = None
+
+
+class CourseListResponse(_CamelModel):
+    courses: list[CourseListItem] = Field(default_factory=list)
+
+
+# ── 개념별 숙련도 (GET /courses/:id/mastery, API.md line 49) ──────────────────
+class ConceptMasteryItem(_CamelModel):
+    concept_id: str
+    key: str | None = None
+    name: str
+    depth_level: int | None = None
+    status: str = "locked"  # locked | todo | learning | mastered
+    strength: float = 0.0
+    explanation_score: float = 0.0
+    confidence: str | None = None
+    next_due_at: str | None = None
+
+
+class MasteryResponse(_CamelModel):
+    """GET /courses/:id/mastery → 메타인지 분석용 개념별 숙련도 + 요약."""
+
+    course_id: str
+    mastered: int = 0
+    learning: int = 0
+    todo: int = 0
+    locked: int = 0
+    concepts: list[ConceptMasteryItem] = Field(default_factory=list)

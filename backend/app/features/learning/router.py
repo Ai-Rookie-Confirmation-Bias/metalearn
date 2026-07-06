@@ -25,7 +25,9 @@ from app.features.learning.schemas import (
     ChapterStatusResponse,
     ConfidenceRequest,
     ConfidenceResponse,
+    CursorResponse,
     GenerateTriggerResponse,
+    PlacementResponse,
     SectionBlocksResponse,
 )
 
@@ -45,6 +47,35 @@ async def post_attempt(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/courses/{course_id}/cursor", response_model=CursorResponse)
+def get_learning_cursor(
+    course_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> CursorResponse:
+    """현재 학습 위치 + 복귀 대기 깊이(선행 우회 중이면 돌아갈 절이 쌓여 있음)."""
+    return service.get_cursor(db, user_id=user_id, course_id=course_id)
+
+
+@router.post("/courses/{course_id}/placement", response_model=PlacementResponse)
+def initialize_course_placement(
+    course_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> PlacementResponse:
+    """진단 종료 후 floor/ceiling 기준 concept_mastery 시딩(수준 체크 진입점).
+
+    계약상 진단 종료 흐름이 service.initialize_placement를 직접 호출하는 게 정석이나,
+    지금은 단독 검증/수동 트리거용으로 엔드포인트로도 노출한다(임시 이음새).
+    """
+    try:
+        return service.initialize_placement(db, user_id=user_id, course_id=course_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/chapters/{chapter_id}/generate", response_model=GenerateTriggerResponse)

@@ -90,6 +90,8 @@ class Enrollment(Base):
     )
     diag_q_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
     self_report: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # 학습 목표(intent): exam | career | culture | hobby (정본 SCHEMA.md)
+    purpose: Mapped[str | None] = mapped_column(String(16), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -152,6 +154,33 @@ class Attempt(Base):
     feedback: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     meta: Mapped[dict] = mapped_column(JSONB, nullable=False, server_default="{}")
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class LearningCursor(Base):
+    """사람×코스 학습 위치 + 복귀 스택(살아있는 커리큘럼 내비게이션).
+
+    선행 삽입으로 우회할 때 원래 절을 return_stack에 쌓고(LIFO, 중첩 선행 대응),
+    절 완료 시 pop해 복귀 지점을 정한다. 진행 판정(section_progress)과 별개의 '어디로'.
+    """
+
+    __tablename__ = "learning_cursor"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id"), primary_key=True
+    )
+    course_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("courses.id"), primary_key=True
+    )
+    current_section_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("sections.id", ondelete="SET NULL"), nullable=True
+    )
+    # 복귀 대상 절 id 문자열의 LIFO 스택
+    return_stack: Mapped[list] = mapped_column(
+        JSONB, nullable=False, server_default="[]"
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 

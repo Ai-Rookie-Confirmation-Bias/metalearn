@@ -23,12 +23,15 @@ from app.core.enums import (
 )
 from app.core.llm.factory import get_llm_client
 from app.features.learning import repository as repo
+from app.features.learning.bkt import estimate_p_known, p_l0_from_prereqs
 from app.features.learning.generator import GenerationInput, generate_section_blocks
 from app.features.learning.grading import GRADABLE_TYPES, GradeResult, grade_block
+from app.features.learning.localization import Cause, PrereqState, localize
 from app.features.learning.mastery import (
     MasteryState,
     apply_boolean_attempt,
     apply_scored_attempt,
+    classify_placement,
     unlock_for_learning,
 )
 from app.features.learning.models import ConceptMastery
@@ -38,8 +41,13 @@ from app.features.learning.schemas import (
     AttemptRequest,
     AttemptResponse,
     BlockEnvelope,
+    CauseOut,
     ConceptStateOut,
+    CursorResponse,
     NextActionOut,
+    PlacementResponse,
+    PrerequisiteTargetOut,
+    RevealOut,
     SectionBlocksResponse,
 )
 from app.features.learning.serializer import filter_by_variant, to_envelope
@@ -57,6 +65,69 @@ _CONFIDENCE_TO_VARIANT: dict[str, str] = {
 
 def variant_for_confidence(confidence: str) -> str:
     return _CONFIDENCE_TO_VARIANT.get(confidence, ServeVariant.FULL)
+
+
+# ── placement 시딩 (진단 종료 → 수준 체크 진입점) ─────────────────────────────
+def initialize_placement(
+    db: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
+) -> PlacementResponse:
+    """placement(학습자 배치) 초기 시딩 — 커리큘럼 생성 단계의 진입점.
+
+    ── placement란? ──
+    학습자를 지식 그래프/커리큘럼 위 **어디에서 시작할지** 배치하는 것(반편성).
+    진단평가(**parsing 담당**)가 두 좌표를 산출한다:
+      · floor(바닥)   = 이미 아는 가장 윗지점 = 학습 시작점(그 아래는 안다고 보고 건너뜀)
+      · ceiling(천장) = 학습 목표점(거기까지 도달이 목표)
+    이 함수는 그 좌표를 받아 concept_mastery 초기 상태를 깐다:
+      floor 아래 → mastered / floor~ceiling → todo / ceiling 위 → locked.
+
+    ── 경계(중요) ──
+    수준 **판정** 자체는 진단평가(parsing)의 산출물이다. 우리 영역은 "진단 후 →
+    커리큘럼 생성"부터. 그래서 이 함수의 역할은 *판정 계산*이 아니라 **판정 수령·기록·
+    킥오프**다. 현재는 floor/ceiling에서 커리큘럼 순서로 근사 계산하지만, 병합 시
+    parsing의 진단 mastery 판정을 그대로 수령하고 진단 안 한 개념만 위치로 채우는 쪽으로
+    좁힌다(ISSUE-013). 진단 종료 흐름이 이 함수를 호출하는 것이 계약(지금은 라우터로도 노출).
+    멱등: 이미 상태가 있는 개념(학습 진행)은 보존한다.
+    """
+    enrollment = repo.get_enrollment(db, user_id=user_id, course_id=course_id)
+    if enrollment is None:
+        raise LookupError("enrollment not found")
+    if enrollment.ceiling_concept is None:
+        raise ValueError("진단 미완료: ceiling_concept이 없습니다")
+
+    # 진행축 = 커리큘럼 순서(parsing 규약). 섹션에 매핑된 개념(진행선)만 시딩한다.
+    order_by_id = repo.get_curriculum_order(db, course_id)
+    ceiling_pos = order_by_id.get(enrollment.ceiling_concept)
+    floor_pos = (
+        order_by_id.get(enrollment.floor_concept)
+        if enrollment.floor_found and enrollment.floor_concept is not None
+        else None
+    )
+
+    seeds: list[tuple[uuid.UUID, str, float]] = []
+    counts = {MasteryStatus.MASTERED: 0, MasteryStatus.TODO: 0, MasteryStatus.LOCKED: 0}
+    for concept_id, position in order_by_id.items():
+        seed = classify_placement(
+            position, floor_position=floor_pos, ceiling_position=ceiling_pos
+        )
+        seeds.append((concept_id, seed.status, seed.strength))
+        counts[seed.status] = counts.get(seed.status, 0) + 1
+
+    seeded, skipped = repo.seed_mastery_if_absent(db, user_id=user_id, seeds=seeds)
+    db.commit()
+
+    return PlacementResponse(
+        course_id=str(course_id),
+        floor_concept_id=(
+            str(enrollment.floor_concept) if enrollment.floor_concept else None
+        ),
+        ceiling_concept_id=str(enrollment.ceiling_concept),
+        seeded=seeded,
+        skipped=skipped,
+        mastered=counts[MasteryStatus.MASTERED],
+        todo=counts[MasteryStatus.TODO],
+        locked=counts[MasteryStatus.LOCKED],
+    )
 
 
 # ── JIT 생성 ─────────────────────────────────────────────────────────────────
@@ -200,6 +271,8 @@ def serve_section(
 
     envelopes: list[BlockEnvelope] = [to_envelope(b, external_refs=refs) for b in blocks]
     return SectionBlocksResponse(
+        id=str(section_id),
+        title=section.title,
         section_id=str(section_id),
         concept_id=str(section.concept_id) if section.concept_id else None,
         variant=variant,
@@ -228,6 +301,132 @@ def _build_mastery_state(
         correct_count=passed,
         difficulty=difficulty,
     )
+
+
+def _localize_cause(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    concept_id: uuid.UUID,
+    current_passed: bool,
+    misconception_signal: bool = False,
+) -> Cause:
+    """원인 국소화(ISSUE-010): BKT P(known) + 선행 DAG로 "왜 틀렸나"를 판정.
+
+    선행 P(known)은 concept_mastery.strength를 프록시로 쓴다(행 없으면 중립 0.5).
+    현재 시도 결과를 정오 시퀀스에 포함해 추정한다.
+    """
+    outcomes = repo.get_concept_outcomes(db, user_id=user_id, concept_id=concept_id)
+    outcomes = outcomes + [current_passed]
+
+    prereq_ids = repo.get_prerequisite_ids(db, concept_id)
+    strengths = repo.get_strength_map(db, user_id=user_id, concept_ids=prereq_ids)
+    depths = repo.get_concept_depths(db, prereq_ids)
+    # 행 없는 선행 = 미학습 → 0.0(결손). parsing 모델은 선행을 placement로 시딩 안 하므로
+    # "안 본 선행 = gap"이 맞다(대상 시도수로 이미 hold 게이트가 걸려 오탐 방지됨).
+    prereq_p = [strengths.get(pid, 0.0) for pid in prereq_ids]
+
+    p_l0 = p_l0_from_prereqs(prereq_p)
+    target_p_known = estimate_p_known(outcomes, p_l0=p_l0)
+    prereqs = [
+        PrereqState(
+            concept_id=str(pid),
+            p_known=strengths.get(pid, 0.0),
+            depth=depths.get(pid, 0),
+        )
+        for pid in prereq_ids
+    ]
+    return localize(
+        target_p_known=target_p_known,
+        target_attempts=len(outcomes),
+        prereqs=prereqs,
+        misconception_signal=misconception_signal,
+    )
+
+
+def _course_id_of_section(db: Session, section_id: uuid.UUID) -> uuid.UUID | None:
+    section = repo.get_section(db, section_id)
+    chapter = repo.get_chapter(db, section.chapter_id) if section else None
+    return chapter.course_id if chapter else None
+
+
+def get_cursor(
+    db: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
+) -> CursorResponse:
+    """현재 학습 위치 + 복귀 대기 깊이. 프론트가 '지금 어디/돌아갈 데 있나'를 안다."""
+    cursor = repo.get_cursor(db, user_id=user_id, course_id=course_id)
+    if cursor is None:
+        return CursorResponse(course_id=str(course_id), current_section_id=None, return_depth=0)
+    return CursorResponse(
+        course_id=str(course_id),
+        current_section_id=(
+            str(cursor.current_section_id) if cursor.current_section_id else None
+        ),
+        return_depth=len(cursor.return_stack or []),
+    )
+
+
+def _ensure_prerequisite_target(
+    db: Session, *, user_id: uuid.UUID, block, blame_concept_id: uuid.UUID
+) -> PrerequisiteTargetOut | None:
+    """선행 삽입(ISSUE-002): blame 개념의 학습 지점을 멱등 보장하고 대상 표면화.
+
+    이미 절이 있으면 그리로 라우팅(중복 삽입 금지). 없으면(순수 선행) 현재 챕터 앞에
+    prereq 챕터+절을 만든다. + 학습 커서: 현재 절을 복귀 스택에 push하고 선행 절로 이동.
+    JIT 생성/복귀 라우팅은 프론트가 반환된 대상으로 처리한다.
+    """
+    if block.section_id is None:
+        return None  # 진단 등 절 맥락 없는 블록
+    section = repo.get_section(db, block.section_id)
+    chapter = repo.get_chapter(db, section.chapter_id) if section else None
+    blame = repo.get_concept(db, blame_concept_id)
+    if chapter is None or blame is None:
+        return None
+
+    existing = repo.find_section_by_concept(
+        db, course_id=chapter.course_id, concept_id=blame_concept_id
+    )
+    if existing is not None:
+        target_chapter = repo.get_chapter(db, existing.chapter_id)
+        target_section, created = existing, False
+    else:
+        target_chapter, target_section = repo.insert_prerequisite_chapter(
+            db,
+            course_id=chapter.course_id,
+            concept=blame,
+            before_order=chapter.order_index,
+        )
+        created = True
+
+    # 커서: 지금 절(block.section_id)을 복귀 스택에 쌓고 선행 절로 이동
+    repo.push_and_enter(
+        db,
+        user_id=user_id,
+        course_id=chapter.course_id,
+        from_section_id=block.section_id,
+        to_section_id=target_section.id,
+    )
+
+    return PrerequisiteTargetOut(
+        concept_id=str(blame_concept_id),
+        chapter_id=str(target_chapter.id),
+        section_id=str(target_section.id),
+        title=target_section.title,
+        gen_status=target_chapter.gen_status,
+        created=created,
+    )
+
+
+def _build_reveal(block) -> RevealOut | None:
+    """채점 후 공개할 정답/해설(유출 아님). mcq=정답+해설, cloze=정답들. 그 외 None."""
+    data = block.data or {}
+    if block.type == "mcq":
+        return RevealOut(
+            answer_index=data.get("answerIndex"), explanation=data.get("explanation")
+        )
+    if block.type == "cloze":
+        return RevealOut(blanks=data.get("blanks"))
+    return None
 
 
 async def record_attempt(
@@ -297,6 +496,26 @@ async def record_attempt(
     # [4] 다음 행동 결정(살아있는 커리큘럼 신호)
     action = decide_after_answer(state=state, is_correct=result.passed)
 
+    # [4b] 원인 국소화(ISSUE-010): 선수결손 vs 본문 결손 vs 판단 보류 + blame 선행
+    cause = _localize_cause(
+        db, user_id=user_id, concept_id=concept_id, current_passed=result.passed
+    )
+
+    # [4c] 선행 삽입(ISSUE-002): 틀렸고 원인이 선수결손이면 blame 선행 학습지점을 보장.
+    #      cause 구동(Router의 거친 신호가 아니라) — content면 삽입 안 함. 성공 시엔 미개입.
+    prerequisite_target = None
+    if (
+        not result.passed
+        and cause.type == "prerequisite"
+        and cause.blame_concept_id is not None
+    ):
+        prerequisite_target = _ensure_prerequisite_target(
+            db,
+            user_id=user_id,
+            block=block,
+            blame_concept_id=uuid.UUID(cause.blame_concept_id),
+        )
+
     # [5] attempts 기록(append-only) — 개입 신호/행동을 meta에 남긴다(§2.5C)
     feedback_dict = None
     if result.score is not None:
@@ -318,22 +537,45 @@ async def record_attempt(
             "blockType": block.type,
             "nextAction": action.action,
             "consecutiveWrong": state.consecutive_wrong,
+            "cause": cause.type,
+            **(
+                {"blameConceptId": cause.blame_concept_id}
+                if cause.blame_concept_id
+                else {}
+            ),
+            **(
+                {"prereqChapterId": prerequisite_target.chapter_id}
+                if prerequisite_target
+                else {}
+            ),
             **(req.meta or {}),
         },
     )
 
     # [6] 절 진행/완료 판정: tracked 블록 전부 통과 → completed
+    resume_section_id: str | None = None
     if block.section_id is not None:
         tracked_ids = repo.get_tracked_block_ids(db, block.section_id)
         passed_ids = repo.get_passed_block_ids(
             db, user_id=user_id, block_ids=tracked_ids
         )
+        completed = bool(tracked_ids) and passed_ids >= set(tracked_ids)
         repo.mark_section_progress(
-            db,
-            user_id=user_id,
-            section_id=block.section_id,
-            completed=bool(tracked_ids) and passed_ids >= set(tracked_ids),
+            db, user_id=user_id, section_id=block.section_id, completed=completed
         )
+        # [6b] 커서: 완료한 절이 현재 위치면 복귀 스택 pop → 복귀 지점 표면화
+        if completed:
+            course_id = _course_id_of_section(db, block.section_id)
+            cursor = (
+                repo.get_cursor(db, user_id=user_id, course_id=course_id)
+                if course_id
+                else None
+            )
+            if cursor and cursor.current_section_id == block.section_id:
+                resumed = repo.pop_return(
+                    db, user_id=user_id, course_id=course_id
+                )
+                resume_section_id = str(resumed) if resumed else None
 
     db.commit()
 
@@ -347,6 +589,7 @@ async def record_attempt(
             if result.score is not None
             else None
         ),
+        reveal=_build_reveal(block),
         concept=ConceptStateOut(
             concept_id=str(concept_id),
             strength=mastery.strength,
@@ -357,4 +600,11 @@ async def record_attempt(
             ),
         ),
         next_action=NextActionOut(action=action.action, reason=action.reason),
+        cause=CauseOut(
+            type=cause.type,
+            reason=cause.reason,
+            blame_concept_id=cause.blame_concept_id,
+        ),
+        prerequisite=prerequisite_target,
+        resume_section_id=resume_section_id,
     )

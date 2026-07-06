@@ -131,6 +131,44 @@ def unlock_for_learning(state: MasteryState) -> MasteryState:
     return replace(state, status=MasteryStatus.TODO)
 
 
+# ── placement 시딩 (진단 종료 → 수준 체크 진입점) ─────────────────────────────
+# 바닥 아래(이미 아는 층) 초기 strength — parsing seed의 mastered 상한과 동일(0.85).
+_PLACEMENT_MASTERED_STRENGTH = 0.85
+
+
+@dataclass(frozen=True)
+class PlacementSeed:
+    """placement 판정 결과(순수). concept_mastery 초기 행으로 변환된다."""
+
+    status: str
+    strength: float
+
+
+def classify_placement(
+    position: int,
+    *,
+    floor_position: int | None,
+    ceiling_position: int | None,
+) -> PlacementSeed:
+    """진행 좌표(커리큘럼 순서) 대비 개념의 초기 상태를 정한다.
+
+      position < floor            → mastered (진행선 이전 = 이미 지나온 층, strength 시드)
+      floor ≤ position ≤ ceiling  → todo     (학습 경로 = 바닥~목표)
+      position > ceiling          → locked   (목표 너머 = 아직 범위 밖)
+
+    **진행축 = 커리큘럼 순서(chapter/section order)** — parsing 규약. depth가 아니다.
+    (parsing에서 depth는 선수 드릴 축이고, floor/ceiling은 섹션 대표개념을 문서순으로 잡는다.)
+    floor 미정(진단 미도달)이면 아무것도 mastered로 두지 않고, ceiling 미정이면 상한 없음.
+    """
+    if ceiling_position is not None and position > ceiling_position:
+        return PlacementSeed(status=MasteryStatus.LOCKED, strength=0.0)
+    if floor_position is not None and position < floor_position:
+        return PlacementSeed(
+            status=MasteryStatus.MASTERED, strength=_PLACEMENT_MASTERED_STRENGTH
+        )
+    return PlacementSeed(status=MasteryStatus.TODO, strength=0.0)
+
+
 def mark_taught(state: MasteryState) -> MasteryState:
     return replace(state, taught=True)
 

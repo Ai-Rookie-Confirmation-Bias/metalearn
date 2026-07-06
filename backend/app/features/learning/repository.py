@@ -16,17 +16,19 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.core.enums import GenStatus
+from app.core.enums import ChapterOrigin, EdgeKind, GenStatus
 from app.features.curriculum.models import Chapter, Section
 from app.features.learning.generator import BlockDraft, ChunkExcerpt, ExternalRefInput
 from app.features.learning.models import (
     Attempt,
     Block,
     ConceptMastery,
+    Enrollment,
+    LearningCursor,
     SectionProgress,
 )
 from app.features.materials.models import DocChunk
-from app.features.seed.models import Concept, Course, ExternalRef
+from app.features.seed.models import Concept, ConceptEdge, Course, ExternalRef
 
 
 # ── 챕터 / 절 ────────────────────────────────────────────────────────────────
@@ -49,6 +51,48 @@ def get_chapter_sections(db: Session, chapter_id: uuid.UUID) -> list[Section]:
 
 def get_course_of_chapter(db: Session, chapter: Chapter) -> Course | None:
     return db.get(Course, chapter.course_id)
+
+
+# ── 선행 삽입(살아있는 커리큘럼, ISSUE-002) ──────────────────────────────────
+def find_section_by_concept(
+    db: Session, *, course_id: uuid.UUID, concept_id: uuid.UUID
+) -> Section | None:
+    """코스 내에서 개념에 매핑된 절(있으면). 선행 삽입 멱등성 판단에 사용."""
+    stmt = (
+        select(Section)
+        .join(Chapter, Section.chapter_id == Chapter.id)
+        .where(Chapter.course_id == course_id, Section.concept_id == concept_id)
+        .order_by(Section.order_index)
+    )
+    return db.scalars(stmt).first()
+
+
+def insert_prerequisite_chapter(
+    db: Session, *, course_id: uuid.UUID, concept: Concept, before_order: int
+) -> tuple[Chapter, Section]:
+    """선행 개념용 chapter(origin='prereq', pending) + section 1개를 현재 챕터 앞에 생성.
+
+    학습자가 선행을 먼저 밟게 before_order-5에 끼운다. JIT 생성은 프론트가 새 챕터로
+    라우팅하며 기존 `POST /chapters/:id/generate` 트리거로 태운다(여기선 pending만).
+    """
+    chapter = Chapter(
+        course_id=course_id,
+        order_index=before_order - 5,
+        title=f"[선행] {concept.name}",
+        origin=ChapterOrigin.PREREQ,
+        gen_status=GenStatus.PENDING,
+    )
+    db.add(chapter)
+    db.flush()
+    section = Section(
+        chapter_id=chapter.id,
+        concept_id=concept.id,
+        order_index=10,
+        title=concept.name,
+    )
+    db.add(section)
+    db.flush()
+    return chapter, section
 
 
 # ── gen_status 원자 전이 ─────────────────────────────────────────────────────
@@ -163,6 +207,132 @@ def get_external_refs_by_ids(
         return {}
     stmt = select(ExternalRef).where(ExternalRef.id.in_(ref_ids))
     return {r.id: r for r in db.scalars(stmt)}
+
+
+# ── placement 시딩(진단 종료 → 수준 체크 진입점) ─────────────────────────────
+def get_enrollment(
+    db: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
+) -> Enrollment | None:
+    return db.get(Enrollment, (user_id, course_id))
+
+
+def get_course_concepts(db: Session, course_id: uuid.UUID) -> list[Concept]:
+    stmt = select(Concept).where(Concept.course_id == course_id)
+    return list(db.scalars(stmt))
+
+
+def get_curriculum_order(
+    db: Session, course_id: uuid.UUID
+) -> dict[uuid.UUID, int]:
+    """섹션에 매핑된 개념의 커리큘럼 진행 좌표. concept_id → chapter*1000+section order.
+
+    parsing 규약의 진행축(문서/커리큘럼 순서)을 placement가 쓰기 위한 좌표.
+    섹션 없는 개념(순수 선행)은 포함하지 않는다(진행선에 없음).
+    """
+    stmt = (
+        select(Section.concept_id, Chapter.order_index, Section.order_index)
+        .join(Chapter, Section.chapter_id == Chapter.id)
+        .where(Chapter.course_id == course_id, Section.concept_id.isnot(None))
+    )
+    out: dict[uuid.UUID, int] = {}
+    for concept_id, ch_order, sec_order in db.execute(stmt):
+        out[concept_id] = ch_order * 1000 + sec_order
+    return out
+
+
+def seed_mastery_if_absent(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    seeds: list[tuple[uuid.UUID, str, float]],
+) -> tuple[int, int]:
+    """concept_mastery 초기 시딩. seeds=[(concept_id, status, strength), ...].
+
+    멱등: 이미 행이 있는 개념(=학습 진행 중)은 건드리지 않고 보존한다.
+    반환: (신규 시딩 수, 보존/스킵 수).
+    """
+    existing = set(
+        db.scalars(
+            select(ConceptMastery.concept_id).where(
+                ConceptMastery.user_id == user_id
+            )
+        )
+    )
+    rows: list[ConceptMastery] = []
+    for concept_id, status, strength in seeds:
+        if concept_id in existing:
+            continue
+        rows.append(
+            ConceptMastery(
+                user_id=user_id,
+                concept_id=concept_id,
+                status=status,
+                strength=strength,
+            )
+        )
+    if rows:
+        db.add_all(rows)
+        db.flush()
+    return len(rows), len(seeds) - len(rows)
+
+
+# ── 원인 국소화(BKT×DAG, ISSUE-010) ──────────────────────────────────────────
+def get_prerequisite_ids(db: Session, concept_id: uuid.UUID) -> list[uuid.UUID]:
+    """개념의 직접 선행 id들. **parsing 규약**: 엣지 from(의존) → to(선행), kind=prerequisite.
+
+    즉 대상 X의 선행 = {e.to_concept_id : e.from_concept_id == X, kind=prerequisite}.
+    (신호는 엣지로만 전파 — 직접 선행만 반환. 방향 규약: docs/GRAPH_ORIENTATION_CONTRACT.md)
+    """
+    stmt = select(ConceptEdge.to_concept_id).where(
+        ConceptEdge.from_concept_id == concept_id,
+        ConceptEdge.kind == EdgeKind.PREREQUISITE,
+    )
+    return list(db.scalars(stmt))
+
+
+def get_concept_depths(
+    db: Session, concept_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, int]:
+    """개념 id → depth_level(DAG 최장경로 좌표). None은 0으로 본다."""
+    if not concept_ids:
+        return {}
+    stmt = select(Concept.id, Concept.depth_level).where(Concept.id.in_(concept_ids))
+    return {cid: (depth or 0) for cid, depth in db.execute(stmt)}
+
+
+def get_strength_map(
+    db: Session, *, user_id: uuid.UUID, concept_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, float]:
+    """개념 id → concept_mastery.strength(선행 P(known) 프록시). 행 없으면 생략."""
+    if not concept_ids:
+        return {}
+    stmt = select(ConceptMastery.concept_id, ConceptMastery.strength).where(
+        ConceptMastery.user_id == user_id,
+        ConceptMastery.concept_id.in_(concept_ids),
+    )
+    return {cid: strength for cid, strength in db.execute(stmt)}
+
+
+def get_concept_outcomes(
+    db: Session, *, user_id: uuid.UUID, concept_id: uuid.UUID, limit: int = 50
+) -> list[bool]:
+    """개념의 정오 시퀀스(시간순, BKT 접기 입력). 채점된 learn/review 시도만."""
+    stmt = (
+        select(Attempt.correct, Attempt.score)
+        .where(
+            Attempt.user_id == user_id,
+            Attempt.concept_id == concept_id,
+            Attempt.kind.in_(["learn", "review"]),
+            (Attempt.correct.isnot(None)) | (Attempt.score.isnot(None)),
+        )
+        .order_by(Attempt.created_at)
+        .limit(limit)
+    )
+    outcomes: list[bool] = []
+    for correct, score in db.execute(stmt):
+        passed = bool(correct) if correct is not None else (score or 0) >= 0.6
+        outcomes.append(passed)
+    return outcomes
 
 
 # ── 학습자 상태(확신도 / variant) ────────────────────────────────────────────
@@ -331,6 +501,67 @@ def get_passed_block_ids(
         (Attempt.correct.is_(True)) | (Attempt.score >= 0.6),
     )
     return {bid for bid in db.scalars(stmt) if bid is not None}
+
+
+# ── 학습 커서(복귀 자동화, ISSUE-002) ────────────────────────────────────────
+def get_cursor(
+    db: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
+) -> LearningCursor | None:
+    return db.get(LearningCursor, (user_id, course_id))
+
+
+def _get_or_create_cursor(
+    db: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
+) -> LearningCursor:
+    cur = db.get(LearningCursor, (user_id, course_id))
+    if cur is None:
+        cur = LearningCursor(
+            user_id=user_id, course_id=course_id, return_stack=[]
+        )
+        db.add(cur)
+        db.flush()
+    return cur
+
+
+def push_and_enter(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID,
+    from_section_id: uuid.UUID,
+    to_section_id: uuid.UUID,
+) -> LearningCursor:
+    """현재 절을 복귀 스택에 push하고 커서를 선행 절(to)로 이동. 중첩 선행 대응(LIFO).
+
+    from이 이미 스택 top이면 재push하지 않는다(같은 절 반복 실패 시 중복 방지).
+    """
+    cur = _get_or_create_cursor(db, user_id=user_id, course_id=course_id)
+    stack = list(cur.return_stack or [])
+    token = str(from_section_id)
+    if not stack or stack[-1] != token:
+        stack.append(token)
+    cur.return_stack = stack  # 재할당으로 JSONB 변경 감지
+    cur.current_section_id = to_section_id
+    cur.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return cur
+
+
+def pop_return(
+    db: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
+) -> uuid.UUID | None:
+    """복귀 스택 pop → 커서를 그 절로 이동하고 반환. 스택 비면 None(커서 유지)."""
+    cur = db.get(LearningCursor, (user_id, course_id))
+    if cur is None or not cur.return_stack:
+        return None
+    stack = list(cur.return_stack)
+    token = stack.pop()
+    cur.return_stack = stack
+    resume_id = uuid.UUID(token)
+    cur.current_section_id = resume_id
+    cur.updated_at = datetime.now(timezone.utc)
+    db.flush()
+    return resume_id
 
 
 def mark_section_progress(
