@@ -139,12 +139,20 @@ async def _generate_one_section(
     if concept is None:
         return 0
 
-    # 근거 확보(§2.5A [1]) — book은 청크, ai_prereq는 외부근거
-    chunks = (
-        repo.get_concept_chunks(db, course=course, concept=concept)
-        if concept.source == ContentSource.BOOK
-        else []
-    )
+    # 근거 확보(§2.5A [1]) — book은 청크(RAG), ai_prereq는 외부근거
+    # RAG(ISSUE-004): 개념을 query 임베딩 → 청크(passage) cosine top-K. 임베딩 없으면 키워드 폴백.
+    # (병합 후엔 parsing이 저장한 concepts.embedding 소비로 전환 — 재임베딩 회피)
+    chunks: list = []
+    if concept.source == ContentSource.BOOK:
+        query_emb: list[float] | None = None
+        try:
+            query_text = f"{concept.name}. {concept.description or ''}".strip()
+            query_emb = await get_llm_client().embed(query_text, purpose="query")
+        except Exception:  # noqa: BLE001 — 임베딩 실패 시 키워드 폴백
+            logger.warning("개념 질의 임베딩 실패 → 키워드 폴백: %s", concept.name)
+        chunks = repo.search_concept_chunks(
+            db, course=course, concept=concept, query_embedding=query_emb
+        )
     ext_refs = (
         repo.get_concept_external_refs(db, concept.id)
         if concept.source == ContentSource.AI_PREREQ
