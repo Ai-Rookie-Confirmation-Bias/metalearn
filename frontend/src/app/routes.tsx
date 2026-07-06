@@ -8,6 +8,7 @@ import { ProfileSetupPage } from "@/pages/ProfileSetupPage";
 import { LearningPage } from "@/pages/LearningPage";
 import { LibraryPage } from "@/pages/LibraryPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
+import { ReviewPage } from "@/pages/ReviewPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
 
@@ -33,6 +34,7 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { path: "library", element: <LibraryPage /> },
+      { path: "review", element: <ReviewPage /> },
       { path: "analysis", element: <AnalysisPage /> },
       { path: "settings", element: <SettingsPage /> },
     ],

@@ -231,6 +231,12 @@ export function LibraryPage() {
             🔁 복습할 때가 된 개념이 <b className="text-accent">{reviewDue.dueCount}개</b> 있어요.
             지금 다시 꺼내보면 오래 기억돼요.
           </div>
+          <Link
+            to="/review"
+            className="shrink-0 rounded-xl bg-accent px-4 py-2 text-[0.85rem] font-semibold text-white transition-transform hover:-translate-y-0.5"
+          >
+            복습하러 가기
+          </Link>
         </div>
       )}
 

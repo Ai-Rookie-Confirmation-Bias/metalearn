@@ -8,6 +8,7 @@ import {
   LightningIcon,
   MagnifyingGlassIcon,
   BellIcon,
+  ArrowsClockwiseIcon,
   type Icon,
 } from "@phosphor-icons/react";
 
@@ -16,6 +17,7 @@ import {
 
 const NAV: { to: string; label: string; icon: Icon }[] = [
   { to: "/library", label: "나의 책장", icon: BooksIcon },
+  { to: "/review", label: "복습", icon: ArrowsClockwiseIcon },
   { to: "/analysis", label: "메타인지 분석", icon: ChartLineUpIcon },
   { to: "/settings", label: "설정", icon: GearIcon },
 ];
