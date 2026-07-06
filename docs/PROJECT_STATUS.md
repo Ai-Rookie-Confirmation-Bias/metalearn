@@ -30,10 +30,14 @@
 - **학습 커서**: 복귀 스택으로 선행 우회→복귀 자동화 (`learning_cursor`, `GET /courses/:id/cursor`)
 - **책장·메타인지**: `GET /courses`(진행률·마지막활동), `GET /courses/:id/mastery`
 - **절 잠금 서버 계산**: 트리 `SectionNode.locked`(순차 진행 규칙)
+- **faithfulness 게이트(ISSUE-003)**: 생성 사실 블록을 근거에 Solar 블록단위 대조 — 지어낸 주장 폐기(검증됨)
+- **RAG 임베딩 검색(ISSUE-004)**: 개념 query 임베딩 vs 청크 passage 임베딩 pgvector cosine, 키워드 폴백(의미검색 검증됨)
+- **복습(9단계)**: `GET /review/due`(도래+블록)·`POST /review/answer`(SM-2 재스케줄)·`GET /review/schedule`
 
 ### 프론트 배선 (integration)
-- 책장 · 학습(트리+절블록+attempts+JIT생성) · 분석(mastery)
+- 책장 · 학습(트리+절블록+attempts+JIT생성) · 분석(mastery) · **복습(/review 답변 화면)**
 - 블록 라운드트립 채점(mcq/cloze/explainBack) — 클라 판정 제거
+- **살아있는 커리큘럼 UI**: 선수결손 배너·복귀·AI튜터 적응형 코멘트 · Library 복습 도래 배지
 - axios dev 인증헤더(임시)
 
 ### 아키텍처 원칙 정합 (README §2·§3)
@@ -50,9 +54,9 @@
 | 진단평가(floor/ceiling)·씨앗·개념그래프 | 미완성 | **parsing** |
 | 소셜 로그인 / OAuth | 백·프론트 스텁, 임시 `X-User-Id` | 미착수 (ISSUE-005) |
 | 수업 생성(`POST /courses`)·문서 업로드·파싱 | 미배선 | materials/parsing |
-| 복습(`review/*`) | sm2 로직만, 라우터·서빙 없음 | 우리 |
+| 10단계 숲(연결퀴즈·개념지도) | 없음 | 우리 |
 | map / connections / 전용 progress 엔드포인트 | 없음 | 우리 |
-| 오개념 감지 · cause=content 처방 · 선행 복귀 UI | 훅/부분 | 우리 |
+| 오개념 감지 · cause=content 처방 · faithfulness 위험도 차등 | 훅/기본만 | 우리 |
 | 로컬 EXAONE(오프라인) | Phase 2 스텁 | 후속 |
 
 ---
@@ -61,7 +65,7 @@
 
 - **🔴 ISSUE-001 (최대 블로커)** — 우리(UUID) ↔ parsing(Integer) PK·마이그레이션 전면 분기. 실데이터 통합 불가. parsing과 **단독금지** 합의(정본 UUID로 스쿼시) 필요.
 - **🟠 상류 공백** — 진단·인증·업로드 부재로 지금은 **시드 픽스처** 기반. 실사용 flow(가입→업로드→진단→학습) 미완결.
-- **🟠 LLM 신뢰성** — faithfulness(ISSUE-003)·RAG(ISSUE-004) 미구현 → 생성 품질 보증 약함.
+- **🟢 LLM 신뢰성(개선됨)** — faithfulness 게이트(ISSUE-003)·RAG 임베딩 검색(ISSUE-004) 구현·검증. 남은 것: 위험도 차등(정의·수치 고위험 강검증), RAG 임베딩 모델 계약(ISSUE-015, parsing 합의).
 - **🟡 그래프 방향 규약** — parsing 규약 채택 확정, 소비자(우리) 정합 완료 (`GRAPH_ORIENTATION_CONTRACT.md`, ISSUE-012). 병합 시 parsing이 실제 그 규약대로 생산하는지 대조 필요.
 - **🟡 배선 분산** — 프론트 배선 + 일부 백엔드 변경이 `feat/integration-test`(worktree)에 있음 → 최종엔 프론트 브랜치 / `backend-ai-core`로 정리 필요.
 
