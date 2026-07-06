@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { clsx } from "clsx";
 
-import type { McqBlockData, OnAnswer } from "./types";
+import type { AttemptResult, McqBlockData, OnAnswer } from "./types";
 
 // ② 객관식 — idle → 선택 → correct(초록, 잠금)/incorrect(빨강, 재시도 가능) + 해설
 export function McqBlock({
@@ -17,13 +17,22 @@ export function McqBlock({
 }) {
   const [picked, setPicked] = useState<number | null>(null);
   const [locked, setLocked] = useState(false); // 정답 맞추면 잠금
+  const [result, setResult] = useState<AttemptResult | null>(null);
+  const [submitting, setSubmitting] = useState(false);
 
-  const pick = (i: number) => {
-    if (locked) return;
+  // 라운드트립: 클라는 정답을 모름(스트립) → userInput만 보내고 서버 채점 결과로 표시.
+  const pick = async (i: number) => {
+    if (locked || submitting) return;
     setPicked(i);
-    const correct = i === data.answerIndex;
-    if (correct) setLocked(true);
-    onAnswer({ blockId, conceptId, correct, userInput: i });
+    setResult(null);
+    setSubmitting(true);
+    try {
+      const r = await onAnswer({ blockId, conceptId, userInput: i });
+      setResult(r);
+      if (r.correct) setLocked(true);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -32,7 +41,13 @@ export function McqBlock({
       <div className="flex flex-col gap-3">
         {data.options.map((opt, i) => {
           const isPicked = picked === i;
-          const state = !isPicked ? "idle" : i === data.answerIndex ? "correct" : "incorrect";
+          const state = !isPicked
+            ? "idle"
+            : result?.correct
+              ? "correct"
+              : result
+                ? "incorrect"
+                : "idle";
           return (
             <button
               key={i}
@@ -64,9 +79,9 @@ export function McqBlock({
           );
         })}
       </div>
-      {locked && data.explanation && (
+      {locked && result?.reveal?.explanation && (
         <div className="mt-4 rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
-          💡 {data.explanation}
+          💡 {result.reveal.explanation}
         </div>
       )}
     </div>

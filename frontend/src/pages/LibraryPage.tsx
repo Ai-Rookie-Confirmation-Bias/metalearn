@@ -12,8 +12,9 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 
-import { courses, meStats, type CourseSummary } from "@/pages/library/mock";
+import { meStats, type CourseSummary } from "@/pages/library/mock";
 import { useCreatedCourses } from "@/features/course-create/store";
+import { useCourses } from "@/features/library/queries/useCourses";
 
 // difficulty_est(1~10) → 뱃지 라벨
 function difficultyLabel(est: number): string {
@@ -177,8 +178,10 @@ export function LibraryPage() {
   const navigate = useNavigate();
   const drafts = useCreatedCourses((s) => s.drafts);
 
-  // 방금 만든 코스(스토어)를 CourseSummary 모양으로 → mock과 합쳐 렌더.
-  // (백엔드 붙으면 이 병합 대신 GET /courses 리페치 결과를 그대로 사용)
+  // 서버 책장(GET /api/courses) — mock 대체. 로딩 중엔 빈 배열.
+  const { data: serverCourses = [] } = useCourses();
+
+  // 방금 만든 코스(스토어)를 CourseSummary 모양으로 → 서버 목록과 합쳐 렌더.
   const draftCourses: CourseSummary[] = drafts.map((d) => ({
     id: d.id,
     title: d.title,
@@ -190,7 +193,7 @@ export function LibraryPage() {
     lastActivityAt: null,
     generating: d.generating,
   }));
-  const allCourses = [...draftCourses, ...courses];
+  const allCourses = [...draftCourses, ...serverCourses];
 
   // 이어서 학습할 코스 = 진행 중(진단 완료 & 0<진행<100) 코스 중 마지막 학습이 가장 최근인 것.
   // 정렬은 프론트에서 lastActivityAt(서버가 MAX(attempts.created_at)로 계산해 준 값) 최신순으로.

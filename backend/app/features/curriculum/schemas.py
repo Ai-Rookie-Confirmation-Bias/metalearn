@@ -27,6 +27,8 @@ class SectionNode(_CamelModel):
     variant_served: str | None = None
     mastery_status: str | None = None  # locked | todo | learning | mastered
     strength: float | None = None
+    # 잠금(서버 계산): 순차 진행 — 완료된 절 + 첫 미완료까지 열림, 그 뒤는 잠김
+    locked: bool = False
 
 
 class ChapterNode(_CamelModel):

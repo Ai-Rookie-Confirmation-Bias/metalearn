@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { clsx } from "clsx";
 import {
@@ -8,71 +8,110 @@ import {
   LockKeyIcon,
   CheckCircleIcon,
   ListIcon,
+  SparkleIcon,
 } from "@phosphor-icons/react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import { BlockRenderer } from "@/features/learning/blocks/registry";
-import { ReviewGateModal } from "@/features/learning/blocks/ReviewGateModal";
-import type { AnswerEvent } from "@/features/learning/blocks/types";
+import type { AnswerEvent, AttemptResult, OnAnswer } from "@/features/learning/blocks/types";
 import { CurriculumPanel } from "@/pages/learning/CurriculumPanel";
 import { AiTutorPanel } from "@/pages/learning/AiTutorPanel";
-import { course, initialCompletedSectionIds, reviewDue } from "@/pages/learning/mock";
+import type { Chapter as PanelChapter } from "@/pages/learning/mock";
+import { useCourses } from "@/features/library/queries/useCourses";
+import { useCourseTree } from "@/features/learning/queries/useCourseTree";
+import { useSectionBlocks } from "@/features/learning/queries/useSectionBlocks";
+import { useSubmitAttempt } from "@/features/learning/queries/useSubmitAttempt";
+import { useGenerateChapter } from "@/features/learning/queries/useGenerateChapter";
 
-// 학습 화면 — UXUI_ANT/learning.html 기준 3컬럼(커리큘럼 / 블록 / AI튜터·노트).
-// 화면의 모든 표시는 데이터에서 파생: 진도율=완료÷전체, 잠금=이전 레슨 완료 여부,
-// 레슨 클릭=해당 절 블록 로드, 인출 전부 정답→완료 처리→진도율↑→다음 레슨 열림.
+// 학습 화면 — 3컬럼(커리큘럼 / 블록 / AI튜터). 데이터는 전부 백엔드:
+//   트리 = GET /courses/:id · 절 블록 = GET /sections/:id(지연) · 채점 = POST /attempts(라운드트립).
 export function LearningPage() {
-  const flatSections = useMemo(() => course.chapters.flatMap((c) => c.sections), []);
+  const queryClient = useQueryClient();
+  const { data: courses } = useCourses();
+  const courseId = courses?.[0]?.id;
+  const category = courses?.[0]?.category ?? "";
+  const { data: tree, isLoading: treeLoading } = useCourseTree(courseId);
 
-  // 완료된 레슨 (초기값 = 서버 section_progress mock) — "다음 강의" 시 갱신
-  const [completedIds, setCompletedIds] = useState(() => new Set(initialCompletedSectionIds));
-  // 현재 보고 있는 레슨 = 첫 미완료 레슨부터
-  const [currentSectionId, setCurrentSectionId] = useState(
-    () => flatSections.find((l) => !completedIds.has(l.id))?.id ?? flatSections[0].id,
+  const chapters = useMemo(() => tree?.chapters ?? [], [tree]);
+  const flatSections = useMemo(() => chapters.flatMap((c) => c.sections), [chapters]);
+
+  // 휘발성 UI(현재 보고 있는 절)만 클라 상태. 진행/완료/잠금은 전부 서버(트리) 미러.
+  const [currentSectionId, setCurrentSectionId] = useState<string | null>(null);
+
+  // 시작 절 초기화(첫 미완료부터) — 진행도는 저장하지 않고 트리에서 읽는다.
+  useEffect(() => {
+    if (!tree) return;
+    const secs = tree.chapters.flatMap((c) => c.sections);
+    setCurrentSectionId(
+      (cur) => cur ?? secs.find((s) => s.progressStatus !== "completed")?.id ?? secs[0]?.id ?? null,
+    );
+  }, [tree]);
+
+  const { data: sectionData, isLoading: blocksLoading } = useSectionBlocks(
+    currentSectionId ?? undefined,
   );
-  // 레슨별로 정답 처리된 tracked 블록 id (레슨을 오가도 유지)
-  const [solvedBySection, setSolvedBySection] = useState<Record<string, Set<string>>>({});
-  const [showReviewGate, setShowReviewGate] = useState(false);
+  const blocks = sectionData?.blocks ?? [];
 
-  // ── 파생 값들 ──
-  const currentSection = flatSections.find((l) => l.id === currentSectionId)!;
-  const currentIndex = flatSections.findIndex((l) => l.id === currentSectionId);
+  const submit = useSubmitAttempt();
+  const generate = useGenerateChapter();
+
+  // 라운드트립 채점 — userInput만 보내고 서버가 correct/reveal + 완료/숙련도까지 판정.
+  // 프론트는 판단하지 않는다: 채점 후 트리를 refetch해 진행/완료/잠금을 서버에서 다시 읽는다.
+  const onAnswer: OnAnswer = async (e: AnswerEvent): Promise<AttemptResult> => {
+    const r = await submit.mutateAsync(e);
+    queryClient.invalidateQueries({ queryKey: ["courseTree"] });
+    return r;
+  };
+
+  // ── 파생(전부 서버 트리에서) ──
+  const currentChapter = chapters.find((c) =>
+    c.sections.some((s) => s.id === currentSectionId),
+  );
+  const currentSection = flatSections.find((s) => s.id === currentSectionId);
+  const currentIndex = flatSections.findIndex((s) => s.id === currentSectionId);
   const nextSection = flatSections[currentIndex + 1];
 
-  // 잠금 해제된 레슨 = 완료된 레슨 + 그 바로 다음(첫 미완료)까지
-  const unlockedIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const l of flatSections) {
-      ids.add(l.id);
-      if (!completedIds.has(l.id)) break; // 첫 미완료까지 열고 그 뒤는 잠금
-    }
-    return ids;
-  }, [flatSections, completedIds]);
+  // 완료/잠금 = 서버 진실(section_progress → tree.progressStatus)의 미러. 클라 계산 아님.
+  const completedIds = useMemo(
+    () =>
+      new Set(
+        flatSections.filter((s) => s.progressStatus === "completed").map((s) => s.id),
+      ),
+    [flatSections],
+  );
+  // 잠금은 서버가 계산(tree.locked) → 프론트는 미러만(순차 규칙 판단 안 함)
+  const unlockedIds = useMemo(
+    () => new Set(flatSections.filter((s) => !s.locked).map((s) => s.id)),
+    [flatSections],
+  );
 
-  // 게이트: 이미 완료한 레슨이면 통과, 아니면 tracked 블록 전부 정답이어야
-  const solved = solvedBySection[currentSectionId] ?? new Set<string>();
-  const trackedIds = currentSection.blocks.filter((b) => b.tracked).map((b) => b.id);
-  const unlocked = completedIds.has(currentSectionId) || trackedIds.every((id) => solved.has(id));
+  // 다음으로 진행 가능 = 이 절이 서버에서 완료 처리됨(= tracked 전부 통과). 백엔드가 판정.
+  const unlocked = currentSection?.progressStatus === "completed";
 
-  // ②③ 공통 콜백 — 지금은 로컬 수집. 백엔드 붙으면 여기서 POST /attempts 전송
-  const onAnswer = (e: AnswerEvent) => {
-    if (!e.correct) return;
-    setSolvedBySection((prev) => {
-      const next = new Set(prev[currentSectionId] ?? []);
-      next.add(e.blockId);
-      return { ...prev, [currentSectionId]: next };
-    });
-  };
+  // CurriculumPanel용 chapters(패널은 블록을 안 쓰므로 빈 배열)
+  const panelChapters: PanelChapter[] = chapters.map((c) => ({
+    id: c.id,
+    title: c.title,
+    sections: c.sections.map((s) => ({ id: s.id, title: s.title, blocks: [] })),
+  }));
 
-  // "다음 강의" — 현재 레슨 완료 처리(진도율↑, 다음 레슨 잠금 해제) 후 복습 게이트 소환
   const goNext = () => {
-    setCompletedIds((prev) => new Set(prev).add(currentSectionId));
-    if (reviewDue.length > 0) setShowReviewGate(true);
-    else moveToNext();
-  };
-  const moveToNext = () => {
-    setShowReviewGate(false);
+    // 완료 판정은 서버(section_progress)가 이미 처리 → 프론트는 다음 절로 이동만.
     if (nextSection) setCurrentSectionId(nextSection.id);
   };
+
+  const onGenerate = async () => {
+    if (!currentChapter) return;
+    await generate.mutateAsync(currentChapter.id);
+  };
+  const refetchBlocks = () =>
+    queryClient.invalidateQueries({ queryKey: ["sectionBlocks", currentSectionId] });
+
+  if (treeLoading || !tree) {
+    return (
+      <div className="grid h-screen place-items-center text-text-tertiary">코스 불러오는 중…</div>
+    );
+  }
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#f3f4f6]">
@@ -86,14 +125,15 @@ export function LearningPage() {
             <ArrowLeftIcon /> 책장으로
           </Link>
           <div className="flex items-center gap-4 border-l border-border-primary pl-6">
-            <span className="rounded-md bg-bg-secondary px-2.5 py-1 text-xs font-bold text-text-secondary">
-              {course.category}
-            </span>
-            <h1 className="text-[1.1rem] font-bold text-primary">{course.title}</h1>
+            {category && (
+              <span className="rounded-md bg-bg-secondary px-2.5 py-1 text-xs font-bold text-text-secondary">
+                {category}
+              </span>
+            )}
+            <h1 className="text-[1.1rem] font-bold text-primary">{tree.title}</h1>
           </div>
         </div>
         <div className="flex items-center gap-4">
-          {/* 몰입 뷰어(focus)는 후속 — 자리만 */}
           <button
             type="button"
             className="flex items-center gap-2 rounded-xl border border-border-primary bg-bg-secondary px-4 py-2 text-[0.85rem] font-semibold text-text-primary transition-colors hover:bg-border-primary/50"
@@ -112,60 +152,93 @@ export function LearningPage() {
       {/* 3컬럼 */}
       <div className="flex flex-1 overflow-hidden">
         <CurriculumPanel
-          chapters={course.chapters}
-          currentSectionId={currentSectionId}
+          chapters={panelChapters}
+          currentSectionId={currentSectionId ?? ""}
           completedIds={completedIds}
           unlockedIds={unlockedIds}
           onSelect={setCurrentSectionId}
         />
 
-        {/* 중앙: 현재 레슨의 블록 렌더 */}
+        {/* 중앙: 현재 절의 블록 렌더 */}
         <main className="flex-1 overflow-y-auto bg-white" key={currentSectionId}>
           <div className="mx-auto w-full max-w-[1000px] p-12">
             <h2 className="mb-6 text-[2rem] font-extrabold tracking-tight text-text-primary">
-              {currentSection.title}
+              {currentSection?.title ?? ""}
             </h2>
 
-            {currentSection.blocks.map((block) => (
-              <BlockRenderer key={`${currentSectionId}-${block.id}`} block={block} onAnswer={onAnswer} />
-            ))}
-
-            {/* 잠금 게이트 — tracked 전부 답해야 다음 */}
-            <div className="mt-12 flex flex-col items-center gap-4 border-t border-border-primary pt-8">
-              {unlocked ? (
-                <div className="flex items-center gap-1.5 text-[0.9rem] font-medium text-text-tertiary">
-                  <CheckCircleIcon weight="fill" className="text-[#10b981]" /> 모든 인출을 완료했습니다. 다음으로
-                  넘어갈 수 있습니다.
-                </div>
-              ) : (
-                <div className="flex items-center gap-1.5 text-[0.9rem] font-medium text-text-tertiary">
-                  <LockKeyIcon weight="fill" /> 위의 모든 인출 문제에 답해야 진행할 수 있습니다.
-                </div>
-              )}
-              <button
-                type="button"
-                onClick={goNext}
-                disabled={!unlocked}
-                className={clsx(
-                  "inline-flex items-center gap-2 rounded-xl px-5 py-[0.6rem] text-[13.3333px] font-semibold leading-[normal] text-white shadow-sm transition-all",
-                  unlocked
-                    ? "bg-primary hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
-                    : "cursor-not-allowed bg-text-tertiary opacity-70",
+            {blocksLoading ? (
+              <div className="py-16 text-center text-text-tertiary">불러오는 중…</div>
+            ) : blocks.length === 0 ? (
+              // 아직 생성 안 된 절(gen_status pending) — JIT 생성 트리거
+              <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-border-primary bg-bg-secondary/40 p-12 text-center">
+                <SparkleIcon className="text-3xl text-primary" weight="fill" />
+                <p className="font-semibold text-text-secondary">
+                  이 절의 학습 콘텐츠가 아직 생성되지 않았어요.
+                </p>
+                {generate.isPending ? (
+                  <div className="text-[0.9rem] text-text-tertiary">
+                    생성 중입니다… 잠시 후 아래 새로고침을 눌러주세요.
+                  </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={onGenerate}
+                    className="rounded-xl bg-primary px-5 py-[0.6rem] text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover"
+                  >
+                    이 절 학습 생성하기
+                  </button>
                 )}
-              >
-                {nextSection ? "다음 강의로 넘어가기" : "코스 완료하기"} <ArrowRightIcon />
-              </button>
-            </div>
+                <button
+                  type="button"
+                  onClick={refetchBlocks}
+                  className="text-[0.85rem] font-medium text-text-tertiary underline"
+                >
+                  새로고침
+                </button>
+              </div>
+            ) : (
+              blocks.map((block) => (
+                <BlockRenderer
+                  key={`${currentSectionId}-${block.id}`}
+                  block={block}
+                  onAnswer={onAnswer}
+                />
+              ))
+            )}
+
+            {/* 잠금 게이트 — tracked 전부 통과해야 다음 */}
+            {blocks.length > 0 && (
+              <div className="mt-12 flex flex-col items-center gap-4 border-t border-border-primary pt-8">
+                {unlocked ? (
+                  <div className="flex items-center gap-1.5 text-[0.9rem] font-medium text-text-tertiary">
+                    <CheckCircleIcon weight="fill" className="text-[#10b981]" /> 모든 인출을
+                    완료했습니다. 다음으로 넘어갈 수 있습니다.
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-1.5 text-[0.9rem] font-medium text-text-tertiary">
+                    <LockKeyIcon weight="fill" /> 위의 모든 인출 문제에 답해야 진행할 수 있습니다.
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={goNext}
+                  disabled={!unlocked}
+                  className={clsx(
+                    "inline-flex items-center gap-2 rounded-xl px-5 py-[0.6rem] text-[13.3333px] font-semibold leading-[normal] text-white shadow-sm transition-all",
+                    unlocked
+                      ? "bg-primary hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
+                      : "cursor-not-allowed bg-text-tertiary opacity-70",
+                  )}
+                >
+                  {nextSection ? "다음 강의로 넘어가기" : "코스 완료하기"} <ArrowRightIcon />
+                </button>
+              </div>
+            )}
           </div>
         </main>
 
         <AiTutorPanel />
       </div>
-
-      {/* 망각곡선 복습 게이트 — 복습 퀴즈 화면은 후속(같은 봉투로 렌더 예정) */}
-      {showReviewGate && (
-        <ReviewGateModal items={reviewDue} onStart={moveToNext} onLater={moveToNext} />
-      )}
     </div>
   );
 }
