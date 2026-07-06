@@ -15,6 +15,7 @@ import {
 import { meStats, type CourseSummary } from "@/pages/library/mock";
 import { useCreatedCourses } from "@/features/course-create/store";
 import { useCourses } from "@/features/library/queries/useCourses";
+import { useReviewDue } from "@/features/review/queries/useReviewDue";
 
 // difficulty_est(1~10) → 뱃지 라벨
 function difficultyLabel(est: number): string {
@@ -180,6 +181,8 @@ export function LibraryPage() {
 
   // 서버 책장(GET /api/courses) — mock 대체. 로딩 중엔 빈 배열.
   const { data: serverCourses = [] } = useCourses();
+  // 복습 도래(GET /api/review/due) — 망각곡선 도래 개념 수
+  const { data: reviewDue } = useReviewDue();
 
   // 방금 만든 코스(스토어)를 CourseSummary 모양으로 → 서버 목록과 합쳐 렌더.
   const draftCourses: CourseSummary[] = drafts.map((d) => ({
@@ -221,6 +224,15 @@ export function LibraryPage() {
             : "학습을 시작해볼까요?"}
         </p>
       </div>
+
+      {reviewDue && reviewDue.dueCount > 0 && (
+        <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-accent/30 bg-accent/[0.06] px-6 py-4">
+          <div className="text-[0.95rem] text-text-primary">
+            🔁 복습할 때가 된 개념이 <b className="text-accent">{reviewDue.dueCount}개</b> 있어요.
+            지금 다시 꺼내보면 오래 기억돼요.
+          </div>
+        </div>
+      )}
 
       {continueCourse && <ContinueBanner course={continueCourse} />}
 

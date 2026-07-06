@@ -364,6 +364,72 @@ def get_concept_outcomes(
     return outcomes
 
 
+# ── 복습 조회(SM-2 next_due, ISSUE 복습9) ────────────────────────────────────
+def get_due_masteries(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    now: datetime,
+    limit: int = 20,
+) -> list[tuple[ConceptMastery, Concept]]:
+    """복습 도래 = next_due_at <= now. (개념명·코스 필터 위해 concepts 조인)."""
+    conds = [
+        ConceptMastery.user_id == user_id,
+        ConceptMastery.next_due_at.isnot(None),
+        ConceptMastery.next_due_at <= now,
+    ]
+    if course_id is not None:
+        conds.append(Concept.course_id == course_id)
+    stmt = (
+        select(ConceptMastery, Concept)
+        .join(Concept, Concept.id == ConceptMastery.concept_id)
+        .where(*conds)
+        .order_by(ConceptMastery.next_due_at)
+        .limit(limit)
+    )
+    return [(m, c) for m, c in db.execute(stmt)]
+
+
+def get_schedule_masteries(
+    db: Session,
+    *,
+    user_id: uuid.UUID,
+    course_id: uuid.UUID | None,
+    limit: int = 100,
+) -> list[tuple[ConceptMastery, Concept]]:
+    """다가오는 복습 캘린더 = next_due_at 있는 개념(도래 여부 무관), 임박순."""
+    conds = [
+        ConceptMastery.user_id == user_id,
+        ConceptMastery.next_due_at.isnot(None),
+    ]
+    if course_id is not None:
+        conds.append(Concept.course_id == course_id)
+    stmt = (
+        select(ConceptMastery, Concept)
+        .join(Concept, Concept.id == ConceptMastery.concept_id)
+        .where(*conds)
+        .order_by(ConceptMastery.next_due_at)
+        .limit(limit)
+    )
+    return [(m, c) for m, c in db.execute(stmt)]
+
+
+def get_review_block(db: Session, section_id: uuid.UUID) -> Block | None:
+    """복습으로 다시 답할 블록 1개 — 절의 tracked+verified 중 첫 블록."""
+    stmt = (
+        select(Block)
+        .where(
+            Block.section_id == section_id,
+            Block.tracked.is_(True),
+            Block.verified.is_(True),
+        )
+        .order_by(Block.order_index)
+        .limit(1)
+    )
+    return db.scalars(stmt).first()
+
+
 # ── 학습자 상태(확신도 / variant) ────────────────────────────────────────────
 def get_mastery(
     db: Session, *, user_id: uuid.UUID, concept_id: uuid.UUID
