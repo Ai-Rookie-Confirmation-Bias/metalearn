@@ -8,5 +8,5 @@ class LLMClient(ABC):
         """프롬프트로 텍스트 생성."""
 
     @abstractmethod
-    async def embed(self, text: str) -> list[float]:
-        """텍스트 임베딩 벡터 반환 (pgvector 저장용)."""
+    async def embed(self, text: str, **kwargs: object) -> list[float]:
+        """텍스트 임베딩 벡터 반환 (pgvector 저장용). kwargs: purpose=query|passage 등."""

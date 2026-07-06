@@ -2,6 +2,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+import app.models_registry  # noqa: F401  (모든 ORM 모델 등록 — FK 해석용)
 from app.api import api_router
 from app.core.config import settings
 
@@ -19,5 +20,11 @@ app.include_router(api_router, prefix="/api")
 
 
 @app.get("/api/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def health() -> dict[str, str | bool]:
+    return {
+        "status": "ok",
+        "persist_to_db": settings.PERSIST_TO_DB,
+        "storage": "postgresql" if settings.PERSIST_TO_DB else "memory",
+        "llm_provider": settings.llm_provider,
+        "llm_model": settings.SOLAR_MODEL if settings.llm_provider == "solar" else "mock",
+    }
