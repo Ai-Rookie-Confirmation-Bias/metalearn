@@ -122,22 +122,31 @@ def get_course_tree(
         concept_ids=[s.concept_id for s in all_sections if s.concept_id],
     )
 
+    # 잠금 = 순차 진행(서버 계산): 이미 완료했거나 이전 절이 전부 완료면 열림, 아니면 잠금.
+    # (완료된 절은 순서와 무관하게 항상 열림 — 되돌아보기 허용). 커리큘럼 순서로 스캔.
+    all_prior_completed = True
+
     chapter_nodes: list[ChapterNode] = []
     for ch in chapters:
         section_nodes: list[SectionNode] = []
         for s in sections_by_chapter.get(ch.id, []):
             p = progress.get(s.id)
             m = mastery.get(s.concept_id) if s.concept_id else None
+            status = p.status if p else "not_started"
+            completed = status == "completed"
+            locked = not (completed or all_prior_completed)
+            all_prior_completed = all_prior_completed and completed
             section_nodes.append(
                 SectionNode(
                     id=str(s.id),
                     title=s.title,
                     order_index=s.order_index,
                     concept_id=str(s.concept_id) if s.concept_id else None,
-                    progress_status=p.status if p else "not_started",
+                    progress_status=status,
                     variant_served=p.variant_served if p else None,
                     mastery_status=m.status if m else None,
                     strength=m.strength if m else None,
+                    locked=locked,
                 )
             )
         chapter_nodes.append(
