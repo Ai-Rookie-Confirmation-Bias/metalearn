@@ -5,16 +5,18 @@
 순수 계층: DB/ORM에 의존하지 않는다. 입력은 개념·근거 발췌 DTO, 출력은
 BlockDraft 리스트. 영속(blocks INSERT)은 repository가 담당한다.
 
-검증(§2.5A)의 현재 범위:
-  - 근거 게이트(can_mark_verified)만 강제 — book은 청크 ID, ai_prereq는 외부근거 ID 필수.
-  - 사실문장 대조(faithfulness LLM 콜)는 후속 작업(TODO). 인터페이스가 같아
-    이 파일의 _verify() 내부만 교체하면 된다.
+검증(§2.5A)의 범위:
+  - [게이트1] 근거 게이트(can_mark_verified) — book은 청크 ID, ai_prereq는 외부근거 ID 필수.
+  - [게이트2] faithfulness(§2.5A [3]) — 블록의 사실이 근거 발췌에 뒷받침되는지 Solar가
+    **블록 단위 1콜**로 판정(문장 단위 전수검증은 §4에서 금지). 명시적 불통과만 폐기하고,
+    판정 실패/파싱불가는 근거게이트로 관대 폴백(net-additive 필터). analogy는 면제.
   - LLM 출력이 파싱 불가/전부 폐기되면 근거 발췌를 그대로 인용하는 폴백 블록을
     만든다(지어내지 않고 청크 원문 기반 → 원칙 위반 아님).
 """
 from __future__ import annotations
 
 import json
+import logging
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -23,6 +25,8 @@ from pydantic import ValidationError
 
 from app.core.enums import ContentSource
 from app.core.llm.base import LLMClient
+
+logger = logging.getLogger(__name__)
 from app.core.verify_grade import can_mark_verified
 from app.features.learning.schemas import (
     AnalogyData,
@@ -217,6 +221,68 @@ def _fallback_blocks(inp: GenerationInput) -> list[dict]:
     ]
 
 
+# ── faithfulness 검증(§2.5A [3], 블록 단위 1콜) ──────────────────────────────
+# analogy는 면제(라벨 강제), reviewGate는 복습용 → 사실 블록만 대조.
+_FAITHFULNESS_TYPES = {"concept", "cloze", "mcq", "explainBack"}
+
+
+def _evidence_text(inp: GenerationInput) -> str:
+    """프롬프트에 넣은 것과 동일한 근거 발췌 텍스트(대조 기준)."""
+    lines: list[str] = []
+    if inp.concept_source == ContentSource.BOOK:
+        lines = [c.content[:800] for c in inp.chunks]
+    else:
+        lines = [f"{r.title or ''} {r.snippet or ''}".strip() for r in inp.external_refs]
+    return "\n".join(x for x in lines if x)
+
+
+def _block_claim_text(btype: str, data: dict) -> str:
+    """블록에서 사실성 대조 대상 텍스트를 뽑는다(정답·해설 포함)."""
+    if btype == "concept":
+        return " ".join(
+            str(data.get(k, "")) for k in ("title", "body", "whyItMatters")
+        )
+    if btype == "cloze":
+        return f"{data.get('text', '')} / 정답: {', '.join(data.get('blanks') or [])}"
+    if btype == "mcq":
+        opts = data.get("options") or []
+        ai = data.get("answerIndex")
+        ans = opts[ai] if isinstance(ai, int) and 0 <= ai < len(opts) else ""
+        return f"{data.get('question', '')} / 정답: {ans} / 해설: {data.get('explanation', '')}"
+    if btype == "explainBack":
+        return f"{data.get('prompt', '')} / 키포인트: {', '.join(data.get('rubric') or [])}"
+    return json.dumps(data, ensure_ascii=False)
+
+
+async def check_faithfulness(
+    llm: LLMClient, *, btype: str, data: dict, evidence: str
+) -> bool:
+    """블록 사실이 근거에 뒷받침되는지 Solar 판정(블록 단위 1콜).
+
+    명시적 `supported:false`만 불통과. 판정 실패/파싱불가/근거없음이 아닌 애매함은
+    관대하게 통과(근거 게이트는 이미 통과 → net-additive 필터).
+    """
+    if not evidence.strip():
+        return True  # 근거 없음은 게이트1에서 이미 걸러짐 → 여기선 관여 안 함
+    claim = _block_claim_text(btype, data)
+    prompt = (
+        "아래 [근거]만을 사실 기준으로 삼아 [블록]이 근거에 뒷받침되는지 판정하라.\n"
+        "근거에 없는 새로운 사실·수치·정의를 지어냈으면 불통과다. "
+        "표현이 달라도 의미가 근거로 뒷받침되면 통과다.\n\n"
+        f"[근거]\n{evidence[:2000]}\n\n[블록]\n{claim[:1200]}\n\n"
+        '반드시 JSON 하나로만: {"supported": true 또는 false, "reason": "간단히"}'
+    )
+    try:
+        raw = await llm.generate(prompt)
+    except Exception as exc:  # noqa: BLE001 — 판정 콜 실패 시 관대 통과(생성 붕괴 방지)
+        logger.warning("faithfulness 판정 콜 실패 → 관대 통과: %s", exc)
+        return True
+    m = re.search(r'"supported"\s*:\s*(true|false)', raw, re.IGNORECASE)
+    if m is None:
+        return True  # 파싱 불가 → 관대 통과
+    return m.group(1).lower() == "true"
+
+
 async def generate_section_blocks(
     llm: LLMClient, inp: GenerationInput
 ) -> list[BlockDraft]:
@@ -236,6 +302,8 @@ async def generate_section_blocks(
     if not items:
         items = _fallback_blocks(inp)
 
+    evidence = _evidence_text(inp)  # faithfulness 대조 기준(루프 밖 1회)
+
     drafts: list[BlockDraft] = []
     order = 0
     for item in items:
@@ -252,6 +320,14 @@ async def generate_section_blocks(
         )
         if not verified:
             continue  # 근거 없는 블록은 저장하지 않는다(서빙 금지보다 강한 폐기 정책)
+        # [게이트2] faithfulness — 사실 블록은 Solar가 근거 대조(블록 1콜). 불통과면 폐기.
+        if btype in _FAITHFULNESS_TYPES and not await check_faithfulness(
+            llm, btype=btype, data=data, evidence=evidence
+        ):
+            logger.info(
+                "faithfulness 불통과 폐기: type=%s concept=%s", btype, inp.concept_name
+            )
+            continue
         _, tracked = _TYPE_SPECS[btype]
         drafts.append(
             BlockDraft(
