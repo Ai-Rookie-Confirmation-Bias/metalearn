@@ -6,6 +6,7 @@ import { ConceptBlock } from "./ConceptBlock";
 import { ClozeBlock } from "./ClozeBlock";
 import { McqBlock } from "./McqBlock";
 import { ExplainBackBlock } from "./ExplainBackBlock";
+import { AnalogyBlock } from "./AnalogyBlock";
 
 // type → 렌더러. 새 블록 = types.ts에 data 추가 + 여기 case 추가가 전부.
 // (진단·복습·연결도 같은 봉투 type이라 이 함수 하나가 모든 화면의 토대)
@@ -13,6 +14,8 @@ function renderBody(block: LearningBlock, onAnswer: OnAnswer) {
   switch (block.type) {
     case "concept":
       return <ConceptBlock data={block.data} />;
+    case "analogy": // 읽기 전용(tracked 아님) — prereq 절이 비유만 있는 경우가 있어 폴백이 뜨던 타입
+      return <AnalogyBlock data={block.data} />;
     case "cloze":
       return (
         <ClozeBlock blockId={block.id} conceptId={block.conceptId} data={block.data} onAnswer={onAnswer} />

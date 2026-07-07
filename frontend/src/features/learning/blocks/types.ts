@@ -45,11 +45,16 @@ export type McqBlockData = {
 // ② 파인만 역질문 — 채점은 서버(Solar) rubric 대조. 지금은 mock
 export type ExplainBackBlockData = { title?: string; prompt: string; rubric?: string[] };
 
+// ① 비유 — 검증 면제 콘텐츠라 서버가 label("비유")을 강제(schemas.AnalogyData).
+// title은 봉투 공통 접근(BlockShell) 때문에 optional로만 존재, 서버는 안 보냄.
+export type AnalogyBlockData = { title?: string; label: string; text: string };
+
 export type LearningBlock =
   | Envelope<"concept", ConceptBlockData>
   | Envelope<"cloze", ClozeBlockData>
   | Envelope<"mcq", McqBlockData>
-  | Envelope<"explainBack", ExplainBackBlockData>;
+  | Envelope<"explainBack", ExplainBackBlockData>
+  | Envelope<"analogy", AnalogyBlockData>;
 
 export type BlockType = LearningBlock["type"];
 
