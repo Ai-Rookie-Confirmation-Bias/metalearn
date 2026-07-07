@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { clsx } from "clsx";
 import {
@@ -23,6 +23,7 @@ import { useCourseTree } from "@/features/learning/queries/useCourseTree";
 import { useSectionBlocks } from "@/features/learning/queries/useSectionBlocks";
 import { useSubmitAttempt } from "@/features/learning/queries/useSubmitAttempt";
 import { useGenerateChapter } from "@/features/learning/queries/useGenerateChapter";
+import { generateChapter } from "@/features/learning/api/generateChapter";
 import { useReadComplete } from "@/features/learning/queries/useReadComplete";
 
 // 학습 화면 — 3컬럼(커리큘럼 / 블록 / AI튜터). 데이터는 전부 백엔드:
@@ -82,6 +83,23 @@ export function LearningPage() {
   const currentSection = flatSections.find((s) => s.id === currentSectionId);
   const currentIndex = flatSections.findIndex((s) => s.id === currentSectionId);
   const nextSection = flatSections[currentIndex + 1];
+
+  // 다음 강의 프리페치(UX): 현재 챕터에 들어서는 순간, 다음 챕터가 아직 생성
+  // 전(pending)이면 백그라운드로 미리 생성 트리거 → 넘어갈 때 '생성 중' 없이
+  // 바로 뜬다(생성 ~1~2분이라 리드타임 확보 위해 절이 아니라 챕터 단위로 앞서
+  // 생성). 생성 API는 멱등이라 중복 호출 무해. 챕터당 1회만 시도.
+  const prefetchedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!currentChapter) return;
+    const idx = chapters.findIndex((c) => c.id === currentChapter.id);
+    const nextChapter = chapters[idx + 1];
+    if (!nextChapter || nextChapter.genStatus !== "pending") return;
+    if (prefetchedRef.current.has(nextChapter.id)) return;
+    prefetchedRef.current.add(nextChapter.id);
+    generateChapter(nextChapter.id)
+      .then(() => queryClient.invalidateQueries({ queryKey: ["courseTree"] }))
+      .catch(() => prefetchedRef.current.delete(nextChapter.id));
+  }, [currentChapter, chapters, queryClient]);
 
   // 완료/잠금 = 서버 진실(section_progress → tree.progressStatus)의 미러. 클라 계산 아님.
   const completedIds = useMemo(
