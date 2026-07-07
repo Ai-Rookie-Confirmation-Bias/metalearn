@@ -146,7 +146,10 @@ def _quiz_prompt(concept: Concept, excerpt: str | None = None) -> str:
         "유형(qtype) 선택:\n"
         '- "mcq": 4지선다 — 보기는 options 배열에 4개. question 본문에 1.2.3.4. 목록 넣지 말 것.\n'
         '- "cloze": 빈칸 인출 — ____ 포함, 번호 선택지 금지.\n'
-        '- "inverse": 역질문 자유 서술 — 4지선다·번호 목록 금지. (4지선다가 필요하면 mcq 사용)\n\n'
+        '- "inverse": 역질문 자유 서술 — 4지선다·번호 목록 금지. (4지선다가 필요하면 mcq 사용) '
+        "개념(설명)을 주고 그 **이름/용어**를 답하게 하는 형식이다. 개념이 사람이 "
+        "아니면 문두를 '누구'로 시작하지 말 것(예: '주장하는 사람은 누구인가?'는 "
+        "정답이 개념 '도덕적 주체'와 어긋나므로 금지 — '무엇인가?/무엇을 무엇이라 하는가?'로).\n\n"
         "유형별 JSON:\n"
         '- mcq: {"qtype":"mcq","question":str,"options":[str×4],"answer_index":0~3,"explanation":str}\n'
         '- cloze: {"qtype":"cloze","question":"... ____ ...","expected_answer":str,'
@@ -169,7 +172,9 @@ def _batch_quiz_prompt(
         f'출력 JSON: {{"concepts":[{{"concept_name":str,"items":[문항,...]}}]}}\n',
         f"각 concept_name은 아래 목록과 정확히 일치해야 한다. items는 정확히 {per_concept}개.\n",
         "문항 유형: mcq / cloze / inverse. 4지선다는 반드시 mcq(options 배열), "
-        "inverse/cloze에 1.2.3.4. 번호 목록 금지.\n",
+        "inverse/cloze에 1.2.3.4. 번호 목록 금지. inverse는 설명→개념 이름을 "
+        "답하는 형식이니, 개념이 사람이 아니면 문두를 '누구'로 시작하지 말 것"
+        "(정답이 개념인데 '누구인가?'로 물으면 잘못된 문항).\n",
         "유형별 items 원소:\n",
         '- mcq: {"qtype":"mcq","question":str,"options":[str×4],"answer_index":0~3,"explanation":str}\n',
         '- cloze: {"qtype":"cloze","question":"... ____ ...","expected_answer":str,'
@@ -821,14 +826,27 @@ class DiagnosticService:
         self, drafts: list[tuple[Concept, QuizDraft]]
     ) -> set[int]:
         """생성 문항 셀프체크 — 불합격 인덱스 집합. 검증 호출 실패는 비치명."""
+        # 결정적 가드(ISSUE-016): inverse는 "설명→개념 이름 맞히기"라 문두에
+        # '누구/누가'가 오면 거의 확실히 생성 오류(개념은 사람이 아님). LLM
+        # 유형 검증이 'agent'류 개념('도덕적 주체' 등)에 확률적으로 놓치는 것을
+        # 100% 보완. person 마커가 정답에 있으면(인물 개념) 예외로 통과.
+        invalid: set[int] = set()
+        for i, (_concept, draft) in enumerate(drafts):
+            if getattr(draft, "qtype", "") != "inverse":
+                continue
+            if re.search(r"누구|누가", draft.question or ""):
+                ans = str(getattr(draft, "expected_answer", "") or "")
+                if not re.search(r"사람|인물|학자|과학자|개발자|철학자|교수|박사|팀|집단|회사|기업|정부|기관", ans):
+                    invalid.add(i)
+                    _log.info("문항 검증 불합격 [%d] inverse '누구'↔비인물 정답: %r", i, ans)
+
         try:
             raw = await solar_client.generate_json(
                 _verify_prompt(drafts), system=_VERIFY_SYSTEM, timeout=240.0
             )
         except Exception as exc:  # noqa: BLE001
             _log.warning("문항 검증 호출 실패 — 검증 생략: %s", exc)
-            return set()
-        invalid: set[int] = set()
+            return invalid
         for review in raw.get("reviews") or []:
             if not isinstance(review, dict):
                 continue
