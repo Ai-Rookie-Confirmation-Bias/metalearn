@@ -15,6 +15,7 @@ BlockDraft 리스트. 영속(blocks INSERT)은 repository가 담당한다.
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -295,7 +296,9 @@ async def generate_section_blocks(
 
     items: list[dict] = []
     for _attempt in range(2):  # 생성 1회 + 재생성 1회
-        raw = await llm.generate(build_prompt(inp))
+        # json_mode: 응답을 JSON으로 강제 → 파싱 실패로 인한 재생성(콜 2배) 확률 축소.
+        # 방어 파싱(parse_llm_blocks)은 그대로 유지(이중 안전망).
+        raw = await llm.generate(build_prompt(inp), json_mode=True)
         items = parse_llm_blocks(raw)
         if items:
             break
@@ -304,8 +307,8 @@ async def generate_section_blocks(
 
     evidence = _evidence_text(inp)  # faithfulness 대조 기준(루프 밖 1회)
 
-    drafts: list[BlockDraft] = []
-    order = 0
+    # [게이트1] 규격 코어스 + 근거 게이트 — 통과분만 faithfulness 후보로.
+    candidates: list[tuple[str, dict, str, str, list[uuid.UUID], list[uuid.UUID]]] = []
     for item in items:
         coerced = _coerce_block(item)
         if coerced is None:
@@ -320,10 +323,23 @@ async def generate_section_blocks(
         )
         if not verified:
             continue  # 근거 없는 블록은 저장하지 않는다(서빙 금지보다 강한 폐기 정책)
-        # [게이트2] faithfulness — 사실 블록은 Solar가 근거 대조(블록 1콜). 불통과면 폐기.
-        if btype in _FAITHFULNESS_TYPES and not await check_faithfulness(
-            llm, btype=btype, data=data, evidence=evidence
-        ):
+        candidates.append((btype, data, difficulty, source, use_chunks, use_refs))
+
+    # [게이트2] faithfulness — 블록별 Solar 판정을 동시 실행(직렬 대기 제거). 불통과면 폐기.
+    # check_faithfulness가 예외를 내부에서 관대 통과로 흡수하므로 gather에 안전하다.
+    async def _passes(btype: str, data: dict) -> bool:
+        if btype not in _FAITHFULNESS_TYPES:
+            return True
+        return await check_faithfulness(llm, btype=btype, data=data, evidence=evidence)
+
+    passes = await asyncio.gather(*(_passes(b, d) for b, d, *_ in candidates))
+
+    drafts: list[BlockDraft] = []
+    order = 0
+    for (btype, data, difficulty, source, use_chunks, use_refs), ok in zip(
+        candidates, passes
+    ):
+        if not ok:
             logger.info(
                 "faithfulness 불통과 폐기: type=%s concept=%s", btype, inp.concept_name
             )

@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 _RETRYABLE = {429, 500, 502, 503, 504}
 _MAX_RETRIES = 4
 _TIMEOUT = 120.0
+_MAX_CONCURRENT = 8  # 프로세스 전역 동시 요청 상한 — 챕터 병렬 생성 시 429 방지
 
 
 class SolarClient(LLMClient):
@@ -24,16 +25,33 @@ class SolarClient(LLMClient):
         }
         self._base = settings.SOLAR_BASE_URL
         self._model = settings.SOLAR_MODEL
+        self._client: httpx.AsyncClient | None = None
+        self._sem = asyncio.Semaphore(_MAX_CONCURRENT)
 
-    async def _post(self, path: str, payload: dict) -> dict:
-        last_error: Exception | None = None
-        for attempt in range(_MAX_RETRIES):
-            async with httpx.AsyncClient(
+    def _get_client(self) -> httpx.AsyncClient:
+        """공유 커넥션 풀(keep-alive) — 콜마다 TCP+TLS 핸드셰이크 반복 방지."""
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(
                 base_url=self._base,
                 headers=self._headers,
                 timeout=_TIMEOUT,
-            ) as client:
-                resp = await client.post(path, json=payload)
+            )
+        return self._client
+
+    async def aclose(self) -> None:
+        """앱 종료 시 커넥션 풀 정리(main.py lifespan에서 호출)."""
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+
+    async def _post(self, path: str, payload: dict) -> dict:
+        # 세마포어는 백오프 sleep 동안에도 잡는다 — 429 상황에서 신규 유입까지 줄이는 의도.
+        async with self._sem:
+            return await self._post_with_retry(path, payload)
+
+    async def _post_with_retry(self, path: str, payload: dict) -> dict:
+        last_error: Exception | None = None
+        for attempt in range(_MAX_RETRIES):
+            resp = await self._get_client().post(path, json=payload)
 
             if resp.status_code in _RETRYABLE:
                 wait = 2**attempt

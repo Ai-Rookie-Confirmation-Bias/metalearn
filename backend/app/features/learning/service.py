@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -131,13 +132,17 @@ def initialize_placement(
 
 
 # ── JIT 생성 ─────────────────────────────────────────────────────────────────
-async def _generate_one_section(
+async def _prepare_generation_input(
     db: Session, *, section, course, user_id: uuid.UUID
-) -> int:
-    """절 하나 생성→검증→저장. 반환: 저장된 블록 수."""
+) -> GenerationInput | None:
+    """절 하나의 생성 입력(근거·난이도)을 수집한다. 개념 없으면 None.
+
+    DB 접근은 전부 이 직렬 수집 단계에 모은다 — sync Session은 태스크 간 동시
+    사용이 안전하지 않으므로, 병렬 구간에는 순수 계층(generator)만 태운다(원칙 ①).
+    """
     concept = repo.get_concept(db, section.concept_id) if section.concept_id else None
     if concept is None:
-        return 0
+        return None
 
     # 근거 확보(§2.5A [1]) — book은 청크(RAG), ai_prereq는 외부근거
     # RAG(ISSUE-004): 개념을 query 임베딩 → 청크(passage) cosine top-K. 임베딩 없으면 키워드 폴백.
@@ -166,25 +171,23 @@ async def _generate_one_section(
         # strength 기반 근사: 약하면 기초(1), 강하면 심화(3)
         difficulty_hint = 1 if mastery.strength < 0.35 else (3 if mastery.strength >= 0.7 else 2)
 
-    drafts = await generate_section_blocks(
-        get_llm_client(),
-        GenerationInput(
-            concept_name=concept.name,
-            concept_description=concept.description,
-            concept_source=concept.source,
-            chunks=chunks,
-            external_refs=ext_refs,
-            difficulty_hint=difficulty_hint,
-        ),
+    return GenerationInput(
+        concept_name=concept.name,
+        concept_description=concept.description,
+        concept_source=concept.source,
+        chunks=chunks,
+        external_refs=ext_refs,
+        difficulty_hint=difficulty_hint,
     )
-    repo.replace_section_blocks(
-        db, section_id=section.id, concept_id=concept.id, drafts=drafts
-    )
-    return len(drafts)
 
 
 async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> None:
-    """백그라운드 태스크 본체. 자체 세션을 열고 끝나면 ready/failed 마킹."""
+    """백그라운드 태스크 본체. 자체 세션을 열고 끝나면 ready/failed 마킹.
+
+    3단계 파이프라인: [수집(직렬 DB)] → [생성(절 단위 병렬 LLM)] → [저장(직렬 DB)].
+    절을 순차로 돌리면 챕터당 LLM 콜이 전부 직렬이라, LLM 구간만 gather로 병렬화.
+    동시 요청 상한은 Solar 클라이언트 전역 세마포어가 잡는다(429 방지).
+    """
     db = SessionLocal()
     try:
         chapter = repo.get_chapter(db, chapter_id)
@@ -195,11 +198,33 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
             repo.set_gen_status(db, chapter_id, GenStatus.FAILED)
             return
 
-        total = 0
+        # [수집] 절별 생성 입력 — DB·임베딩(직렬)
+        plans: list[tuple[object, GenerationInput]] = []
         for section in repo.get_chapter_sections(db, chapter_id):
-            total += await _generate_one_section(
+            inp = await _prepare_generation_input(
                 db, section=section, course=course, user_id=user_id
             )
+            if inp is not None:
+                plans.append((section, inp))
+
+        # [생성] 순수 계층만 병렬 실행 — 한 절이 실패해도 나머지는 계속(부분 성공 허용)
+        results = await asyncio.gather(
+            *(generate_section_blocks(get_llm_client(), inp) for _, inp in plans),
+            return_exceptions=True,
+        )
+
+        # [저장] 직렬 저장
+        total = 0
+        for (section, _), drafts in zip(plans, results):
+            if isinstance(drafts, BaseException):
+                logger.error(
+                    "절 생성 실패 — 건너뜀: section=%s", section.id, exc_info=drafts
+                )
+                continue
+            repo.replace_section_blocks(
+                db, section_id=section.id, concept_id=section.concept_id, drafts=drafts
+            )
+            total += len(drafts)
         db.commit()
         # 블록이 하나도 안 나오면 실패로 마킹(범위 갭 — 서빙할 게 없음)
         repo.set_gen_status(
