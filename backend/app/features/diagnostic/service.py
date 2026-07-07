@@ -253,15 +253,23 @@ class DiagnosticService:
             # 아닌 개념. 나머지는 잠금 — 섹션 계층 문서에선 섹션 노드만 메인이 된다.
             sub_ids = self.repo.get_all_sub_ids(concept_ids)
             main_concepts = [c for c in concepts if c.id not in sub_ids]
+            # 진단 스코핑(회의 2026-07-05, parsing 리뷰 대상): 초반 메인 +
+            # 선수 방향 기반지식만 타겟. 타겟 외 개념은 전부 잠금(출제 제외)
+            # — mastery는 사전값/전파 로직 그대로 둔다.
+            targets = self._select_diag_targets(
+                main_concepts, {c.id: c for c in concepts}
+            )
+            target_ids = {c.id for c in targets}
+            locked_ids = {cid for cid in concept_ids if cid not in target_ids}
             self.repo.create_masteries(
                 user_id=course.user_id,
                 session_id=session.id,
                 concept_ids=concept_ids,
                 strength_init=settings.BKT_P_INIT,
-                locked_ids=sub_ids,
+                locked_ids=locked_ids,
             )
-            # 비용 최소화: 시작 시엔 메인 개념 문항만 생성. 하위는 오답 시 지연 생성.
-            await self._ensure_questions(session.id, main_concepts)
+            # 비용 최소화: 시작 시엔 타겟 문항만 생성. 하위는 오답 시 지연 생성.
+            await self._ensure_questions(session.id, targets)
         else:
             self.repo.create_masteries(
                 user_id=course.user_id,
@@ -498,6 +506,17 @@ class DiagnosticService:
         if active is not None:
             return active
 
+        # 진단 스코핑(회의 2026-07-05, parsing 리뷰 대상): 세션 총 문항 하드캡.
+        # 캡 도달 시 새 문항을 내지 않고 종료 — 남은 미확정 개념은 이미 반영된
+        # 그래프 전파/사전값(P_INIT)으로 마무리한다 (억지 확정 없음).
+        if (
+            self.repo.count_answered_questions(session.id)
+            >= settings.DIAG_MAX_TOTAL_QUESTIONS
+        ):
+            if session.status != "completed":
+                self.repo.complete_session(session)
+            return None
+
         sole = self.repo.get_sole_unanswered(session.id)
         if sole is not None and not sole.is_active:
             sole.is_active = True
@@ -521,6 +540,51 @@ class DiagnosticService:
         pool_q.is_active = True
         self.db.flush()
         return pool_q
+
+    def _select_diag_targets(
+        self,
+        main_concepts: list[Concept],
+        concepts_by_id: dict[uuid.UUID, Concept],
+    ) -> list[Concept]:
+        """진단 시작 타겟 선정 — 회의 결정(2026-07-05) 구현 제안, parsing 리뷰 대상.
+
+        진단의 목적 = 시작점(floor) 찾기 + 학습 전 기반지식 결손 확인:
+          - 커리큘럼 진행선 '앞부분' 메인 개념 순서대로 (뒷부분은 출제 안 함 —
+            시작점 판정에 불필요, ceiling은 기본 문서 끝)
+          - + 그 메인들의 선수 방향(depth_level 큰 쪽 = 더 기초) 개념 소수:
+            "이 문서를 배우기 전에 알아야 할 기반지식" 프록시
+        메인 수가 상한 이하인 소형 코스는 전원 출제(기존 동작으로 퇴화).
+        """
+        cap = min(settings.DIAG_MAX_MAIN_CONCEPTS, settings.DIAG_MAX_TOTAL_QUESTIONS)
+        if len(main_concepts) <= cap:
+            return list(main_concepts)
+
+        probe_quota = min(settings.DIAG_PREREQ_PROBE_COUNT, max(cap - 1, 0))
+        front_quota = cap - probe_quota
+        front_mains = main_concepts[:front_quota]
+        seen = {c.id for c in front_mains}
+
+        # 선수 방향 후보: 초반 메인의 직접 선수(prerequisite).
+        # depth_level 큰(더 기초) 순으로 우선 — 기반지식 결손을 먼저 찌른다.
+        probes: list[Concept] = []
+        for main in front_mains:
+            for pid in self.repo.get_prerequisite_ids(main.id):
+                candidate = concepts_by_id.get(pid)
+                if candidate is None or candidate.id in seen:
+                    continue
+                seen.add(candidate.id)
+                probes.append(candidate)
+        probes.sort(key=lambda c: -(c.depth_level or 0))
+        targets = front_mains + probes[:probe_quota]
+
+        # 선수 엣지가 부족하면 커리큘럼 초반 메인으로 상한까지 채운다.
+        for c in main_concepts[front_quota:]:
+            if len(targets) >= cap:
+                break
+            if c.id not in seen:
+                seen.add(c.id)
+                targets.append(c)
+        return targets
 
     def _pick_target(self, masteries: list[ConceptMastery]) -> ConceptMastery | None:
         """미확정·미잠금 개념 중 불확실성(p≈0.5)이 가장 큰 노드.
@@ -572,9 +636,21 @@ class DiagnosticService:
         prereq_ids = self.repo.get_prerequisite_ids(concept_id)
         child_ids = self.repo.get_contains_child_ids(concept_id)
         sample_ids = child_ids[: settings.BKT_GATED_CONTAINS_SAMPLE]
-        rest_ids = child_ids[len(sample_ids):]
 
-        unlock_ids = prereq_ids + sample_ids
+        # 진단 스코핑(회의 2026-07-05, parsing 리뷰 대상): 총 문항 캡의 잔여분
+        # 만큼만 하위를 잠금 해제 — 어차피 못 물어볼 문항은 생성(LLM 비용)도
+        # 하지 않는다. 해제되지 못한 하위의 mastery는 기존 하향 전파/사전값
+        # 로직 그대로.
+        remaining_budget = max(
+            0,
+            settings.DIAG_MAX_TOTAL_QUESTIONS
+            - self.repo.count_answered_questions(session_id),
+        )
+        unlock_ids = (prereq_ids + sample_ids)[:remaining_budget]
+        unlocked = set(unlock_ids)
+        # 출제되지 않는 섹션 하위(대표 샘플 탈락 + 캡 탈락) → 하향 전파만.
+        rest_ids = [cid for cid in child_ids if cid not in unlocked]
+
         if not unlock_ids and not rest_ids:
             return
 
