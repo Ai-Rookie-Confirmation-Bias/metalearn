@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
-from app.core.enums import ChapterOrigin, EdgeKind, GenStatus
+from app.core.enums import ChapterOrigin, EdgeKind, GenStatus, MasteryStatus
 from app.features.curriculum.models import Chapter, Section
 from app.features.learning.generator import BlockDraft, ChunkExcerpt, ExternalRefInput
 from app.features.learning.models import (
@@ -277,32 +277,44 @@ def seed_mastery_if_absent(
 ) -> tuple[int, int]:
     """concept_mastery 초기 시딩. seeds=[(concept_id, status, strength), ...].
 
-    멱등: 이미 행이 있는 개념(=학습 진행 중)은 건드리지 않고 보존한다.
-    반환: (신규 시딩 수, 보존/스킵 수).
+    진단↔커리큘럼 화해(ISSUE-013, 병합 v2): 진단(BKT)이 모든 개념의 mastery
+    행을 status='locked'(기본값)으로 미리 만들어 두면, 예전 'if_absent'는
+    전부 스킵해 커리큘럼이 status를 못 깔았다(전 개념 locked → 콘텐츠 미표시).
+    이제 **기본 locked 상태인 행은 placement status로 갱신**하고, 실제 학습이
+    진행된 행(status가 todo/learning/mastered로 이미 바뀐 것)은 보존한다.
+    반환: (신규+갱신 수, 보존/스킵 수).
     """
-    existing = set(
-        db.scalars(
-            select(ConceptMastery.concept_id).where(
-                ConceptMastery.user_id == user_id
-            )
+    existing: dict[uuid.UUID, ConceptMastery] = {
+        m.concept_id: m
+        for m in db.scalars(
+            select(ConceptMastery).where(ConceptMastery.user_id == user_id)
         )
-    )
-    rows: list[ConceptMastery] = []
+    }
+    applied = 0
+    new_rows: list[ConceptMastery] = []
     for concept_id, status, strength in seeds:
-        if concept_id in existing:
-            continue
-        rows.append(
-            ConceptMastery(
-                user_id=user_id,
-                concept_id=concept_id,
-                status=status,
-                strength=strength,
+        row = existing.get(concept_id)
+        if row is None:
+            new_rows.append(
+                ConceptMastery(
+                    user_id=user_id,
+                    concept_id=concept_id,
+                    status=status,
+                    strength=strength,
+                )
             )
-        )
-    if rows:
-        db.add_all(rows)
-        db.flush()
-    return len(rows), len(seeds) - len(rows)
+            applied += 1
+        elif row.status == MasteryStatus.LOCKED:
+            # 진단이 만들어 둔 기본 locked 행 → placement 판정으로 status 확정.
+            # strength는 진단 신호가 있으면(>기본값) 보존, 없으면 placement 값.
+            row.status = status
+            if not row.strength or row.strength <= strength:
+                row.strength = strength
+            applied += 1
+    if new_rows:
+        db.add_all(new_rows)
+    db.flush()
+    return applied, len(seeds) - applied
 
 
 # ── 원인 국소화(BKT×DAG, ISSUE-010) ──────────────────────────────────────────

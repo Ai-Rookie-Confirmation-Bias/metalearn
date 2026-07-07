@@ -112,6 +112,46 @@ async def grade_explain_back_llm(
     return ExplainBackGrade(score=score, missed_points=missed, comment=comment)
 
 
+_CLOZE_JUDGE_SYSTEM = (
+    "너는 빈칸 채우기 채점관이다. 학습자 답이 정답과 의미상 같은지만 판정한다. "
+    "출력은 JSON만."
+)
+
+
+async def grade_cloze_llm(
+    llm: LLMClient, *, text: str, blanks: list[str], user_input: str
+) -> bool:
+    """빈칸 의미 채점(폴백) — 정확일치가 실패했을 때만 호출.
+
+    자유서술 빈칸(수식·개념)은 표기·어순·동의어 차이로 정확일치가 자주 실패한다
+    (ISSUE-016③ 계보: 진단엔 이미 LLM 심판 폴백이 있으나 학습 채점엔 없었음).
+    LLM이 의미 동등성만 본다. 호출/파싱 실패 시 False(정확일치 결과 유지)."""
+    prompt = (
+        "너는 빈칸 채우기 채점관이다. 학습자 답이 정답과 의미상 같은지만 판정한다.\n"
+        "빈칸 문장에서 학습자 답이 정답과 의미상 일치하는지 판정하라.\n"
+        f"문장: {text}\n"
+        f"정답(빈칸 순서대로): {blanks}\n"
+        f"학습자 답: {user_input}\n"
+        "인정: 표기 차이(공백·기호·괄호), 어순, 동의어, 수식의 다른 표기"
+        "(예: 'f''(a)=0'와 'f''(a) = 0', '√(ax²+ay²)'와 'sqrt(ax^2+ay^2)'). "
+        "핵심 의미·값이 다르면 오답.\n"
+        '출력 JSON: {"correct": true|false}'
+    )
+    try:
+        raw = await llm.generate(prompt, system=_CLOZE_JUDGE_SYSTEM, json_mode=True)
+        cleaned = raw.strip()
+        fence = re.search(r"```(?:json)?\s*(.+?)\s*```", cleaned, re.DOTALL)
+        if fence:
+            cleaned = fence.group(1).strip()
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        if start == -1 or end == -1:
+            return False
+        return bool(json.loads(cleaned[start : end + 1]).get("correct"))
+    except Exception:
+        logger.exception("cloze LLM 채점 실패 — 정확일치 결과 유지")
+        return False
+
+
 async def grade_block(
     llm: LLMClient, *, block_type: str, block_data: dict, user_input: object
 ) -> GradeResult:
@@ -131,7 +171,17 @@ async def grade_block(
             raise ValueError("cloze 블록에 정답 데이터가 없습니다")
         if isinstance(user_input, list):
             user_input = ",".join(str(v) for v in user_input)
-        return GradeResult(correct=grade_cloze(str(user_input), list(blanks)))
+        user_input = str(user_input)
+        # 빠른 경로: 정규화 정확일치. 실패 시에만 LLM 의미 채점(비용 절약).
+        correct = grade_cloze(user_input, list(blanks))
+        if not correct:
+            correct = await grade_cloze_llm(
+                llm,
+                text=str(block_data.get("text") or ""),
+                blanks=[str(b) for b in blanks],
+                user_input=user_input,
+            )
+        return GradeResult(correct=correct)
 
     if block_type in ("explainBack", "reviewGate"):
         rubric = list(block_data.get("rubric") or [])
