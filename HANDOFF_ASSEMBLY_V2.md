@@ -1,6 +1,6 @@
 # 병합 v2 인계 — parsing 신규 4기능을 full-assembly 위에 포팅
 
-> 작성: 2026-07-07 · 브랜치: `trial/full-assembly-v2` (parsing 측)
+> 작성: 2026-07-07 · 갱신: 2026-07-08(실사용 테스트 후속, §5) · 브랜치: `trial/full-assembly-v2` (parsing 측)
 > 베이스: `trial/full-assembly`(yoonhs) — UUID 코어 + parsing 옛 파이프라인 + 프론트 배선
 > **이 브랜치 = 베이스 + parsing이 그 뒤 만든 4기능(배치고사·external_refs·비동기 ingest·슬러그)을 UUID로 포팅.**
 > 바로 병합용 아님 — 리뷰 + 협의용. 마이그레이션 스쿼시는 양측 동시(단독 금지).
@@ -53,13 +53,52 @@
 
 ## 4. 협의 필요
 
-1. 팀원 스코핑 진단(`_select_diag_targets`, `/diagnostic/start`) — 배치고사로 대체됐으니 삭제할지, config로 병존할지
+1. 팀원 스코핑 진단(`_select_diag_targets`, `/diagnostic/start`) — 배치고사로 대체됐으니 삭제할지, config로 병존할지. **§5-1과 연결**: 스코핑 진단이 전 개념 mastery를 선생성해 커리큘럼 잠금 충돌을 유발 — 배치고사로 일원화하면 근원 해소.
 2. seed 2단계(`/tree`·`/placement`)와 팀원 `/build`·커리큘럼 `/courses/{id}/placement`(학습 mastery 시드) — 이름/역할 경계 정리 ("placement"가 두 뜻)
-3. bcrypt/dev-유저 수정 반영 여부 (2번 항목)
+3. bcrypt/dev-유저 수정 반영 여부 (§2 항목)
 4. `concepts.key` NOT NULL 복원 시점 (이제 추출 동시 산출이라 대부분 채워짐)
-5. 마이그레이션 스쿼시 (양측 동시)
+5. **§5의 통합 수정 3건(ISSUE-013 잠금 해제·빈칸 LLM 채점·업로드 폴링) 리뷰** — 팀원 학습 코드(`learning/repository.py`·`grading.py`)를 건드렸으므로 담당 확인 요망
+6. 마이그레이션 스쿼시 (양측 동시)
 
-## 5. 실행법
+## 5. 실사용 테스트 후속 발견 (2026-07-08) — 통합 버그 3 + UX 1
+
+포팅 후 프론트(55173)로 실제 정처기 PDF를 업로드→진단→커리큘럼→학습까지
+사람이 눌러보며 발견. **§3 클린 E2E가 못 잡은 것들** — 전부 진단/씨앗(parsing)과
+학습(팀원)이 만나는 경계라 병합 화해 성격. 이 브랜치에 수정+커밋 완료.
+
+1. **[🔴 통합] 진단 후 커리큘럼 콘텐츠 전부 잠김 (ISSUE-013)** — 커밋 `42de0bc`
+   - 증상: 진단 10문항 완료 후 커리큘럼 들어가면 내용이 안 뜸.
+   - 원인: 진단(BKT)이 `concept_mastery` 전 행을 `status='locked'`(기본값)로 미리
+     생성 → 커리큘럼 `initialize_placement`의 `seed_mastery_if_absent`가 "이미
+     있음"으로 전부 스킵 → status를 못 깔아 전 절 잠김. **팀원이 `initialize_placement`
+     docstring에 예고한 바로 그 ISSUE-013 지점** (진단/커리큘럼을 각자 검증해 미발견).
+   - 수정(`learning/repository.py`): 기본 locked 행은 placement 판정으로 status 갱신,
+     실제 학습 진행된 행(todo/learning/mastered)은 보존. 프론트는 이미 진단 후
+     `seed build → placement`를 부르므로 이 수정만으로 자동 해소.
+   - 실측: 정처기 982행 전부 locked → mastered 3/todo 28/locked 951, 콘텐츠 렌더 확인.
+   - ⚠️ **참고**: 내 배치고사(placement.py)는 응답 개념만 mastery를 만들어 이 충돌이
+     없다. 팀원 스코핑 진단(전 개념 선생성)이 이 문제의 근원 — §4-1 협의와 연결.
+
+2. **[🟡 통합] 빈칸 서답형 오채점 (ISSUE-016③ 계보)** — 커밋 `42de0bc`
+   - 증상: 옳은 답을 넣어도 "틀린 빈칸" 처리.
+   - 원인: 자유서술 빈칸(수식·개념)이 정규화 완전일치만 인정 → 표기 차이로 오답
+     (예: `f''(a)=0` vs `f''(a) = 0`). 진단엔 LLM 심판 폴백이 있으나 학습 채점엔 없었음.
+   - 수정(`learning/grading.py`): 정확일치 실패 시에만 LLM 의미 채점(비용 절약).
+     실측: 표기변형 인정, `0`·`f''(a)>0` 등 진짜 오답은 거름.
+
+3. **[🟡 회귀] 비동기 ingest가 프론트 동기 가정을 깸** — 커밋 `7260721`
+   - 증상: 업로드 직후 진단 호출이 400(개념 추출 전).
+   - 원인: 비동기 ingest가 즉시 `processing` 반환 → 프론트가 완료로 오인하고 진단 진입.
+   - 수정(`uploadDocument.ts`): course status를 ready까지 폴링 후 반환(계약 불변).
+     모든 업로드 경로가 이 함수 하나를 거쳐 일괄 해소.
+
+4. **[🟢 UX] 다음 강의 '생성 중' 대기 제거** — 커밋 `765b23a`
+   - 요청: 절 끝나고 다음 강의로 넘어갈 때 '생성 중' 없이 바로 뜨게.
+   - 수정(`LearningPage.tsx`): 현재 챕터 진입 시 다음 챕터가 pending이면 백그라운드
+     생성 미리 트리거(멱등, 챕터당 1회). JIT 생성 ~1~2분이라 챕터 단위로 앞서 생성.
+   - 한계: 챕터가 짧고 아주 빨리 풀면 생성이 못 끝날 수 있음 → 필요 시 2챕터 앞서로 확대.
+
+## 6. 실행법
 
 ```bash
 docker compose -p mlv2 -f docker-compose.yml -f docker-compose.trial.yml up -d
