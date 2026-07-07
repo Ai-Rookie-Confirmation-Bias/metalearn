@@ -4,7 +4,6 @@ import { useNavigate } from "react-router-dom";
 import { Button } from "@/shared/ui/Button";
 import { useUploadDocument } from "@/features/documents/queries/useUploadDocument";
 import type { CourseDetail } from "@/features/documents/types";
-import { useFlowStore } from "@/shared/store/flowStore";
 import { apiErrorMessage } from "@/shared/api/errors";
 
 function ConceptGraph({ course }: { course: CourseDetail }) {
@@ -77,7 +76,6 @@ export function UploadPanel() {
   const [file, setFile] = useState<File | null>(null);
   const [title, setTitle] = useState("");
   const { mutate, data, isPending, error } = useUploadDocument();
-  const setCourse = useFlowStore((s) => s.setCourse);
   const navigate = useNavigate();
 
   function handleUpload() {
@@ -86,10 +84,9 @@ export function UploadPanel() {
       { file, title: title || undefined },
       {
         onSuccess: (course) => {
-          setCourse(
-            course.id,
-            course.concepts.map((c) => ({ id: c.id, name: c.name })),
-          );
+          // 레거시 랩(미라우팅): flowStore가 숫자 id라 UUID를 못 담음 — 연동 보류.
+          // 실사용 흐름은 CreateCoursePage → /diagnosis/:courseId.
+          void course;
         },
       },
     );

@@ -1,9 +1,10 @@
 // 백엔드 Pydantic DTO(diagnostic/schemas.py)와 1:1 대응.
+// UUID 포팅: 모든 id는 서버가 UUID 문자열로 내려준다 (기존 int → string).
 export type QuestionType = "mcq" | "cloze" | "inverse";
 
 export interface QuestionOut {
-  id: number;
-  concept_id: number;
+  id: string;
+  concept_id: string;
   concept_name: string;
   qtype: QuestionType;
   question: string;
@@ -11,7 +12,7 @@ export interface QuestionOut {
 }
 
 export interface MasteryOut {
-  concept_id: number;
+  concept_id: string;
   concept_name: string;
   strength: number;
   resolved: boolean;
@@ -24,7 +25,7 @@ export interface Progress {
 }
 
 export interface SessionState {
-  session_id: number;
+  session_id: string;
   status: string;
   done: boolean;
   progress: Progress;

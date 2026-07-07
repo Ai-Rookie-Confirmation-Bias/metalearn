@@ -11,6 +11,7 @@ import { AnalysisPage } from "@/pages/AnalysisPage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
+import { DiagnosisPage } from "@/pages/DiagnosisPage";
 
 // URL 기반 페이지 매핑 지도
 // 두 개의 셸: App(마케팅 헤더) / AppLayout(로그인 후 사이드바). 사이드바는 고정, 본문만 교체.
@@ -41,4 +42,6 @@ export const router = createBrowserRouter([
   },
   // 수업 생성 위저드 — 셸 없는 전체화면 집중 플로우
   { path: "/create", element: <CreateCoursePage /> },
+  // 수준 진단 — 업로드 직후(또는 책장 CTA) 진입하는 전체화면 집중 플로우
+  { path: "/diagnosis/:courseId", element: <DiagnosisPage /> },
 ]);

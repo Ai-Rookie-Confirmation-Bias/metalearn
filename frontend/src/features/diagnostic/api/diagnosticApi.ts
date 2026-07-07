@@ -6,7 +6,7 @@ import type { AnswerResult, SessionState } from "@/features/diagnostic/types";
 // 일어날 수 있어 넉넉히(백엔드 생성 타임아웃 120s × 2 여유).
 const _TIMEOUT = 240_000;
 
-export async function startDiagnostic(courseId: number): Promise<SessionState> {
+export async function startDiagnostic(courseId: string): Promise<SessionState> {
   const { data } = await apiClient.post<SessionState>(
     "/api/diagnostic/start",
     { course_id: courseId },
@@ -15,7 +15,7 @@ export async function startDiagnostic(courseId: number): Promise<SessionState> {
   return data;
 }
 
-export async function fetchState(sessionId: number): Promise<SessionState> {
+export async function fetchState(sessionId: string): Promise<SessionState> {
   const { data } = await apiClient.get<SessionState>(`/api/diagnostic/${sessionId}`, {
     timeout: _TIMEOUT,
   });
@@ -28,8 +28,8 @@ export interface AnswerInput {
 }
 
 export async function submitAnswer(
-  sessionId: number,
-  questionId: number,
+  sessionId: string,
+  questionId: string,
   input: AnswerInput,
 ): Promise<AnswerResult> {
   const { data } = await apiClient.post<AnswerResult>(

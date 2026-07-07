@@ -10,6 +10,7 @@ export type Material = {
   name: string; // 파일명 또는 링크 URL
   kind: DocumentKind;
   role: "primary" | "supplementary";
+  file?: File; // 실제 업로드할 파일 객체 (링크는 없음)
 };
 
 // POST /courses 요청 바디 모양 (백엔드 붙으면 이대로 전송).

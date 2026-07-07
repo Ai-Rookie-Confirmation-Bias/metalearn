@@ -1,5 +1,7 @@
 // [3단계] 순수 UI. queries만 호출. BKT 진단 루프(시작→문항→채점→다음)를 구동.
 // 문항 유형별 렌더: mcq=보기 버튼 / cloze·inverse=텍스트 인출 입력.
+// ⚠️ 레거시 랩 화면(미라우팅). 실사용 진단 흐름은 pages/DiagnosisPage.tsx(/diagnosis/:courseId).
+//    UUID 포팅으로 flowStore(숫자 id) 연동은 끊어 둠 — 랩 복구 시 flowStore도 UUID로 올릴 것.
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 
@@ -27,7 +29,7 @@ const QTYPE_LABEL: Record<QuestionType, string> = {
 };
 
 /** 진단 완료 후 커리큘럼 대상: 가장 약한(모름) 개념 우선, 없으면 strength 최저. */
-function pickWeakestForCurriculum(masteries: MasteryOut[]): number {
+function pickWeakestForCurriculum(masteries: MasteryOut[]): string {
   const unknown = masteries.filter((m) => m.resolved && m.strength < 0.5);
   const pool = unknown.length > 0 ? unknown : masteries;
   return [...pool].sort((a, b) => a.strength - b.strength)[0].concept_id;
@@ -38,7 +40,7 @@ function MasteryBadge({
   onCurriculum,
 }: {
   m: MasteryOut;
-  onCurriculum: (conceptId: number) => void;
+  onCurriculum: (conceptId: string) => void;
 }) {
   const pct = Math.round(m.strength * 100);
   let label = `측정 중 ${pct}%`;
@@ -85,15 +87,12 @@ function MasteryBadge({
 
 export function DiagnosticPanel() {
   const flowCourseId = useFlowStore((s) => s.courseId);
-  const setFlowSession = useFlowStore((s) => s.setSession);
-  const setFlowConcept = useFlowStore((s) => s.setConcept);
-  const setAutoGenerateCurriculum = useFlowStore((s) => s.setAutoGenerateCurriculum);
   const navigate = useNavigate();
 
   const [courseId, setCourseId] = useState(
     flowCourseId ? String(flowCourseId) : "",
   );
-  const [sessionId, setSessionId] = useState<number | null>(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [question, setQuestion] = useState<QuestionOut | null>(null);
   const [masteries, setMasteries] = useState<MasteryOut[]>([]);
   const [progress, setProgress] = useState<Progress>({ total: 0, resolved: 0 });
@@ -106,7 +105,6 @@ export function DiagnosticPanel() {
 
   function applyState(s: SessionState) {
     setSessionId(s.session_id);
-    setFlowSession(s.session_id);
     setQuestion(s.question);
     setMasteries(s.masteries);
     setProgress(s.progress);
@@ -115,13 +113,14 @@ export function DiagnosticPanel() {
     setText("");
   }
 
-  function goCurriculum(conceptId: number) {
-    setFlowConcept(conceptId);
+  function goCurriculum(conceptId: string) {
+    // 레거시: flowStore가 숫자 id라 UUID를 못 담음 — 연동 보류(랩 미라우팅).
+    void conceptId;
     navigate("/lab/curriculum");
   }
 
   function handleStart() {
-    const id = Number(courseId);
+    const id = courseId.trim();
     if (!id) return;
     start.mutate(id, { onSuccess: applyState });
   }
@@ -139,9 +138,8 @@ export function DiagnosticPanel() {
               m.concept_id === r.mastery.concept_id ? r.mastery : m,
             );
             if (r.done && sessionId) {
-              const targetId = pickWeakestForCurriculum(updated);
-              setFlowConcept(targetId);
-              setAutoGenerateCurriculum(true);
+              // 레거시: flowStore(숫자 id) 연동 보류 — 가장 약한 개념만 계산해 두고 이동.
+              void pickWeakestForCurriculum(updated);
               navigate("/lab/curriculum");
             }
             return updated;

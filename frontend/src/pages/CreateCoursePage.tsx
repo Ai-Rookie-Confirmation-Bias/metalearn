@@ -1,7 +1,9 @@
 /**
- * 수업 생성(Create Course) 위저드 — 모델 B(진단 분리).
- *   STEP 1 메인 자료 → STEP 2 추가 자료(선택) → STEP 3 목표 → 책장으로.
- * 진단(바닥 찾기)은 여기 없음: 책장 카드의 "진단 시작하기"에서 별도.
+ * 수업 생성(Create Course) 위저드.
+ *   STEP 1 메인 자료 → STEP 2 추가 자료(선택) → STEP 3 목표 → 업로드 → 진단으로 직행.
+ * 1차 수직 완주 범위: 메인 자료 "첫 파일 1개"만 POST /api/documents/upload로 전송.
+ *   TODO(ISSUE-011): 다중 메인 파일(분할 교재)·보조 자료·링크는 백엔드 코스-문서
+ *   다중 연결이 생기면 배선. 지금은 UI 입력만 받고 전송하지 않는다.
  * 참고 원본: UXUI_ANT/create_course.html · 스키마: docs/SCHEMA.md
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
@@ -22,13 +24,9 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 
-import { useCreatedCourses } from "@/features/course-create/store";
-import type {
-  DocumentKind,
-  Material,
-  Purpose,
-  CreateCoursePayload,
-} from "@/features/course-create/types";
+import { uploadDocument } from "@/features/documents/api/uploadDocument";
+import { apiErrorMessage } from "@/shared/api/errors";
+import type { DocumentKind, Material, Purpose } from "@/features/course-create/types";
 
 const KINDS: { value: DocumentKind; label: string }[] = [
   { value: "textbook", label: "교재" },
@@ -174,13 +172,15 @@ function MaterialRow({
 
 export function CreateCoursePage() {
   const navigate = useNavigate();
-  const addDraft = useCreatedCourses((s) => s.addDraft);
 
   const [step, setStep] = useState(0); // 0 메인 / 1 추가 / 2 목표
   const [primaries, setPrimaries] = useState<Material[]>([]);
   const [supps, setSupps] = useState<Material[]>([]);
   const [linkUrl, setLinkUrl] = useState("");
   const [purpose, setPurpose] = useState<Purpose | null>(null);
+  // 업로드(파싱 포함) 상태 — Document Parse + 개념 추출이라 2~5분 걸린다.
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
 
   const addFiles = (files: FileList, role: "primary" | "supplementary") => {
     const items: Material[] = Array.from(files).map((f) => ({
@@ -188,6 +188,7 @@ export function CreateCoursePage() {
       name: f.name,
       kind: "textbook",
       role,
+      file: f, // 실제 업로드용 원본 파일 보존
     }));
     (role === "primary" ? setPrimaries : setSupps)((prev) => [...prev, ...items]);
   };
@@ -221,23 +222,35 @@ export function CreateCoursePage() {
 
   const back = () => (step === 0 ? navigate("/library") : setStep((s) => s - 1));
   const next = () => {
-    if (!canNext) return;
+    if (!canNext || uploading) return;
     if (step < 2) {
       setStep((s) => s + 1);
       return;
     }
-    // 제출 — 백엔드 붙으면 이 payload를 POST /courses 로 전송(문서는 업로드 후 받은 id로 치환)
-    const payload: CreateCoursePayload = {
-      documentIds: [...primaries, ...supps].map((m) => m.id),
-      primaryIds: primaries.map((m) => m.id),
-      purpose: purpose!,
-    };
-    void payload; // mock: 전송 대신 스토어에 "생성중" 코스로 추가
-    addDraft(stripExt(primaries[0]?.name ?? "새 학습"));
-    navigate("/library");
+    void submitCourse();
   };
 
-  const nextLabel = step === 2 ? "생성하기" : "다음";
+  // 제출: 메인 자료 첫 파일 업로드 → 코스 생성 → 진단으로 직행.
+  // TODO(ISSUE-011): primaries[1..]·supps·링크는 아직 전송 안 함(다중 문서 미지원).
+  const submitCourse = async () => {
+    const main = primaries[0];
+    if (!main?.file) {
+      setUploadError("메인 자료 파일을 다시 선택해주세요.");
+      return;
+    }
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const course = await uploadDocument(main.file, stripExt(main.name));
+      // 업로드 완료 → 바로 수준 진단으로 (목표는 진단 완료 시 씨앗 조립 purpose로 전달)
+      navigate(`/diagnosis/${course.id}${purpose ? `?purpose=${purpose}` : ""}`);
+    } catch (e) {
+      setUploadError(apiErrorMessage(e));
+      setUploading(false);
+    }
+  };
+
+  const nextLabel = step === 2 ? (uploading ? "분석 중…" : "생성하기") : "다음";
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg-secondary px-4">
@@ -328,11 +341,13 @@ export function CreateCoursePage() {
                 {PURPOSES.map((o) => (
                   <button
                     key={o.value}
+                    disabled={uploading}
                     onClick={() => setPurpose(o.value)}
                     className={clsx(
                       cardBase,
                       cardState(purpose === o.value),
                       "flex flex-col items-start gap-1 px-5 py-4 text-left",
+                      uploading && "pointer-events-none opacity-60",
                     )}
                   >
                     <o.icon className="text-[1.75rem] text-primary" />
@@ -341,6 +356,27 @@ export function CreateCoursePage() {
                   </button>
                 ))}
               </div>
+
+              {/* 업로드 진행 안내 — Document Parse + 개념 추출로 2~5분 소요 */}
+              {uploading && (
+                <div className="mt-6 flex items-start gap-3 rounded-xl border border-accent/30 bg-accent/[0.06] px-5 py-4">
+                  <span className="mt-0.5 h-5 w-5 shrink-0 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+                  <div>
+                    <p className="font-semibold text-text-primary">
+                      AI가 자료를 읽고 개념을 뽑아내고 있어요
+                    </p>
+                    <p className="mt-0.5 text-[0.85rem] leading-relaxed text-text-secondary">
+                      자료 분량에 따라 보통 2~5분 정도 걸려요. 이 화면을 닫지 말고
+                      기다려주세요. 끝나면 바로 수준 진단으로 이동해요.
+                    </p>
+                  </div>
+                </div>
+              )}
+              {uploadError && !uploading && (
+                <p className="mt-4 text-[0.9rem] text-red-600">
+                  업로드에 실패했어요: {uploadError} — 다시 시도해주세요.
+                </p>
+              )}
             </>
           )}
         </StepFade>
@@ -348,16 +384,17 @@ export function CreateCoursePage() {
         <div className="mt-10 flex items-center justify-between border-t border-border-primary pt-6">
           <button
             onClick={back}
-            className="flex items-center gap-2 text-[13.3333px] font-medium leading-[normal] text-text-secondary transition-colors hover:text-primary"
+            disabled={uploading}
+            className="flex items-center gap-2 text-[13.3333px] font-medium leading-[normal] text-text-secondary transition-colors hover:text-primary disabled:opacity-40"
           >
             <ArrowLeftIcon /> {step === 0 ? "책장으로" : "이전"}
           </button>
           <button
             onClick={next}
-            disabled={!canNext}
+            disabled={!canNext || uploading}
             className={clsx(
               "inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-[0.6rem] text-[13.3333px] font-semibold leading-[normal] text-white shadow-sm transition-all",
-              canNext
+              canNext && !uploading
                 ? "hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
                 : "cursor-not-allowed opacity-50",
             )}

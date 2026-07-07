@@ -25,8 +25,10 @@ export async function getCourses(): Promise<CourseSummary[]> {
     sectionsTotal: c.totalSections,
     sectionsCompleted: c.completedSections,
     lastActivityAt: c.lastActivityAt,
-    // 아래는 상류(parsing/materials) 소관이라 우리 응답엔 없음 → 잠정 기본값.
+    // 아래는 상류(parsing/materials) 소관이라 우리 응답엔 없음 → 잠정 파생값.
     difficultyEst: 0, // documents.difficulty_est
-    diagStatus: "completed", // enrollments.diag_status (진단은 parsing)
+    // 진단 상태 프록시: 씨앗 조립(seed build) 전이면 섹션이 0개 → "진단 전"으로 간주.
+    // TODO: 서버가 enrollments.diag_status를 내려주면 그 값으로 교체.
+    diagStatus: c.totalSections > 0 ? "completed" : "not_started",
   }));
 }

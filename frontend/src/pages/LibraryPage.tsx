@@ -164,8 +164,9 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
           </div>
         )}
 
+        {/* 진단 전이면 /diagnosis/:courseId, 진단 후엔 학습 화면으로 */}
         <Link
-          to="/learning"
+          to={started ? "/learning" : `/diagnosis/${course.id}`}
           className="mt-auto inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
         >
           {cta}

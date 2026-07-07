@@ -9,13 +9,13 @@ import {
 
 export function useStartDiagnostic() {
   return useMutation({
-    mutationFn: (courseId: number) => startDiagnostic(courseId),
+    mutationFn: (courseId: string) => startDiagnostic(courseId),
   });
 }
 
 interface AnswerArgs {
-  sessionId: number;
-  questionId: number;
+  sessionId: string;
+  questionId: string;
   input: AnswerInput;
 }
 
