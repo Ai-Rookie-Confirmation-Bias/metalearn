@@ -4,6 +4,11 @@ import axios from "axios";
 export const apiClient = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000",
   timeout: 30000,
+  headers: {
+    // 임시 인증(ISSUE-005): OAuth 붙기 전까지 dev 고정 유저. 시드 DEV_USER_ID와 일치.
+    "X-User-Id":
+      import.meta.env.VITE_DEV_USER_ID ?? "00000000-0000-0000-0000-000000000001",
+  },
 });
 
 // Solar PDF 파싱·진단·커리큘럼 등 LLM 호출 (30초 초과 가능)

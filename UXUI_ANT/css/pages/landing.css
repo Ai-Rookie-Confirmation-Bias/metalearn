@@ -1,0 +1,48 @@
+/* Scroll Snap */
+.landing-container {
+    height: 100vh; overflow-y: scroll; scroll-snap-type: y mandatory; scroll-behavior: smooth;
+}
+.scroll-section {
+    height: 100vh; width: 100vw; scroll-snap-align: start;
+    display: flex; flex-direction: column; justify-content: center; position: relative;
+}
+
+/* Scroll Indicator */
+.scroll-indicator {
+    position: absolute; bottom: 2rem; left: 50%; transform: translateX(-50%);
+    display: flex; flex-direction: column; align-items: center; gap: 0.5rem;
+    color: var(--text-tertiary); animation: bounce 2s infinite; font-size: 0.85rem;
+}
+.scroll-indicator i { font-size: 1.5rem; }
+
+/* Premium CTA Section */
+.premium-section {
+    background-color: var(--navy-bg); color: #ffffff;
+    align-items: center; text-align: center;
+}
+.premium-content {
+    display: flex; flex-direction: column; align-items: center; gap: 2.5rem;
+    max-width: 800px; padding: 0 2rem; z-index: 2;
+}
+.premium-title {
+    font-size: 4.5rem; font-weight: 900; font-style: italic; line-height: 1.1;
+    letter-spacing: -0.02em; text-transform: uppercase;
+}
+@media (max-width: 768px) { .premium-title { font-size: 3rem; } }
+.gradient-text {
+    background: linear-gradient(90deg, #4ade80 0%, #3b82f6 100%);
+    -webkit-background-clip: text; -webkit-text-fill-color: transparent; display: inline-block;
+    padding-right: 0.15em; /* 이탤릭체 우측 잘림 방지 */
+}
+.btn-premium {
+    background-color: #ffffff; color: var(--navy-bg); padding: 1rem 2.5rem;
+    border-radius: 9999px; font-size: 1.125rem; font-weight: 800; text-transform: uppercase;
+    letter-spacing: 0.05em; box-shadow: 0 10px 25px rgba(255, 255, 255, 0.2); transition: all 0.3s ease;
+}
+.btn-premium:hover { transform: scale(1.05); box-shadow: 0 15px 35px rgba(255, 255, 255, 0.3); }
+
+.minimal-footer { position: absolute; bottom: 0; width: 100%; padding: 2rem; text-align: center; }
+.minimal-footer p { color: rgba(255, 255, 255, 0.4); font-size: 0.85rem; }
+.minimal-footer a { color: rgba(255, 255, 255, 0.6); transition: color 0.2s; }
+.minimal-footer a:hover { color: #ffffff; }
+
