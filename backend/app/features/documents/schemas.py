@@ -12,6 +12,9 @@ from app.core.config import settings
 class ConceptNode(BaseModel):
     name: str = Field(..., min_length=1, max_length=256)
     description: str = Field(..., min_length=1)
+    # 영문 슬러그 (계약 concepts.key) — 추출 시 동시 산출(비용 0). optional이라
+    # LLM이 빠뜨려도 무해: seed _fill_keys가 빈 것만 채운다(폴백).
+    key: str | None = Field(default=None, max_length=128)
     prerequisites: list[ConceptNode] = Field(default_factory=list)
 
     @field_validator("prerequisites", mode="before")
@@ -44,6 +47,7 @@ class SectionConcept(BaseModel):
 
     name: str = Field(..., min_length=1, max_length=256)
     description: str = Field(..., min_length=1)
+    key: str | None = Field(default=None, max_length=128)
 
 
 class ExtractionResult(BaseModel):

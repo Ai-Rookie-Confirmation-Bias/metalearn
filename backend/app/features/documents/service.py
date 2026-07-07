@@ -40,6 +40,16 @@ _EXTRACTION_SYSTEM = (
 
 _log = logging.getLogger("uvicorn.error")
 
+_SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def _sanitize_slug(raw: str | None) -> str | None:
+    """추출 동시 산출 슬러그 검사 — 형식 위반은 버리고 seed 폴백에 맡긴다."""
+    if not raw:
+        return None
+    slug = raw.strip().lower()
+    return slug[:100] if _SLUG_RE.match(slug) else None
+
 # 청크 임베딩(RAG 검색용) 입력 절단·배치 크기 — 임베딩 모델 토큰 한계 대비.
 _CHUNK_EMBED_MAX_CHARS = 2000
 _CHUNK_EMBED_BATCH = 16
@@ -65,9 +75,12 @@ def _extraction_prompt(anchor: str, section_text: str) -> str:
         "name/description에 표준 표기(x^2, e^x 꼴)로 적을 것.\n"
         "7. section 필드에 이 섹션 전체를 관통하는 대표 개념 하나를 제시하라. "
         "헤딩 원문 복사가 아니라 학습 주제로서의 개념명으로 지을 것 "
-        '(예: "■ 트리 순회 방법 - 3가지" 섹션이면 "트리 순회").\n\n'
-        'JSON 형식: {"section":{"name":str,"description":str},'
-        '"concepts":[{"name":str,"description":str,'
+        '(예: "■ 트리 순회 방법 - 3가지" 섹션이면 "트리 순회").\n'
+        "8. 모든 개념(선수 포함)과 section에 key 필드로 영문 슬러그를 함께 산출하라 — "
+        '소문자 영단어를 하이픈으로 연결한 의미 번역(음차 금지, 예: "이진 탐색 트리"→'
+        '"binary-search-tree").\n\n'
+        'JSON 형식: {"section":{"name":str,"description":str,"key":str},'
+        '"concepts":[{"name":str,"description":str,"key":str,'
         '"prerequisites":[{ ...동일 구조... }]}]}\n'
         "주의: prerequisites 는 문자열 배열이 아니라 반드시 동일 구조의 "
         "객체 배열이어야 한다.\n\n"
@@ -128,13 +141,38 @@ class DocumentService:
         self.auth_repo = AuthRepository(db)
         self.diag_repo = DiagnosticRepository(db)
 
-    async def ingest(self, *, file_bytes: bytes, filename: str, title: str | None) -> CourseDetail:
+    def create_stub(self, *, filename: str, title: str | None) -> tuple[uuid.UUID, uuid.UUID]:
+        """업로드 즉시 응답용 스텁 — document(processing) + course + enrollment.
+
+        비동기 ingest(ISSUE-010②): 파이프라인은 run_pipeline이 백그라운드에서
+        실행하고, 프론트는 course 상세의 status를 폴링한다.
+        """
         user = self.auth_repo.get_default_user()
         document = self.repo.create_document(user_id=user.id, filename=filename)
+        course = self.repo.create_course(
+            document_id=document.id, user_id=user.id, title=title or filename
+        )
+        self.diag_repo.ensure_enrollment(user_id=user.id, course_id=course.id)
         self.db.commit()
+        return document.id, course.id
 
-        course: object | None = None
+    async def run_pipeline(
+        self, *, document_id: uuid.UUID, course_id: uuid.UUID, file_bytes: bytes, filename: str
+    ) -> None:
+        """파싱→정제→청킹→추출→dedup→씨앗 트리. status로 단계 노출."""
+        from app.features.materials.models import Document
+        from app.features.seed.service import SeedService
+
+        document = self.db.get(Document, document_id)
+        if document is None:
+            return
+
+        def stage(name: str) -> None:
+            document.status = name
+            self.db.commit()
+
         try:
+            stage("parsing")
             parsed, elements = await solar_client.parse_document(file_bytes, filename)
             if not parsed.strip():
                 raise ValueError("Document Parse 결과가 비어 있습니다.")
@@ -142,21 +180,14 @@ class DocumentService:
             self.db.commit()
 
             # 정제 v1 (ISSUE-014): elements를 마킹 정제해 운영용 원본으로 저장.
-            # 추출이 실패해도 정제본은 남아 재시도 시 재파싱이 필요 없다.
+            stage("refining")
             refined, profile = await refinement.refine(elements)
             document.refined_elements = refined
             document.profile = profile
             self.db.commit()
 
-            course = self.repo.create_course(
-                document_id=document.id,
-                user_id=user.id,
-                title=title or filename,
-            )
-            self.diag_repo.ensure_enrollment(user_id=user.id, course_id=course.id)
-            self.db.commit()
-
             # 1순위: 정제된 요소 기반 청킹. elements가 없으면 마크다운 폴백.
+            stage("chunking")
             chunks = sectioning.chunk_elements(
                 refined["elements"], settings.EXTRACTION_SECTION_CHAR_BUDGET
             )
@@ -165,8 +196,6 @@ class DocumentService:
                     sectioning.split_sections(parsed),
                     settings.EXTRACTION_SECTION_CHAR_BUDGET,
                 )
-            # 청크 영속화 (RAG 계층 — 팀 스키마 doc_chunks): 개념의 원문
-            # 근거 단위. source_chunk_id FK의 대상이므로 추출 전에 저장.
             chunk_rows = self.repo.add_chunks(
                 document_id=document.id,
                 chunks=chunks,
@@ -174,11 +203,16 @@ class DocumentService:
             )
             self.db.commit()
 
+            stage("extracting")
             extractions = await self._extract_all(chunks)
             await self._persist_graph(
-                course.id, extractions, chunk_ids=[row.id for row in chunk_rows]
+                course_id, extractions, chunk_ids=[row.id for row in chunk_rows]
             )
-            await self._dedup_pass(course.id)
+            await self._dedup_pass(course_id)
+
+            # 씨앗 1단계(트리·슬러그·외부근거) — 생성 직후 트리 존재(프론트 계약)
+            stage("building_seed")
+            await SeedService(self.db).build_tree(course_id)
 
             document.status = "ready"
             self.db.commit()
@@ -187,13 +221,24 @@ class DocumentService:
             document.status = "failed"
             document.error = str(exc)[:2000]
             self.db.commit()
-            raise HTTPException(
-                status_code=502,
-                detail=f"섭취 실패(document={document.id}): {exc}",
-            ) from exc
+            _log.exception("섭취 실패(document=%s)", document_id)
+            raise
 
-        assert course is not None
-        return self.get_course_detail(course.id)
+    async def ingest(self, *, file_bytes: bytes, filename: str, title: str | None) -> CourseDetail:
+        """(동기 경로 — 스크립트/하위호환) 스텁 생성 + 파이프라인 완주 후 상세 반환."""
+        document_id, course_id = self.create_stub(filename=filename, title=title)
+        try:
+            await self.run_pipeline(
+                document_id=document_id,
+                course_id=course_id,
+                file_bytes=file_bytes,
+                filename=filename,
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=502, detail=f"섭취 실패(document={document_id}): {exc}"
+            ) from exc
+        return self.get_course_detail(course_id)
 
     async def _extract_all(
         self, chunks: list[sectioning.Chunk]
@@ -360,6 +405,7 @@ class DocumentService:
         """
         by_norm: dict[str, uuid.UUID] = {}  # 정규화 이름 → concept_id
         edges: set[tuple[uuid.UUID, uuid.UUID]] = set()
+        used_keys: set[str] = set()  # 코스 내 슬러그 유니크 가드 (병렬 추출 중복 방지)
         embed_cache = await self._embed_all(extractions)
         ids = chunk_ids or [None] * len(extractions)
 
@@ -383,6 +429,13 @@ class DocumentService:
                 cid = near[0].id
                 self._merge_concept(cid, node, depth_level, source, anchor, chunk_id)
             else:
+                # 슬러그 동시 산출: 코스 내 중복이면 None으로 두고 seed가 채운다
+                # (UniqueConstraint(course_id, key) 위반 방지).
+                slug = _sanitize_slug(node.key)
+                if slug and slug in used_keys:
+                    slug = None
+                if slug:
+                    used_keys.add(slug)
                 concept = self.repo.add_concept(
                     course_id=course_id,
                     name=node.name,
@@ -392,6 +445,7 @@ class DocumentService:
                     source=source,
                     source_anchor=anchor,
                     source_chunk_id=chunk_id,
+                    key=slug,
                 )
                 cid = concept.id
             by_norm[norm] = cid
@@ -432,6 +486,7 @@ class DocumentService:
                     ConceptNode(
                         name=extraction.section.name,
                         description=extraction.section.description,
+                        key=extraction.section.key,
                     ),
                     0,
                     "book",

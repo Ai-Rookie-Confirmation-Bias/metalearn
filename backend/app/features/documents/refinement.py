@@ -125,10 +125,14 @@ def _scan_prompt(elements: list[dict[str, Any]]) -> str:
         "3. parts: 최상위 주제 단위(목차의 장/파트)가 시작되는 헤딩 요소 번호 목록.\n"
         "   - 목차가 있으면 반드시 목차 항목과 헤딩을 대조해서 찾아라 "
         "(목차 항목 수 = parts 수가 되는 것이 정상).\n"
-        "   - 소제목·절 단위는 파트가 아니다. 단일 장 문서면 빈 배열.\n\n"
+        "   - 소제목·절 단위는 파트가 아니다. 단일 장 문서면 빈 배열.\n"
+        '   - 각 파트에 kind를 부여하라: "unit" = 정규 학습 단원(목차의 장), '
+        '"special" = 특집·부록·진로/직업 소개·읽을거리 코너처럼 본 과목의 '
+        "학습 주제가 아닌 파트(예: 수학 교재 속 'IoT는 무엇인가요?' 코너). "
+        "애매하면 unit(덜 배제하는 쪽이 안전).\n\n"
         'JSON 형식: {"body_start_element": int, '
         '"profile": "linked|enumerative|mixed", '
-        '"parts": [{"title": str, "start_element": int}]}\n\n'
+        '"parts": [{"title": str, "start_element": int, "kind": "unit|special"}]}\n\n'
         "=== 헤딩 목록 ===\n" + "\n".join(headings) +
         "\n\n=== 앞부분 요소 원문 ===\n" + "\n".join(head)
     )
@@ -181,10 +185,24 @@ def _sanitize_scan(
     for part in raw_parts:
         start = part.get("start_element") if isinstance(part, dict) else None
         if isinstance(start, int) and prev < start < total:
+            kind = part.get("kind") if isinstance(part, dict) else None
             scan["parts"].append(
-                {"title": str(part.get("title", ""))[:80], "start_element": start}
+                {
+                    "title": str(part.get("title", ""))[:80],
+                    "start_element": start,
+                    # 파트 성격 (ISSUE-018): unit=정규 단원, special=특집/부록 코너.
+                    # 배치고사 천장·문항 선정에서 special 제외용. 기본 unit.
+                    "kind": kind if kind in ("unit", "special") else "unit",
+                }
             )
             prev = start
+    # 가드레일: special이 절반을 넘으면 라벨 전체 기각(전부 unit) — 과도 판정
+    # 시 배치고사가 물을 파트가 사라지는 사고 방지.
+    specials = sum(1 for p in scan["parts"] if p["kind"] == "special")
+    if scan["parts"] and specials / len(scan["parts"]) > 0.5:
+        _log.warning("스캔 기각: special 파트 %d/%d — 라벨 무시", specials, len(scan["parts"]))
+        for p in scan["parts"]:
+            p["kind"] = "unit"
     return scan
 
 

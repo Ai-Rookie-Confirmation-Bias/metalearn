@@ -125,6 +125,20 @@ class SessionState(BaseModel):
     masteries: list[MasteryOut] = Field(default_factory=list)
 
 
+class PlacementState(BaseModel):
+    """배치고사 상태 — 문항 1개씩 서빙 (ISSUE-015). done=True일 때 결과 필드 채움."""
+
+    session_id: uuid.UUID
+    done: bool
+    asked: int
+    max_questions: int
+    question: QuestionOut | None = None
+    floor_concept: uuid.UUID | None = None
+    ceiling_concept: uuid.UUID | None = None
+    weak_concept_ids: list[uuid.UUID] = Field(default_factory=list)
+    seed: dict | None = None
+
+
 class AnswerResult(BaseModel):
     is_correct: bool
     # 정답 공개: mcq는 correct_index, 인출형은 correct_answer(모범답안).

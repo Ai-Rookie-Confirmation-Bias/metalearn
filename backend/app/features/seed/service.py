@@ -52,7 +52,10 @@ class SeedService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    async def build(self, course_id: uuid.UUID, purpose: str = "exam") -> dict:
+    async def build_tree(self, course_id: uuid.UUID) -> dict:
+        """1단계(진단 무관): 슬러그 + 커리큘럼 트리 + external_refs. ingest 직후 호출."""
+        from app.features.seed.refs import collect_external_refs
+
         course = self.db.get(Course, course_id)
         document = self.db.get(Document, course.document_id) if course else None
         if document is None:
@@ -66,8 +69,7 @@ class SeedService:
 
         await self._fill_keys(concepts)
         chapters, sections = self._build_tree(course_id, document, concepts)
-        mastery, floor_id, ceiling_id = self._mastery_seed(course_id, document, concepts)
-        self._finalize_enrollment(course_id, floor_id, ceiling_id, purpose)
+        refs_stats = await collect_external_refs(self.db, course_id)
         self.db.commit()
 
         return {
@@ -81,14 +83,55 @@ class SeedService:
                 "sections": len(sections),
                 "gen_status": "pending",
             },
+            "external_refs": refs_stats,
+        }
+
+    async def finalize_placement(
+        self,
+        course_id: uuid.UUID,
+        purpose: str = "exam",
+        floor_id: uuid.UUID | None = None,
+        ceiling_id: uuid.UUID | None = None,
+        diag_q_count: int | None = None,
+    ) -> dict:
+        """2단계(진단 완료 후): enrollment 확정 + mastery 시드 JSON.
+
+        배치고사가 정밀 확정한 floor/ceiling을 넘기면 그대로 쓰고, 없으면
+        mastery 신호에서 유도한다(구 진단 경로 하위호환).
+        """
+        course = self.db.get(Course, course_id)
+        document = self.db.get(Document, course.document_id) if course else None
+        if document is None:
+            raise HTTPException(status_code=404, detail="코스/문서를 찾을 수 없습니다.")
+        concepts = list(
+            self.db.scalars(select(Concept).where(Concept.course_id == course_id))
+        )
+        if not concepts:
+            raise HTTPException(status_code=400, detail="개념이 없는 코스입니다.")
+
+        mastery, derived_floor, derived_ceiling = self._mastery_seed(
+            course_id, document, concepts
+        )
+        floor_id = floor_id if floor_id is not None else derived_floor
+        ceiling_id = ceiling_id if ceiling_id is not None else derived_ceiling
+        self._finalize_enrollment(course_id, floor_id, ceiling_id, purpose, diag_q_count)
+        self.db.commit()
+
+        return {
+            "course_id": course_id,
             "placement": {
-                # 정본 이름 규약(MERGE_AGREEMENT): floor_concept/ceiling_concept
                 "floor_concept": floor_id,
                 "ceiling_concept": ceiling_id,
                 "purpose": purpose,
             },
             "mastery": mastery,
         }
+
+    async def build(self, course_id: uuid.UUID, purpose: str = "exam") -> dict:
+        """(하위호환) 1+2단계 한 번에 — 기존 /seed/{id}/build 엔드포인트용."""
+        tree = await self.build_tree(course_id)
+        placement = await self.finalize_placement(course_id, purpose)
+        return {**tree, **placement}
 
     # ── ① key 슬러그 ────────────────────────────────────────────
     async def _fill_keys(self, concepts: list[Concept]) -> None:
@@ -263,6 +306,7 @@ class SeedService:
         floor_id: uuid.UUID | None,
         ceiling_id: uuid.UUID | None,
         purpose: str,
+        diag_q_count: int | None = None,
     ) -> None:
         user = AuthRepository(self.db).get_default_user()
         enrollment = self.db.get(Enrollment, (user.id, course_id))
@@ -275,4 +319,6 @@ class SeedService:
         enrollment.floor_found = floor_id is not None
         enrollment.purpose = purpose
         enrollment.diag_status = "completed"
+        if diag_q_count is not None:
+            enrollment.diag_q_count = diag_q_count
         self.db.flush()

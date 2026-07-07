@@ -31,6 +31,10 @@ class DiagnosticSession(Base):
     )
     # active | completed
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
+    # 'full' = 기존 전수/스코핑 진단, 'placement' = 배치고사(depth 하강, ISSUE-015)
+    kind: Mapped[str] = mapped_column(String(16), nullable=False, server_default="full")
+    # 배치고사 진행 상태(모드·현재 개념·응답 이력) — placement 세션만 사용
+    state: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

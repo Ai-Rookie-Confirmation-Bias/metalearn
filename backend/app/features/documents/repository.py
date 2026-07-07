@@ -100,6 +100,7 @@ class DocumentRepository:
         source: str = "book",  # 정본 규약: book | ai_prereq (MERGE_AGREEMENT)
         source_anchor: str | None = None,
         source_chunk_id: uuid.UUID | None = None,
+        key: str | None = None,
     ) -> Concept:
         concept = Concept(
             course_id=course_id,
@@ -110,6 +111,7 @@ class DocumentRepository:
             source=source,
             source_anchor=source_anchor,
             source_chunk_id=source_chunk_id,
+            key=key,
         )
         self.db.add(concept)
         self.db.flush()
