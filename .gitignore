@@ -17,3 +17,6 @@ backend/uploads/
 
 # os / editor
 .DS_Store
+
+# 팀 공유 제외 — 로컬 작업 문서 (2026-07-05 히스토리 재작성으로 원격 제거)
+docs/

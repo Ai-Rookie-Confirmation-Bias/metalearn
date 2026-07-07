@@ -8,11 +8,15 @@ from app.core.config import settings
 from app.core.database import Base
 
 # 모델 등록(메타데이터 채우기). 새 도메인 추가 시 여기에 import.
+# 정본 = UUID 모델(materials/seed/curriculum/learning). parsing의 documents 모델은
+# 같은 테이블을 Integer PK로 재정의하므로 임포트하지 않는다(중복 테이블 에러).
+# TODO(병합 2단계): diagnostic 모델 UUID 포팅 후 임포트 추가.
 from app.features.auth import models as _auth_models  # noqa: F401
 from app.features.curriculum import models as _curriculum_models  # noqa: F401
 from app.features.learning import models as _learning_models  # noqa: F401
 from app.features.materials import models as _materials_models  # noqa: F401
 from app.features.seed import models as _seed_models  # noqa: F401
+# from app.features.diagnostic import models as _diagnostic_models  # noqa: F401
 
 config = context.config
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)

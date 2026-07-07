@@ -145,10 +145,14 @@ metalearn/
 | --- | --- |
 | 인프라 (compose, Dockerfile ×2, .env, .gitignore) | ✅ 동작 |
 | backend `core/` (config, database, security, llm) | ✅ 동작 |
-| backend `features/learning/` | ✅ 5레이어 동작 예시 |
-| backend `features/{auth,seed,materials,review}/` | ⬜ 빈 `router.py`만 (엔드포인트 0) |
+| backend `features/learning/` | ✅ 데모(generate) + JIT 적응형 커리큘럼(점수 분기 선수+브릿지 / 메인100%, 인출형 블록) |
+| backend `features/materials/` | ✅ Ingestion 파이프라인 (PDF→파싱→개념/선수지식 그래프→pgvector) |
+| backend `features/diagnostic/` | ✅ BKT 정밀 진단 (불확실성 타겟팅 + MCQ/빈칸/역질문 혼합 + LLM 심판 채점 + 유형별 추측률 + 신뢰도 수렴) |
+| backend `features/{auth,seed,review}/` | ⬜ 빈 `router.py`만 (엔드포인트 0) |
 | frontend `app/`·`shared/`·`pages/`·`runtime(online)` | ✅ 동작 |
-| frontend `features/learning/` | ✅ 동작 예시 |
+| frontend `features/learning/` | ✅ 데모 패널 + JIT 커리큘럼 뷰(인출형 블록, `/curriculum`) |
+| frontend `features/materials/` | ✅ 업로드 패널 + 개념 그래프 뷰 (`/materials`) |
+| frontend `features/diagnostic/` | ✅ 진단 루프 UI + 숙련도 패널 (`/diagnostic`) |
 | frontend `features/{seed,review}/` | ⬜ `.gitkeep`만 |
 | 로컬 EXAONE (`runtime/engine.ts`), Dexie (`storage/db.ts`) | ⬜ Phase 2 스텁 |
 
