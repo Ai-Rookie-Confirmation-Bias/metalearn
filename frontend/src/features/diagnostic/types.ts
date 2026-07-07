@@ -22,6 +22,9 @@ export interface MasteryOut {
 export interface Progress {
   total: number;
   resolved: number;
+  // 문항 기준 진행 (신규 필드 — 구버전 응답엔 없을 수 있어 optional).
+  answered_questions?: number; // 이번 세션에서 답변한 문항 수
+  question_cap?: number; // 세션 총 문항 상한
 }
 
 export interface SessionState {

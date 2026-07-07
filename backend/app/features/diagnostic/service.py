@@ -350,7 +350,7 @@ class DiagnosticService:
 
         next_q = await self._advance(session, concepts)
         masteries = self.repo.list_masteries(session_id)
-        progress = self._progress(masteries)
+        progress = self._progress(session_id, masteries)
         self.db.commit()
 
         return AnswerResult(
@@ -491,7 +491,7 @@ class DiagnosticService:
             session_id=session.id,
             status=session.status,
             done=question is None,
-            progress=self._progress(masteries),
+            progress=self._progress(session.id, masteries),
             question=self._question_out(question, concepts) if question else None,
             masteries=[
                 self._mastery_out(m, concepts[m.concept_id].name) for m in masteries
@@ -891,11 +891,15 @@ class DiagnosticService:
 
         return self._persist_draft(session_id, concept.id, draft)
 
-    @staticmethod
-    def _progress(masteries: list[ConceptMastery]) -> Progress:
+    def _progress(
+        self, session_id: uuid.UUID, masteries: list[ConceptMastery]
+    ) -> Progress:
         return Progress(
             total=len(masteries),
             resolved=sum(1 for m in masteries if m.resolved),
+            # 문항 기준 진행 — UI가 total(개념 수)을 문항 수로 오해하지 않도록.
+            answered_questions=self.repo.count_answered_questions(session_id),
+            question_cap=settings.DIAG_MAX_TOTAL_QUESTIONS,
         )
 
     @staticmethod

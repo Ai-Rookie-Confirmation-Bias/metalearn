@@ -110,6 +110,10 @@ class MasteryOut(BaseModel):
 class Progress(BaseModel):
     total: int
     resolved: int
+    # 문항 기준 진행(UI 표시용) — total(개념 수)을 문항 수로 오해하지 않도록.
+    # 기본값 0: 구버전 직렬화 데이터와의 호환 유지.
+    answered_questions: int = 0  # 이번 세션에서 답변한 문항 수
+    question_cap: int = 0  # 세션 총 문항 상한 (settings.DIAG_MAX_TOTAL_QUESTIONS)
 
 
 class SessionState(BaseModel):

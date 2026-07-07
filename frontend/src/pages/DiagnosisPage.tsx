@@ -162,7 +162,19 @@ export function DiagnosisPage() {
     setText("");
   }
 
-  const pct = progress.total > 0 ? Math.round((progress.resolved / progress.total) * 100) : 0;
+  // 문항 기준 진행 표시 — total(코스 전체 개념 수)을 문항 수로 오해하는 문제 방지.
+  // 신규 필드가 없는 구응답이면 기존 '개념 확정' 표시로 폴백한다.
+  const answered = progress.answered_questions ?? null;
+  const cap = progress.question_cap ?? null;
+  const byQuestion = answered !== null && cap !== null && cap > 0;
+  // 채점 직후(feedback 표시 중)엔 answered에 방금 문항이 이미 포함돼 있어
+  // +1 하면 번호가 미리 튀므로, 현재 문항 번호를 그대로 유지한다.
+  const questionNo = byQuestion ? Math.min(cap, feedback ? answered : answered + 1) : 0;
+  const pct = byQuestion
+    ? Math.round((Math.min(answered, cap) / cap) * 100)
+    : progress.total > 0
+      ? Math.round((progress.resolved / progress.total) * 100)
+      : 0;
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-bg-secondary px-4 py-10">
@@ -229,13 +241,15 @@ export function DiagnosisPage() {
 
         {phase === "quiz" && question && (
           <>
-            {/* 진행 헤더: 확정된 개념 수 기준 (문항 수는 적응형이라 미리 알 수 없음) */}
+            {/* 진행 헤더: 문항 기준 (구응답엔 필드가 없어 개념 확정 표시로 폴백) */}
             <div className="mb-2 flex items-center justify-between">
               <span className="flex items-center gap-1.5 text-sm font-semibold text-accent">
                 <MagnifyingGlassIcon /> 수준 진단
               </span>
               <span className="text-[0.85rem] font-semibold text-text-secondary">
-                개념 확정 {progress.resolved} / {progress.total}
+                {byQuestion
+                  ? `문항 ${questionNo}번째 · 최대 ${cap}문항`
+                  : `개념 확정 ${progress.resolved} / ${progress.total}`}
               </span>
             </div>
             <div className="mb-8 h-1.5 w-full overflow-hidden rounded-full bg-bg-secondary">
