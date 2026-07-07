@@ -23,6 +23,7 @@ import { useCourseTree } from "@/features/learning/queries/useCourseTree";
 import { useSectionBlocks } from "@/features/learning/queries/useSectionBlocks";
 import { useSubmitAttempt } from "@/features/learning/queries/useSubmitAttempt";
 import { useGenerateChapter } from "@/features/learning/queries/useGenerateChapter";
+import { useReadComplete } from "@/features/learning/queries/useReadComplete";
 
 // 학습 화면 — 3컬럼(커리큘럼 / 블록 / AI튜터). 데이터는 전부 백엔드:
 //   트리 = GET /courses/:id · 절 블록 = GET /sections/:id(지연) · 채점 = POST /attempts(라운드트립).
@@ -57,6 +58,7 @@ export function LearningPage() {
 
   const submit = useSubmitAttempt();
   const generate = useGenerateChapter();
+  const readComplete = useReadComplete();
 
   // 라운드트립 채점 — userInput만 보내고 서버가 correct/reveal + 완료/숙련도까지 판정.
   // 프론트는 판단하지 않는다: 채점 후 트리를 refetch해 진행/완료/잠금을 서버에서 다시 읽는다.
@@ -97,6 +99,9 @@ export function LearningPage() {
 
   // 다음으로 진행 가능 = 이 절이 서버에서 완료 처리됨(= tracked 전부 통과). 백엔드가 판정.
   const unlocked = currentSection?.progressStatus === "completed";
+  // 열람 전용 절 = 봉투에 tracked 블록이 하나도 없음(예: analogy만 있는 선행 절).
+  // 인출로는 완료가 불가능하므로 '다 읽었어요' 게이트를 노출한다(완료 판정은 서버).
+  const hasTracked = blocks.some((b) => b.tracked);
 
   // CurriculumPanel용 chapters(패널은 블록을 안 쓰므로 빈 배열)
   const panelChapters: PanelChapter[] = chapters.map((c) => ({
@@ -108,6 +113,18 @@ export function LearningPage() {
   const goNext = () => {
     // 완료 판정은 서버(section_progress)가 이미 처리 → 프론트는 다음 절로 이동만.
     if (nextSection) setCurrentSectionId(nextSection.id);
+  };
+
+  // 열람 전용 절의 '다 읽었어요' — 서버가 완료 판정+커서 복귀 pop까지 처리(라운드트립).
+  // 이후 이동은 기존 완료 흐름과 동일: 복귀 지점이 있으면 원래 절로, 없으면 다음 절로.
+  const onReadComplete = async () => {
+    if (!currentSectionId) return;
+    const r = await readComplete.mutateAsync(currentSectionId);
+    if (r.resumeSectionId) {
+      goToSection(r.resumeSectionId);
+    } else {
+      goNext();
+    }
   };
 
   const onGenerate = async () => {
@@ -247,8 +264,32 @@ export function LearningPage() {
               ))
             )}
 
+            {/* 열람 전용 게이트 — tracked 0개 절은 인출로 완료가 불가 → '다 읽었어요'로 완료 */}
+            {blocks.length > 0 && !hasTracked && !unlocked && (
+              <div className="mt-12 flex flex-col items-center gap-4 border-t border-border-primary pt-8">
+                <div className="flex items-center gap-1.5 text-[0.9rem] font-medium text-text-tertiary">
+                  <CheckCircleIcon weight="fill" className="text-[#10b981]" /> 이 절은 인출 문제
+                  없이 읽기만으로 완료할 수 있습니다.
+                </div>
+                <button
+                  type="button"
+                  onClick={onReadComplete}
+                  disabled={readComplete.isPending}
+                  className={clsx(
+                    "inline-flex items-center gap-2 rounded-xl px-5 py-[0.6rem] text-[13.3333px] font-semibold leading-[normal] text-white shadow-sm transition-all",
+                    readComplete.isPending
+                      ? "cursor-not-allowed bg-text-tertiary opacity-70"
+                      : "bg-primary hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md",
+                  )}
+                >
+                  {readComplete.isPending ? "완료 처리 중…" : "다 읽었어요 · 계속하기"}{" "}
+                  <ArrowRightIcon />
+                </button>
+              </div>
+            )}
+
             {/* 잠금 게이트 — tracked 전부 통과해야 다음 */}
-            {blocks.length > 0 && (
+            {blocks.length > 0 && (hasTracked || unlocked) && (
               <div className="mt-12 flex flex-col items-center gap-4 border-t border-border-primary pt-8">
                 {unlocked ? (
                   <div className="flex items-center gap-1.5 text-[0.9rem] font-medium text-text-tertiary">

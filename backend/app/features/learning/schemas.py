@@ -229,6 +229,19 @@ class CursorResponse(_CamelModel):
     return_depth: int = 0
 
 
+class ReadCompleteResponse(_CamelModel):
+    """POST /sections/:id/read-complete — tracked 0개 절의 열람 완료 결과.
+
+    채점 대상 블록이 없는 절(예: analogy만 있는 선행 절)은 attempts 경로로 완료가
+    불가능하므로, '다 읽었어요'를 서버가 완료로 판정·기록한다(판단은 서버).
+    resumeSectionId: 이 완료로 복귀 스택이 pop됐으면 돌아갈 절(없으면 null).
+    """
+
+    section_id: str
+    status: str = "completed"
+    resume_section_id: str | None = None
+
+
 # ── JIT 생성 트리거 / 폴링 (§5) ──────────────────────────────────────────────
 class GenerateTriggerResponse(_CamelModel):
     """POST /chapters/:id/generate → 트리거 결과(멱등)."""

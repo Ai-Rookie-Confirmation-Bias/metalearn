@@ -28,6 +28,7 @@ from app.features.learning.schemas import (
     CursorResponse,
     GenerateTriggerResponse,
     PlacementResponse,
+    ReadCompleteResponse,
     SectionBlocksResponse,
 )
 
@@ -129,6 +130,29 @@ def set_section_confidence(
     return ConfidenceResponse(
         section_id=str(section_id), confidence=confidence, variant=variant
     )
+
+
+@router.post(
+    "/sections/{section_id}/read-complete", response_model=ReadCompleteResponse
+)
+def complete_section_reading(
+    section_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> ReadCompleteResponse:
+    """tracked 0개 절(예: analogy만 있는 선행 절)의 열람 완료 처리.
+
+    채점 대상 블록이 하나라도 있으면 409 — 그런 절은 인출을 풀어야 완료된다.
+    완료 시 커서 복귀 pop까지 record_attempt와 동일하게 수행한다(판단은 서버).
+    """
+    try:
+        return service.complete_section_by_reading(
+            db, user_id=user_id, section_id=section_id
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.get("/sections/{section_id}", response_model=SectionBlocksResponse)

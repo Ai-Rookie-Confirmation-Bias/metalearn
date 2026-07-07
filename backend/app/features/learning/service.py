@@ -48,6 +48,7 @@ from app.features.learning.schemas import (
     NextActionOut,
     PlacementResponse,
     PrerequisiteTargetOut,
+    ReadCompleteResponse,
     RevealOut,
     SectionBlocksResponse,
 )
@@ -383,6 +384,55 @@ def _course_id_of_section(db: Session, section_id: uuid.UUID) -> uuid.UUID | Non
     return chapter.course_id if chapter else None
 
 
+def _finalize_section_completion(
+    db: Session, *, user_id: uuid.UUID, section_id: uuid.UUID
+) -> str | None:
+    """절 완료 확정 + 커서 복귀 pop(기존 [6b]) — record_attempt/read-complete 공용.
+
+    section_progress를 completed로 마킹하고, 완료한 절이 현재 커서 위치면
+    복귀 스택을 pop해 복귀 지점을 표면화한다. 반환: 복귀 절 id(없으면 None).
+    """
+    repo.mark_section_progress(
+        db, user_id=user_id, section_id=section_id, completed=True
+    )
+    course_id = _course_id_of_section(db, section_id)
+    cursor = (
+        repo.get_cursor(db, user_id=user_id, course_id=course_id)
+        if course_id
+        else None
+    )
+    if cursor and cursor.current_section_id == section_id:
+        resumed = repo.pop_return(db, user_id=user_id, course_id=course_id)
+        return str(resumed) if resumed else None
+    return None
+
+
+def complete_section_by_reading(
+    db: Session, *, user_id: uuid.UUID, section_id: uuid.UUID
+) -> ReadCompleteResponse:
+    """POST /sections/:id/read-complete — tracked 0개 절의 '다 읽었어요' 완료 처리.
+
+    선행 삽입 절이 analogy 등 채점 대상 아닌 블록만 갖는 경우, record_attempt 경로로는
+    영영 완료가 불가능해 복귀가 막힌다(진행 막힘 버그). 열람 완료를 서버가 판정·기록한다.
+    verified & tracked 블록이 하나라도 있으면 ValueError(→409) — 문제 있는 절은 풀어야 완료.
+    """
+    section = repo.get_section(db, section_id)
+    if section is None:
+        raise LookupError("section not found")
+    tracked_ids = repo.get_tracked_block_ids(db, section_id)
+    if tracked_ids:
+        raise ValueError("채점 대상 블록이 있는 절은 열람만으로 완료할 수 없습니다")
+    resume_section_id = _finalize_section_completion(
+        db, user_id=user_id, section_id=section_id
+    )
+    db.commit()
+    return ReadCompleteResponse(
+        section_id=str(section_id),
+        status="completed",
+        resume_section_id=resume_section_id,
+    )
+
+
 def get_cursor(
     db: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
 ) -> CursorResponse:
@@ -586,6 +636,7 @@ async def record_attempt(
     )
 
     # [6] 절 진행/완료 판정: tracked 블록 전부 통과 → completed
+    #     완료 확정+커서 복귀 pop([6b])은 read-complete와 공용 헬퍼로 처리.
     resume_section_id: str | None = None
     if block.section_id is not None:
         tracked_ids = repo.get_tracked_block_ids(db, block.section_id)
@@ -593,22 +644,14 @@ async def record_attempt(
             db, user_id=user_id, block_ids=tracked_ids
         )
         completed = bool(tracked_ids) and passed_ids >= set(tracked_ids)
-        repo.mark_section_progress(
-            db, user_id=user_id, section_id=block.section_id, completed=completed
-        )
-        # [6b] 커서: 완료한 절이 현재 위치면 복귀 스택 pop → 복귀 지점 표면화
         if completed:
-            course_id = _course_id_of_section(db, block.section_id)
-            cursor = (
-                repo.get_cursor(db, user_id=user_id, course_id=course_id)
-                if course_id
-                else None
+            resume_section_id = _finalize_section_completion(
+                db, user_id=user_id, section_id=block.section_id
             )
-            if cursor and cursor.current_section_id == block.section_id:
-                resumed = repo.pop_return(
-                    db, user_id=user_id, course_id=course_id
-                )
-                resume_section_id = str(resumed) if resumed else None
+        else:
+            repo.mark_section_progress(
+                db, user_id=user_id, section_id=block.section_id, completed=False
+            )
 
     db.commit()
 
