@@ -145,6 +145,8 @@ class AnswerResult(BaseModel):
     correct_index: int | None = None
     correct_answer: str | None = None
     explanation: str
+    # 오답일 때 "왜 틀렸는지" 피드백 (정답이면 None). 자유서술=심판 사유, 객관식=정답 해설.
+    feedback: str | None = None
     mastery: MasteryOut
     done: bool
     progress: Progress

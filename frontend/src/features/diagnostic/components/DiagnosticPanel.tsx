@@ -200,6 +200,11 @@ export function DiagnosticPanel() {
                 <> · 모범답안: {feedback.correct_answer}</>
               )}
             </div>
+            {!feedback.is_correct && feedback.feedback && (
+              <div style={{ fontSize: 13, marginTop: 4, fontWeight: 500 }}>
+                왜 틀렸나: {feedback.feedback}
+              </div>
+            )}
             {feedback.explanation && (
               <div style={{ fontSize: 13, marginTop: 4 }}>{feedback.explanation}</div>
             )}

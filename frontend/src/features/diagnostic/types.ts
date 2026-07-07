@@ -41,6 +41,7 @@ export interface AnswerResult {
   correct_index: number | null;
   correct_answer: string | null;
   explanation: string;
+  feedback: string | null; // 오답일 때 "왜 틀렸는지" (정답이면 null)
   mastery: MasteryOut;
   done: boolean;
   progress: Progress;

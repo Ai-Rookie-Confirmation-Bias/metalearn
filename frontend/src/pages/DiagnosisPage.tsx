@@ -375,6 +375,11 @@ export function DiagnosisPage() {
                     </span>
                   )}
                 </div>
+                {!feedback.is_correct && feedback.feedback && (
+                  <p className="mt-1.5 text-[0.9rem] font-medium leading-relaxed text-[#b91c1c]">
+                    왜 틀렸나: {feedback.feedback}
+                  </p>
+                )}
                 {feedback.explanation && (
                   <p className="mt-1.5 text-[0.9rem] leading-relaxed text-text-secondary">
                     {feedback.explanation}

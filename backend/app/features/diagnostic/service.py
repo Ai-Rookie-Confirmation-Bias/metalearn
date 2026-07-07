@@ -70,13 +70,18 @@ def _verify_prompt(drafts: list) -> str:
     '먼저 도출해 적게' 강제하고 마킹과 비교시키는 구조화 검증.
     """
     lines = [
-        "아래 진단 문항들을 검수하라. 각 문항마다:\n",
-        "1. 출제 정보(answer_index/expected_answer)를 보지 말고 문제를 직접 풀어 "
-        "my_answer에 너의 정답을 적어라. 수학 문항은 계산을 거친 최종값만. "
-        "mcq는 보기 문구와 같은 형식으로 적어라 (예: 'y = 3x - 1').\n",
-        "2. cloze/inverse: expected_answer가 my_answer와 의미상 일치하면 "
-        "valid=true, 아니면 false. mcq의 valid는 항상 true로 두라 "
-        "(mcq 대조는 시스템이 수행한다).\n",
+        "아래 진단 문항들을 검수하라. 각 문항마다 순서대로:\n",
+        "1. [유형 일치 — 최우선 하드 게이트] cloze/inverse에서 문두 의문사와 "
+        "expected_answer의 형식이 맞는지 먼저 본다. 매핑: '누구'→사람/집단, "
+        "'무엇/뭐'→사물·개념·용어, '왜'→이유(문장), '언제'→시점, '어디'→장소, "
+        "'몇/얼마'→수·양. **문두가 '누구'인데 expected_answer가 사람이 아니면"
+        "(예: '도덕적 주체' 같은 개념) 무조건 valid=false.** 다른 어떤 조건보다 "
+        "이 불일치가 우선한다. mcq는 이 검사 건너뛴다.\n",
+        "2. 위 게이트를 통과했으면, 출제 정보(answer_index/expected_answer)를 "
+        "보지 말고 문제를 직접 풀어 my_answer에 적어라. 수학은 계산 최종값만. "
+        "mcq는 보기 문구와 같은 형식으로.\n",
+        "3. cloze/inverse: expected_answer가 my_answer와 의미상 일치하면 "
+        "valid=true, 아니면 false. mcq의 valid는 항상 true(시스템이 대조).\n",
         '출력 JSON: {"reviews": [{"i": 문항번호, "my_answer": str, "valid": bool}, ...]} '
         "— 모든 문항에 대해 하나씩.\n\n",
     ]
@@ -301,12 +306,23 @@ class DiagnosticService:
         if question.answered:
             raise HTTPException(status_code=409, detail="이미 채점된 문항입니다.")
 
-        is_correct = await self._grade(question, selected_index, answer_text)
+        is_correct, judge_reason = await self._grade_with_feedback(
+            question, selected_index, answer_text
+        )
 
         question.answered = True
         question.selected_index = selected_index
         question.answer_text = answer_text
         question.is_correct = is_correct
+
+        # 오답 피드백(요청): 왜 틀렸는지. 자유서술은 심판 rationale, 객관식은
+        # 정답 해설(추가 LLM 없이). 정답이면 굳이 채우지 않는다.
+        feedback: str | None = None
+        if not is_correct:
+            if question.qtype == "mcq":
+                feedback = question.explanation or None
+            else:
+                feedback = judge_reason or question.explanation or None
 
         mastery = self.repo.get_mastery(
             session_id=session_id, concept_id=question.concept_id
@@ -358,6 +374,7 @@ class DiagnosticService:
             correct_index=question.answer_index if question.qtype == "mcq" else None,
             correct_answer=question.expected_answer if question.qtype != "mcq" else None,
             explanation=question.explanation,
+            feedback=feedback,
             mastery=self._mastery_out(mastery, concepts[question.concept_id].name),
             done=next_q is None,
             progress=progress,
@@ -449,10 +466,23 @@ class DiagnosticService:
         selected_index: int | None,
         answer_text: str | None,
     ) -> bool:
+        """정답 여부만 반환(하위호환). 피드백까지 필요하면 _grade_with_feedback."""
+        correct, _ = await self._grade_with_feedback(
+            question, selected_index, answer_text
+        )
+        return correct
+
+    async def _grade_with_feedback(
+        self,
+        question: DiagnosticQuestion,
+        selected_index: int | None,
+        answer_text: str | None,
+    ) -> tuple[bool, str]:
+        """(정답 여부, 채점 사유). 사유는 자유서술 심판의 rationale — 오답 설명용."""
         if question.qtype == "mcq":
             if selected_index is None:
                 raise HTTPException(status_code=400, detail="객관식: selected_index 필요.")
-            return selected_index == question.answer_index
+            return selected_index == question.answer_index, ""
 
         text = (answer_text or "").strip()
         if not text:
@@ -462,8 +492,9 @@ class DiagnosticService:
         if question.qtype == "cloze" and grading.exact_match(
             text, expected, question.acceptable_answers
         ):
-            return True  # 정규화 정확매칭 빠른 경로
-        return (await self._judge(question.question, expected, text)).correct
+            return True, ""  # 정규화 정확매칭 빠른 경로
+        verdict = await self._judge(question.question, expected, text)
+        return verdict.correct, verdict.rationale
 
     async def _judge(self, question: str, expected: str, answer: str) -> JudgeVerdict:
         raw = await solar_client.generate_json(
