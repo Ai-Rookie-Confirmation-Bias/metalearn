@@ -8,6 +8,7 @@ LLM JSON 출력은 이 스키마로 2차 검증해 할루시네이션/파싱 에
 """
 from __future__ import annotations
 
+import uuid
 from typing import Annotated, Literal, Union
 
 from pydantic import BaseModel, Field, TypeAdapter, field_validator
@@ -76,7 +77,7 @@ class JudgeVerdict(BaseModel):
 
 # ── 요청 ──────────────────────────────────────────────────────────────
 class StartRequest(BaseModel):
-    course_id: int
+    course_id: uuid.UUID
 
 
 class AnswerRequest(BaseModel):
@@ -90,8 +91,8 @@ class AnswerRequest(BaseModel):
 class QuestionOut(BaseModel):
     """출제용(정답 비공개). options는 mcq에서만 채워진다."""
 
-    id: int
-    concept_id: int
+    id: uuid.UUID
+    concept_id: uuid.UUID
     concept_name: str
     qtype: QuestionType
     question: str
@@ -99,7 +100,7 @@ class QuestionOut(BaseModel):
 
 
 class MasteryOut(BaseModel):
-    concept_id: int
+    concept_id: uuid.UUID
     concept_name: str
     strength: float
     resolved: bool
@@ -112,7 +113,7 @@ class Progress(BaseModel):
 
 
 class SessionState(BaseModel):
-    session_id: int
+    session_id: uuid.UUID
     status: str
     done: bool
     progress: Progress

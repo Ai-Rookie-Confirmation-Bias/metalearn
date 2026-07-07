@@ -1,4 +1,6 @@
-"""[1.Controller] 정밀 진단(BKT) API."""
+"""[1.Controller] 정밀 진단(BKT) API. (병합 2단계: UUID)"""
+import uuid
+
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
@@ -20,7 +22,9 @@ async def start(req: StartRequest, db: Session = Depends(get_db)) -> SessionStat
 
 
 @router.get("/{session_id}", response_model=SessionState)
-async def get_state(session_id: int, db: Session = Depends(get_db)) -> SessionState:
+async def get_state(
+    session_id: uuid.UUID, db: Session = Depends(get_db)
+) -> SessionState:
     return await DiagnosticService(db).get_state(session_id)
 
 
@@ -28,8 +32,8 @@ async def get_state(session_id: int, db: Session = Depends(get_db)) -> SessionSt
     "/{session_id}/questions/{question_id}/answer", response_model=AnswerResult
 )
 async def answer(
-    session_id: int,
-    question_id: int,
+    session_id: uuid.UUID,
+    question_id: uuid.UUID,
     req: AnswerRequest,
     db: Session = Depends(get_db),
 ) -> AnswerResult:

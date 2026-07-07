@@ -2,14 +2,18 @@
 
 ISSUE-008 설계 ("넓이는 미리, 깊이는 JIT"):
 - 업로드 시점: 마크다운 헤딩 기준 섹션별 추출로 타겟 개념을 빠짐없이 확보.
-  타겟은 source='document' + 출처 섹션(source_anchor), LLM이 보충한
-  선수개념은 source='llm'으로 출처를 구분한다.
+  타겟은 source='book' + 출처 섹션(source_anchor), LLM이 보충한
+  선수개념은 source='ai_prereq'로 출처를 구분한다(정본 규약, MERGE_AGREEMENT).
 - 커리큘럼 시점(2단계, 미구현): source_anchor로 섹션 원문을 찾아
   하위 깊이를 JIT 확장.
+
+병합 2단계: Integer→UUID 포팅(정본 모델 사용). 청크 임베딩은 passage 모델
+(ISSUE-015 비대칭 임베딩), 개념 임베딩은 query 모델 유지.
 """
 import asyncio
 import logging
 import re
+import uuid
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -96,9 +100,13 @@ def _dedup_prompt(pairs: list) -> str:
     return "".join(lines)
 
 
-def _dedup_rank(concept) -> tuple[int, int, int]:
-    """병합 시 남길 노드 우선순위: 교재 출처 > 얕은 depth > 먼저 생성."""
-    return (0 if concept.source == "document" else 1, concept.depth_level, concept.id)
+def _dedup_rank(concept) -> tuple:
+    """병합 시 남길 노드 우선순위: 교재 출처 > 얕은 depth > id(결정적 타이브레이크).
+
+    UUID 포팅 주: Integer PK 시절의 '먼저 생성' 순서는 UUID에선 없다 —
+    id 비교는 결정성 보장용 타이브레이크로만 쓴다(대부분 source/depth에서 갈림).
+    """
+    return (0 if concept.source == "book" else 1, concept.depth_level, concept.id)
 
 
 def _normalize_name(name: str) -> str:
@@ -224,7 +232,7 @@ class DocumentService:
                 f" (섹션: {chunk.anchor}): {exc}"
             ) from exc
 
-    async def _dedup_pass(self, course_id: int) -> None:
+    async def _dedup_pass(self, course_id: uuid.UUID) -> None:
         """일괄 중복 청소 (ISSUE-011): 유사도는 후보 수집만, 판정은 LLM이.
 
         실측 근거: 진짜 중복이 0.85~0.92 구간에 별개 개념과 섞여 분포해
@@ -239,7 +247,7 @@ class DocumentService:
         )
         if not pairs:
             return
-        same_ids: list[tuple[int, int]] = []
+        same_ids: list[tuple[uuid.UUID, uuid.UUID]] = []
         for i in range(0, len(pairs), settings.DEDUP_JUDGE_BATCH_SIZE):
             batch = pairs[i : i + settings.DEDUP_JUDGE_BATCH_SIZE]
             try:
@@ -255,9 +263,9 @@ class DocumentService:
                     same_ids.append((a.id, b.id))
 
         # 체인 병합(A~B, B~C) 대비: 삭제된 id를 최종 생존 id로 따라간다.
-        redirect: dict[int, int] = {}
+        redirect: dict[uuid.UUID, uuid.UUID] = {}
 
-        def final_id(cid: int) -> int:
+        def final_id(cid: uuid.UUID) -> uuid.UUID:
             while cid in redirect:
                 cid = redirect[cid]
             return cid
@@ -326,29 +334,32 @@ class DocumentService:
         texts = [c.text[:_CHUNK_EMBED_MAX_CHARS] for c in chunks]
         vectors: list[list[float]] = []
         for i in range(0, len(texts), _CHUNK_EMBED_BATCH):
+            # ISSUE-015 비대칭 임베딩: 청크=passage 모델 (개념=query 모델 유지)
             vectors.extend(
-                await solar_client.embed_batch(texts[i : i + _CHUNK_EMBED_BATCH])
+                await solar_client.embed_batch(
+                    texts[i : i + _CHUNK_EMBED_BATCH], purpose="passage"
+                )
             )
         return vectors
 
     async def _persist_graph(
         self,
-        course_id: int,
+        course_id: uuid.UUID,
         extractions: list[tuple[str, ExtractionResult]],
-        chunk_ids: list[int] | None = None,
+        chunk_ids: list[uuid.UUID] | None = None,
     ) -> None:
         """추출 결과를 2단계로 저장한다.
 
-        1단계: 모든 섹션의 타겟(root)을 먼저 등록 — 교재 출처(document+anchor) 확정.
+        1단계: 모든 섹션의 타겟(root)을 먼저 등록 — 교재 출처(book+anchor) 확정.
         2단계: 선수관계 연결. 선수 노드는 기존 개념과 이름/임베딩으로 중복 판정해
-               병합하고, 새로 만들 때만 source='llm'(LLM 보충 지식)으로 남긴다.
+               병합하고, 새로 만들 때만 source='ai_prereq'(LLM 보충 지식)으로 남긴다.
 
         조건부 섹션 계층 (ISSUE-009): 청크 타겟이 SECTION_NODE_MIN_FANOUT 이상이면
         섹션 대표 개념을 depth 0으로 세우고 타겟들을 depth 1 + kind='contains'로
         내린다. 미달 청크(논문 등)는 섹션 노드 없이 타겟이 그대로 depth 0.
         """
-        by_norm: dict[str, int] = {}  # 정규화 이름 → concept_id
-        edges: set[tuple[int, int]] = set()
+        by_norm: dict[str, uuid.UUID] = {}  # 정규화 이름 → concept_id
+        edges: set[tuple[uuid.UUID, uuid.UUID]] = set()
         embed_cache = await self._embed_all(extractions)
         ids = chunk_ids or [None] * len(extractions)
 
@@ -357,8 +368,8 @@ class DocumentService:
             depth_level: int,
             source: str,
             anchor: str | None,
-            chunk_id: int | None,
-        ) -> int:
+            chunk_id: uuid.UUID | None,
+        ) -> uuid.UUID:
             norm = _normalize_name(node.name)
             cid = by_norm.get(norm)
             if cid is not None:
@@ -393,11 +404,11 @@ class DocumentService:
             depth_level: int,
             source: str,
             anchor: str | None,
-            chunk_id: int | None,
-        ) -> int:
+            chunk_id: uuid.UUID | None,
+        ) -> uuid.UUID:
             cid = await resolve(node, depth_level, source, anchor, chunk_id)
             for child in node.prerequisites:
-                child_id = await upsert(child, depth_level + 1, "llm", None, None)
+                child_id = await upsert(child, depth_level + 1, "ai_prereq", None, None)
                 edge = (cid, child_id)
                 if edge not in edges and cid != child_id:
                     self.repo.add_edge(from_concept_id=cid, to_concept_id=child_id)
@@ -411,7 +422,7 @@ class DocumentService:
             )
 
         # 1단계: 섹션 노드 + 타겟 전부 먼저 (교재 출처 확정 — 선수로도 등장하는
-        # 개념이 llm 출처로 먼저 생기는 것을 방지)
+        # 개념이 ai_prereq 출처로 먼저 생기는 것을 방지)
         for (anchor, extraction), chunk_id in zip(extractions, ids):
             root_depth = 0
             if sectioned(extraction):
@@ -423,23 +434,23 @@ class DocumentService:
                         description=extraction.section.description,
                     ),
                     0,
-                    "document",
+                    "book",
                     anchor,
                     chunk_id,
                 )
             for root in extraction.concepts:
-                await resolve(root, root_depth, "document", anchor, chunk_id)
+                await resolve(root, root_depth, "book", anchor, chunk_id)
 
         # 2단계: 선수 연결 + 섹션 contains 연결
         for (anchor, extraction), chunk_id in zip(extractions, ids):
             root_depth = 0
-            section_id: int | None = None
+            section_id: uuid.UUID | None = None
             if sectioned(extraction):
                 root_depth = 1
                 assert extraction.section is not None
                 section_id = by_norm[_normalize_name(extraction.section.name)]
             for root in extraction.concepts:
-                cid = await upsert(root, root_depth, "document", anchor, chunk_id)
+                cid = await upsert(root, root_depth, "book", anchor, chunk_id)
                 if section_id is not None and section_id != cid:
                     edge = (section_id, cid)
                     if edge not in edges:
@@ -452,19 +463,19 @@ class DocumentService:
 
     def _merge_concept(
         self,
-        concept_id: int,
+        concept_id: uuid.UUID,
         node: ConceptNode,
         depth_level: int,
         source: str,
         anchor: str | None,
-        chunk_id: int | None = None,
+        chunk_id: uuid.UUID | None = None,
     ) -> None:
-        """중복 판정된 기존 개념에 병합. 교재(document) 출처가 llm보다 우선."""
+        """중복 판정된 기존 개념에 병합. 교재(book) 출처가 ai_prereq보다 우선."""
         concept = self.repo.get_concept(concept_id)
         if concept is None:
             return
-        if source == "document" and concept.source == "llm":
-            concept.source = "document"
+        if source == "book" and concept.source == "ai_prereq":
+            concept.source = "book"
             concept.source_anchor = anchor
             concept.source_chunk_id = chunk_id
             concept.description = node.description  # 교재 설명이 권위
@@ -472,7 +483,7 @@ class DocumentService:
             concept.depth_level = depth_level
         self.db.flush()
 
-    def get_course_detail(self, course_id: int) -> CourseDetail:
+    def get_course_detail(self, course_id: uuid.UUID) -> CourseDetail:
         course = self.repo.get_course(course_id)
         if course is None:
             raise HTTPException(status_code=404, detail="코스를 찾을 수 없습니다.")

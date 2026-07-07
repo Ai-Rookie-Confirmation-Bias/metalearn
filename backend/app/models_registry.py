@@ -6,6 +6,7 @@ SQLAlchemy는 임포트된 모델만 메타데이터에 등록한다. 요청 경
 """
 from app.features.auth import models as _auth  # noqa: F401
 from app.features.curriculum import models as _curriculum  # noqa: F401
+from app.features.diagnostic import models as _diagnostic  # noqa: F401
 from app.features.learning import models as _learning  # noqa: F401
 from app.features.materials import models as _materials  # noqa: F401
 from app.features.seed import models as _seed  # noqa: F401

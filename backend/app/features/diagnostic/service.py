@@ -8,6 +8,7 @@
 """
 import logging
 import re
+import uuid
 
 from fastapi import HTTPException
 from pydantic import ValidationError
@@ -17,12 +18,9 @@ from app.core.config import settings
 from app.core.llm.solar import solar_client
 from app.features.diagnostic import bkt, grading
 from app.features.diagnostic.quiz_coerce import coerce_quiz_draft
-from app.features.diagnostic.models import (
-    ConceptMastery,
-    DiagnosticQuestion,
-    DiagnosticSession,
-)
+from app.features.diagnostic.models import DiagnosticQuestion, DiagnosticSession
 from app.features.diagnostic.repository import DiagnosticRepository
+from app.features.learning.models import ConceptMastery
 from app.features.diagnostic.schemas import (
     QUIZ_ADAPTER,
     AnswerResult,
@@ -37,7 +35,7 @@ from app.features.diagnostic.schemas import (
     QuizDraft,
     SessionState,
 )
-from app.features.documents.models import Concept
+from app.features.seed.models import Concept
 
 _log = logging.getLogger("uvicorn.error")
 
@@ -158,7 +156,7 @@ def _quiz_prompt(concept: Concept, excerpt: str | None = None) -> str:
 def _batch_quiz_prompt(
     concepts: list[Concept],
     per_concept: int,
-    excerpts: dict[int, str] | None = None,
+    excerpts: dict[uuid.UUID, str] | None = None,
 ) -> str:
     excerpts = excerpts or {}
     lines = [
@@ -175,7 +173,7 @@ def _batch_quiz_prompt(
     ]
     # 같은 청크를 공유하는 개념이 많으므로(섹션 대표+하위) 원문은 한 번만 싣고
     # 개념 줄에서 태그로 참조 — 프롬프트 중복 방지.
-    ref_of: dict[int, int] = {}  # chunk_id → 원문 번호
+    ref_of: dict[uuid.UUID, int] = {}  # chunk_id → 원문 번호
     for c in concepts:
         cid = c.source_chunk_id
         if cid is not None and cid in excerpts and cid not in ref_of:
@@ -232,7 +230,7 @@ class DiagnosticService:
         )
 
     # ── 공개 API ──────────────────────────────────────────────
-    async def start(self, course_id: int) -> SessionState:
+    async def start(self, course_id: uuid.UUID) -> SessionState:
         course = self.repo.get_course(course_id)
         if course is None:
             raise HTTPException(status_code=404, detail="코스를 찾을 수 없습니다.")
@@ -256,6 +254,7 @@ class DiagnosticService:
             sub_ids = self.repo.get_all_sub_ids(concept_ids)
             main_concepts = [c for c in concepts if c.id not in sub_ids]
             self.repo.create_masteries(
+                user_id=course.user_id,
                 session_id=session.id,
                 concept_ids=concept_ids,
                 strength_init=settings.BKT_P_INIT,
@@ -265,6 +264,7 @@ class DiagnosticService:
             await self._ensure_questions(session.id, main_concepts)
         else:
             self.repo.create_masteries(
+                user_id=course.user_id,
                 session_id=session.id,
                 concept_ids=concept_ids,
                 strength_init=settings.BKT_P_INIT,
@@ -274,14 +274,14 @@ class DiagnosticService:
         self.db.flush()
         return await self._build_state(session)
 
-    async def get_state(self, session_id: int) -> SessionState:
+    async def get_state(self, session_id: uuid.UUID) -> SessionState:
         session = self._require_session(session_id)
         return await self._build_state(session)
 
     async def answer(
         self,
-        session_id: int,
-        question_id: int,
+        session_id: uuid.UUID,
+        question_id: uuid.UUID,
         *,
         selected_index: int | None,
         answer_text: str | None,
@@ -360,11 +360,11 @@ class DiagnosticService:
     def _propagate(
         self,
         *,
-        session_id: int,
-        concept_id: int,
+        session_id: uuid.UUID,
+        concept_id: uuid.UUID,
         updated_strength: float,
         correct: bool,
-        _visited: set[int] | None = None,
+        _visited: set[uuid.UUID] | None = None,
         _hop: int = 1,
     ) -> None:
         """정/오답에서 선수/후속 개념으로 strength을 전파한다 (BFS, 최대 2-hop).
@@ -468,7 +468,7 @@ class DiagnosticService:
             return JudgeVerdict(correct=False, rationale="채점 결과 파싱 실패")
 
     # ── 내부 로직 ─────────────────────────────────────────────
-    def _require_session(self, session_id: int) -> DiagnosticSession:
+    def _require_session(self, session_id: uuid.UUID) -> DiagnosticSession:
         session = self.repo.get_session(session_id)
         if session is None:
             raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다.")
@@ -491,7 +491,7 @@ class DiagnosticService:
         )
 
     async def _advance(
-        self, session: DiagnosticSession, concepts: dict[int, Concept]
+        self, session: DiagnosticSession, concepts: dict[uuid.UUID, Concept]
     ) -> DiagnosticQuestion | None:
         """활성 문항 → 풀에서 타겟 개념 문항 꺼내기. 타겟 없으면 종료."""
         active = self.repo.get_active_question(session.id)
@@ -539,11 +539,11 @@ class DiagnosticService:
     async def _gate_after_answer(
         self,
         *,
-        session_id: int,
-        concept_id: int,
+        session_id: uuid.UUID,
+        concept_id: uuid.UUID,
         mastery: ConceptMastery,
         correct: bool,
-        concepts: dict[int, Concept],
+        concepts: dict[uuid.UUID, Concept],
     ) -> None:
         """채점 결과(=LLM 판단)로 라우팅. 한 문항으로 해당 개념을 판정한다.
 
@@ -605,9 +605,11 @@ class DiagnosticService:
         unlock_concepts = [concepts[uid] for uid in unlock_ids if uid in concepts]
         await self._ensure_questions(session_id, unlock_concepts)
 
-    def _mark_subtree_known(self, session_id: int, concept_id: int) -> None:
+    def _mark_subtree_known(
+        self, session_id: uuid.UUID, concept_id: uuid.UUID
+    ) -> None:
         """정답이면 그 개념의 하위 전체(선수 + 섹션 하위)를 '안다'고 보고 확정."""
-        visited: set[int] = {concept_id}
+        visited: set[uuid.UUID] = {concept_id}
         frontier = self.repo.get_prerequisite_ids(concept_id) + self.repo.get_contains_child_ids(concept_id)
         while frontier:
             pid = frontier.pop()
@@ -625,7 +627,7 @@ class DiagnosticService:
             frontier.extend(self.repo.get_contains_child_ids(pid))
 
     async def _ensure_questions(
-        self, session_id: int, concepts: list[Concept]
+        self, session_id: uuid.UUID, concepts: list[Concept]
     ) -> None:
         """주어진 개념들의 문항을 배치 생성해 풀에 저장. 이미 있는 개념은 건너뜀.
 
@@ -756,7 +758,7 @@ class DiagnosticService:
         return invalid
 
     def _persist_draft(
-        self, session_id: int, concept_id: int, draft: QuizDraft
+        self, session_id: uuid.UUID, concept_id: uuid.UUID, draft: QuizDraft
     ) -> DiagnosticQuestion:
         draft = coerce_quiz_draft(draft)
         draft.explanation = _clean_explanation(draft.explanation)
@@ -802,7 +804,7 @@ class DiagnosticService:
         return QUIZ_ADAPTER.validate_python(raw)
 
     async def _generate_question(
-        self, session_id: int, concept: Concept
+        self, session_id: uuid.UUID, concept: Concept
     ) -> DiagnosticQuestion:
         try:
             draft = await self._generate_draft(concept)
@@ -822,7 +824,7 @@ class DiagnosticService:
 
     @staticmethod
     def _question_out(
-        q: DiagnosticQuestion, concepts: dict[int, Concept]
+        q: DiagnosticQuestion, concepts: dict[uuid.UUID, Concept]
     ) -> QuestionOut:
         return QuestionOut(
             id=q.id,

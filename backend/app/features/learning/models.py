@@ -110,6 +110,28 @@ class ConceptMastery(Base):
     # locked | todo | learning | mastered
     status: Mapped[str] = mapped_column(String(32), nullable=False, server_default="locked")
     strength: Mapped[float] = mapped_column(Float, nullable=False, server_default="0")
+    # ── 병합(parsing, 진단 세션 작업 상태) ──────────────────────────
+    # 진단(BKT)이 세션 단위로 쓰는 필드. 세션이 끝나면 strength가 씨앗
+    # 초기값으로 남고, 학습 서빙은 status/strength만 소비한다.
+    # TODO(팀 합의): answered_count는 파생값(원칙② 위반 후보) — 진단이
+    # attempts를 기록하게 되면 집계로 대체하고 이 컬럼을 제거한다.
+    session_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("diagnostic_sessions.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    answered_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    # 진단 확정(경계 도달·문항 소진) 여부
+    resolved: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+    # 게이티드 진단의 출제 잠금(상위 오답 시 해제) — status의 'locked'와 별개
+    locked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
     explanation_score: Mapped[float] = mapped_column(
         Float, nullable=False, server_default="0"
     )

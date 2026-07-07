@@ -1,6 +1,7 @@
-"""[2.DTO] 섭취 도메인 입출력 + LLM 추출 스키마."""
+"""[2.DTO] 섭취 도메인 입출력 + LLM 추출 스키마. (병합 2단계: id는 UUID)"""
 from __future__ import annotations
 
+import uuid
 from datetime import datetime
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -56,20 +57,20 @@ class ExtractionResult(BaseModel):
 
 
 class ConceptOut(BaseModel):
-    id: int
+    id: uuid.UUID
     name: str
     description: str
     depth_level: int
-    source: str = "document"  # 'document' = 교재 추출, 'llm' = LLM 보충 선수개념
+    source: str = "book"  # 'book' = 교재 추출, 'ai_prereq' = LLM 보충 선수개념
     source_anchor: str | None = None  # 교재 추출 시 원문 섹션(헤딩 경로)
-    prerequisite_ids: list[int] = Field(default_factory=list)
+    prerequisite_ids: list[uuid.UUID] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
 
 
 class CourseSummary(BaseModel):
-    id: int
-    document_id: int
+    id: uuid.UUID
+    document_id: uuid.UUID
     title: str
     filename: str
     status: str
@@ -79,8 +80,8 @@ class CourseSummary(BaseModel):
 
 
 class CourseDetail(BaseModel):
-    id: int
-    document_id: int
+    id: uuid.UUID
+    document_id: uuid.UUID
     title: str
     filename: str
     status: str

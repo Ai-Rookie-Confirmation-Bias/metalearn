@@ -1,46 +1,18 @@
-"""[5.Entity] 진단 + 수강(enrollments) 도메인."""
+"""[Entity] 진단(BKT) 세션·문항 — UUID 포팅(병합 2단계).
+
+parsing이 재정의했던 Enrollment/ConceptMastery는 삭제하고 정본
+(features/learning/models.py)을 소비한다. 진단이 세션 단위로 쓰는
+숙련도 작업 상태(session_id/answered_count/resolved/locked)는
+learning.ConceptMastery에 흡수됨.
+"""
+import uuid
 from datetime import datetime
 
-from sqlalchemy import (
-    JSON,
-    Boolean,
-    DateTime,
-    Float,
-    ForeignKey,
-    Integer,
-    String,
-    Text,
-    UniqueConstraint,
-    func,
-)
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database import Base
-
-
-class Enrollment(Base):
-    """사용자×코스 수강 및 진단 진행 상태."""
-
-    __tablename__ = "enrollments"
-
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
-    )
-    course_id: Mapped[int] = mapped_column(
-        ForeignKey("courses.id", ondelete="CASCADE"), primary_key=True
-    )
-    diag_status: Mapped[str] = mapped_column(
-        String(32), nullable=False, default="not_started"
-    )
-    diag_q_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    # 계약(ii.md): 진단 완료 시점에 확정 — 씨앗의 천장/바닥 좌표.
-    floor_concept_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    ceiling_concept_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    floor_found: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    purpose: Mapped[str | None] = mapped_column(String(16), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
 
 
 class DiagnosticSession(Base):
@@ -48,64 +20,50 @@ class DiagnosticSession(Base):
 
     __tablename__ = "diagnostic_sessions"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    course_id: Mapped[int] = mapped_column(
-        ForeignKey("courses.id", ondelete="CASCADE"), nullable=False, index=True
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
+    course_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("courses.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    # active | completed
     status: Mapped[str] = mapped_column(String(16), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     completed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
 
-    masteries: Mapped[list["ConceptMastery"]] = relationship(
-        back_populates="session", cascade="all, delete-orphan"
-    )
-
-
-class ConceptMastery(Base):
-    __tablename__ = "concept_mastery"
-    __table_args__ = (
-        UniqueConstraint("session_id", "concept_id", name="uq_mastery_session_concept"),
-    )
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    session_id: Mapped[int] = mapped_column(
-        ForeignKey("diagnostic_sessions.id", ondelete="CASCADE"),
-        nullable=False,
-        index=True,
-    )
-    concept_id: Mapped[int] = mapped_column(
-        ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False, index=True
-    )
-    strength: Mapped[float] = mapped_column(Float, nullable=False, default=0.3)
-    answered_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
-    resolved: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-    locked: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
-
-    session: Mapped["DiagnosticSession"] = relationship(back_populates="masteries")
-
 
 class DiagnosticQuestion(Base):
     __tablename__ = "diagnostic_questions"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    session_id: Mapped[int] = mapped_column(
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    session_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey("diagnostic_sessions.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    concept_id: Mapped[int] = mapped_column(
-        ForeignKey("concepts.id", ondelete="CASCADE"), nullable=False, index=True
+    concept_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("concepts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
+    # mcq | cloze | inverse
     qtype: Mapped[str] = mapped_column(String(16), nullable=False, default="mcq")
     question: Mapped[str] = mapped_column(Text, nullable=False)
-    options: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    options: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     answer_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
     expected_answer: Mapped[str | None] = mapped_column(Text, nullable=True)
-    acceptable_answers: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    acceptable_answers: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
     explanation: Mapped[str] = mapped_column(Text, nullable=False, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     answered: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
@@ -113,5 +71,5 @@ class DiagnosticQuestion(Base):
     answer_text: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )

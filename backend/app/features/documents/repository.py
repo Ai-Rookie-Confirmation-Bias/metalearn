@@ -1,28 +1,34 @@
-"""[4.Repository] Document/Course/Concept/Edge DB 입출력."""
+"""[4.Repository] Document/Course/Concept/Edge DB 입출력.
+
+병합 2단계: parsing의 Integer 모델 대신 정본 UUID 모델
+(materials.Document/DocChunk, seed.Course/Concept/ConceptEdge)을 사용한다.
+"""
+import uuid
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.features.documents.models import (
-    Concept,
-    ConceptEdge,
-    Course,
-    DocChunk,
-    Document,
-)
+from app.features.materials.models import DocChunk, Document
+from app.features.seed.models import Concept, ConceptEdge, Course
 
 
 class DocumentRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def create_document(self, *, user_id: int, filename: str) -> Document:
+    def create_document(self, *, user_id: uuid.UUID, filename: str) -> Document:
         document = Document(user_id=user_id, filename=filename, status="processing")
         self.db.add(document)
         self.db.flush()
         return document
 
     def create_course(
-        self, *, document_id: int, user_id: int, title: str, category: str | None = None
+        self,
+        *,
+        document_id: uuid.UUID,
+        user_id: uuid.UUID,
+        title: str,
+        category: str | None = None,
     ) -> Course:
         course = Course(
             document_id=document_id,
@@ -34,10 +40,10 @@ class DocumentRepository:
         self.db.flush()
         return course
 
-    def get_document(self, document_id: int) -> Document | None:
+    def get_document(self, document_id: uuid.UUID) -> Document | None:
         return self.db.get(Document, document_id)
 
-    def get_course(self, course_id: int) -> Course | None:
+    def get_course(self, course_id: uuid.UUID) -> Course | None:
         stmt = (
             select(Course)
             .where(Course.id == course_id)
@@ -59,7 +65,7 @@ class DocumentRepository:
     def add_chunks(
         self,
         *,
-        document_id: int,
+        document_id: uuid.UUID,
         chunks: list,
         embeddings: list[list[float] | None],
     ) -> list[DocChunk]:
@@ -86,14 +92,14 @@ class DocumentRepository:
     def add_concept(
         self,
         *,
-        course_id: int,
+        course_id: uuid.UUID,
         name: str,
         description: str,
         depth_level: int,
         embedding: list[float] | None,
-        source: str = "document",
+        source: str = "book",  # 정본 규약: book | ai_prereq (MERGE_AGREEMENT)
         source_anchor: str | None = None,
-        source_chunk_id: int | None = None,
+        source_chunk_id: uuid.UUID | None = None,
     ) -> Concept:
         concept = Concept(
             course_id=course_id,
@@ -109,11 +115,11 @@ class DocumentRepository:
         self.db.flush()
         return concept
 
-    def get_concept(self, concept_id: int) -> Concept | None:
+    def get_concept(self, concept_id: uuid.UUID) -> Concept | None:
         return self.db.get(Concept, concept_id)
 
     def find_nearest_concept(
-        self, *, course_id: int, embedding: list[float]
+        self, *, course_id: uuid.UUID, embedding: list[float]
     ) -> tuple[Concept, float] | None:
         """코스 내 최근접 개념과 코사인 유사도(1-거리)를 반환. 없으면 None."""
         dist = Concept.embedding.cosine_distance(embedding)
@@ -130,7 +136,7 @@ class DocumentRepository:
         return concept, 1.0 - float(distance)
 
     def find_similar_pairs(
-        self, *, course_id: int, min_sim: float, limit: int
+        self, *, course_id: uuid.UUID, min_sim: float, limit: int
     ) -> list[tuple[Concept, Concept, float]]:
         """코스 내 임베딩 유사도 min_sim 이상인 개념쌍 (유사도 내림차순).
 
@@ -191,7 +197,11 @@ class DocumentRepository:
         self.db.flush()
 
     def add_edge(
-        self, *, from_concept_id: int, to_concept_id: int, kind: str = "prerequisite"
+        self,
+        *,
+        from_concept_id: uuid.UUID,
+        to_concept_id: uuid.UUID,
+        kind: str = "prerequisite",
     ) -> None:
         if from_concept_id == to_concept_id:
             return

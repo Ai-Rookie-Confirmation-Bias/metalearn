@@ -1,0 +1,8 @@
+# 트라이얼(병합 검증) override — 포트 5432/8000은 metalearn-integration 스택이
+# 점유 중이므로 db는 퍼블리시 없이, backend는 58001로 띄운다.
+# 사용: docker compose -f docker-compose.yml -f docker-compose.trial.yml up -d db
+services:
+  db:
+    ports: !reset []
+  backend:
+    ports: !override ["58001:8000"]

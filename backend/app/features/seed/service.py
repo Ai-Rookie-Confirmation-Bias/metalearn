@@ -10,6 +10,7 @@ build(course_id):
 """
 import logging
 import re
+import uuid
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -18,8 +19,11 @@ from sqlalchemy.orm import Session
 from app.core.config import settings
 from app.core.llm.solar import solar_client
 from app.features.auth.repository import AuthRepository
-from app.features.diagnostic.models import ConceptMastery, DiagnosticSession, Enrollment
-from app.features.documents.models import Chapter, Concept, DocChunk, Document, Section
+from app.features.curriculum.models import Chapter, Section
+from app.features.diagnostic.models import DiagnosticSession
+from app.features.learning.models import ConceptMastery, Enrollment
+from app.features.materials.models import DocChunk, Document
+from app.features.seed.models import Concept, Course
 
 _log = logging.getLogger("uvicorn.error")
 
@@ -32,6 +36,8 @@ _SLUG_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 def _slug_prompt(items: list[tuple[int, str]]) -> str:
+    # UUID 포팅 주: LLM에 UUID를 에코시키면 오타 위험이 크므로 배치 내
+    # 로컬 번호(int)를 id로 쓰고, 응답을 배치 인덱스로 되매핑한다.
     lines = [
         "아래 개념들의 영문 슬러그를 만들어라. 규칙: 소문자 영단어를 '-'로 연결, "
         "간결한 의미 번역(음차 금지, 예: '이진 탐색 트리'→'binary-search-tree').\n",
@@ -46,9 +52,7 @@ class SeedService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    async def build(self, course_id: int, purpose: str = "exam") -> dict:
-        from app.features.documents.models import Course
-
+    async def build(self, course_id: uuid.UUID, purpose: str = "exam") -> dict:
         course = self.db.get(Course, course_id)
         document = self.db.get(Document, course.document_id) if course else None
         if document is None:
@@ -62,7 +66,7 @@ class SeedService:
 
         await self._fill_keys(concepts)
         chapters, sections = self._build_tree(course_id, document, concepts)
-        mastery, floor_id, ceiling_id = self._mastery_seed(course_id, concepts)
+        mastery, floor_id, ceiling_id = self._mastery_seed(course_id, document, concepts)
         self._finalize_enrollment(course_id, floor_id, ceiling_id, purpose)
         self.db.commit()
 
@@ -78,8 +82,9 @@ class SeedService:
                 "gen_status": "pending",
             },
             "placement": {
-                "floor_concept_id": floor_id,
-                "ceiling_concept_id": ceiling_id,
+                # 정본 이름 규약(MERGE_AGREEMENT): floor_concept/ceiling_concept
+                "floor_concept": floor_id,
+                "ceiling_concept": ceiling_id,
                 "purpose": purpose,
             },
             "mastery": mastery,
@@ -91,25 +96,31 @@ class SeedService:
         if not pending:
             return
         seen: set[str] = {c.key for c in concepts if c.key}
-        resolved: dict[int, str] = {}
+        resolved: dict[uuid.UUID, str] = {}
         for i in range(0, len(pending), _SLUG_BATCH):
             batch = pending[i : i + _SLUG_BATCH]
             try:
                 raw = await solar_client.generate_json(
-                    _slug_prompt([(c.id, c.name) for c in batch]),
+                    # UUID 포팅: 프롬프트 id는 배치 로컬 번호 → 인덱스로 되매핑
+                    _slug_prompt([(j, c.name) for j, c in enumerate(batch)]),
                     system=_SLUG_SYSTEM,
                 )
                 for row in raw.get("slugs") or []:
-                    if isinstance(row, dict) and isinstance(row.get("id"), int):
+                    if (
+                        isinstance(row, dict)
+                        and isinstance(row.get("id"), int)
+                        and 0 <= row["id"] < len(batch)
+                    ):
                         slug = str(row.get("slug", "")).strip().lower()
                         if _SLUG_RE.match(slug):
-                            resolved[row["id"]] = slug[:100]
+                            resolved[batch[row["id"]].id] = slug[:100]
             except Exception as exc:  # noqa: BLE001 — 폴백 슬러그로 진행
                 _log.warning("슬러그 배치 실패, 폴백 사용: %s", exc)
         for c in pending:
             slug = resolved.get(c.id) or f"concept-{c.id}"
             if slug in seen:
-                slug = f"{slug}-{c.id}"
+                # key는 String(128) — UUID(36자) 접미가 넘치지 않게 앞부분을 자름
+                slug = f"{slug[:90]}-{c.id}"
             seen.add(slug)
             c.key = slug
         self.db.flush()
@@ -118,7 +129,7 @@ class SeedService:
 
     # ── ③ chapters/sections ────────────────────────────────────
     def _build_tree(
-        self, course_id: int, document: Document, concepts: list[Concept]
+        self, course_id: uuid.UUID, document: Document, concepts: list[Concept]
     ) -> tuple[list[Chapter], list[Section]]:
         # 재실행 대비: 기존 트리는 지우고 다시 만든다 (gen_status pending 전제)
         for old in self.db.scalars(select(Chapter).where(Chapter.course_id == course_id)):
@@ -138,21 +149,32 @@ class SeedService:
             chapters.append(chapter)
         self.db.flush()
 
-        # 대표 개념(depth 0, 교재 출처)을 출처 청크의 파트로 배정
-        chunk_part: dict[int, int] = {
-            row.id: row.part_index or 0
-            for row in self.db.scalars(
-                select(DocChunk).where(DocChunk.document_id == document.id)
+        # 대표 개념(depth 0, 교재 출처)을 출처 청크의 파트로 배정.
+        # UUID 포팅 주: Integer id의 '생성순 ≈ 문서순'이 사라졌으므로 문서
+        # 순서는 출처 청크의 chunk_index로 잡는다(원 의도인 문서순의 정밀판).
+        chunk_part: dict[uuid.UUID, int] = {}
+        chunk_order: dict[uuid.UUID, int] = {}
+        for row in self.db.scalars(
+            select(DocChunk).where(DocChunk.document_id == document.id)
+        ):
+            chunk_part[row.id] = row.part_index or 0
+            chunk_order[row.id] = row.chunk_index
+
+        def doc_order(c: Concept) -> tuple:
+            return (
+                chunk_part.get(c.source_chunk_id, 0),
+                chunk_order.get(c.source_chunk_id, -1),
+                c.id,
             )
-        }
+
         reps = sorted(
-            (c for c in concepts if c.depth_level == 0 and c.source == "document"),
-            key=lambda c: (chunk_part.get(c.source_chunk_id or -1, 0), c.id),
+            (c for c in concepts if c.depth_level == 0 and c.source == "book"),
+            key=doc_order,
         )
         sections: list[Section] = []
-        per_chapter_count: dict[int, int] = {}
+        per_chapter_count: dict[uuid.UUID, int] = {}
         for concept in reps:
-            part = chunk_part.get(concept.source_chunk_id or -1, 0)
+            part = chunk_part.get(concept.source_chunk_id, 0)
             # part 0(첫 경계 이전)은 1장으로, 범위 밖은 마지막 장으로
             idx = min(max(part, 1), len(chapters)) - 1 if part_titles else 0
             chapter = chapters[idx]
@@ -171,17 +193,17 @@ class SeedService:
 
     # ── ④ mastery/enrollment ───────────────────────────────────
     def _mastery_seed(
-        self, course_id: int, concepts: list[Concept]
-    ) -> tuple[list[dict], int | None, int | None]:
+        self, course_id: uuid.UUID, document: Document, concepts: list[Concept]
+    ) -> tuple[list[dict], uuid.UUID | None, uuid.UUID | None]:
         # 진단 신호가 가장 많은 세션을 채택 (dev에는 미응답 세션이 쌓일 수 있음)
         sessions = list(
             self.db.scalars(
                 select(DiagnosticSession)
                 .where(DiagnosticSession.course_id == course_id)
-                .order_by(DiagnosticSession.id.desc())
+                .order_by(DiagnosticSession.created_at.desc())
             )
         )
-        strengths: dict[int, ConceptMastery] = {}
+        strengths: dict[uuid.UUID, ConceptMastery] = {}
         best_signal = -1
         for session in sessions:
             rows = list(
@@ -196,10 +218,27 @@ class SeedService:
                 best_signal = signal
                 strengths = {m.concept_id: m for m in rows}
 
+        # UUID 포팅 주: floor/ceiling은 문서순 좌표 — Integer id 순 대신 출처
+        # 청크의 (part, chunk_index)로 문서 순서를 잡는다 (_build_tree와 동일).
+        chunk_part: dict[uuid.UUID, int] = {}
+        chunk_order: dict[uuid.UUID, int] = {}
+        for row in self.db.scalars(
+            select(DocChunk).where(DocChunk.document_id == document.id)
+        ):
+            chunk_part[row.id] = row.part_index or 0
+            chunk_order[row.id] = row.chunk_index
+
         mastery: list[dict] = []
-        floor_id: int | None = None
-        ceiling_id: int | None = None
-        for c in sorted(concepts, key=lambda x: x.id):
+        floor_id: uuid.UUID | None = None
+        ceiling_id: uuid.UUID | None = None
+        for c in sorted(
+            concepts,
+            key=lambda x: (
+                chunk_part.get(x.source_chunk_id, 0),
+                chunk_order.get(x.source_chunk_id, -1),
+                x.id,
+            ),
+        ):
             m = strengths.get(c.id)
             if m is None:
                 status, strength = "locked", 0.0
@@ -219,15 +258,20 @@ class SeedService:
         return mastery, floor_id, ceiling_id
 
     def _finalize_enrollment(
-        self, course_id: int, floor_id: int | None, ceiling_id: int | None, purpose: str
+        self,
+        course_id: uuid.UUID,
+        floor_id: uuid.UUID | None,
+        ceiling_id: uuid.UUID | None,
+        purpose: str,
     ) -> None:
         user = AuthRepository(self.db).get_default_user()
         enrollment = self.db.get(Enrollment, (user.id, course_id))
         if enrollment is None:
             enrollment = Enrollment(user_id=user.id, course_id=course_id)
             self.db.add(enrollment)
-        enrollment.floor_concept_id = floor_id
-        enrollment.ceiling_concept_id = ceiling_id
+        # 정본 이름 규약: floor_concept/ceiling_concept (*_concept_id 아님)
+        enrollment.floor_concept = floor_id
+        enrollment.ceiling_concept = ceiling_id
         enrollment.floor_found = floor_id is not None
         enrollment.purpose = purpose
         enrollment.diag_status = "completed"

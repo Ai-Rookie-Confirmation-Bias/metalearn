@@ -1,4 +1,6 @@
-"""[1.Controller] 문서 섭취 API (documents → courses → concepts)."""
+"""[1.Controller] 문서 섭취 API (documents → courses → concepts). (병합 2단계: UUID)"""
+import uuid
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
@@ -37,5 +39,5 @@ def list_courses(db: Session = Depends(get_db)) -> list[CourseSummary]:
 
 
 @router.get("/courses/{course_id}", response_model=CourseDetail)
-def get_course(course_id: int, db: Session = Depends(get_db)) -> CourseDetail:
+def get_course(course_id: uuid.UUID, db: Session = Depends(get_db)) -> CourseDetail:
     return DocumentService(db).get_course_detail(course_id)

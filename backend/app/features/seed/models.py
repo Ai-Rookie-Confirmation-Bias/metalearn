@@ -9,6 +9,7 @@
 import uuid
 from datetime import datetime
 
+from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import (
     DateTime,
     ForeignKey,
@@ -23,6 +24,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
+from app.features.materials.models import EMBED_DIM
 
 
 class Course(Base):
@@ -46,6 +48,10 @@ class Course(Base):
     concepts: Mapped[list["Concept"]] = relationship(
         back_populates="course", cascade="all, delete-orphan"
     )
+    # 병합(parsing): 코스 목록/상세에서 문서 메타(filename/status) 접근용.
+    document: Mapped["Document"] = relationship(  # noqa: F821 — materials.models.Document
+        "Document", back_populates="courses"
+    )
 
 
 class Concept(Base):
@@ -61,16 +67,42 @@ class Concept(Base):
         nullable=False,
         index=True,
     )
-    key: Mapped[str] = mapped_column(String(128), nullable=False)
+    # 코스 내 유니크 영문 슬러그 — 커리큘럼 생성 프롬프트 키.
+    # TODO(병합, ISSUE-001): parsing 섭취는 추출 시점에 key가 없고 씨앗 조립
+    # (seed/service._fill_keys)에서 채운다 → 잠정 nullable. 팀 합의 후
+    # NOT NULL 복원(MERGE_AGREEMENT: NOT NULL + UNIQUE(course_id, key)).
+    key: Mapped[str | None] = mapped_column(String(128), nullable=True)
     name: Mapped[str] = mapped_column(String(512), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # book | ai_prereq  (개념 출처. 근거 내용은 blocks/external_refs에 붙음)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     depth_level: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # 병합(parsing): 교재 추출 개념의 원문 섹션(헤딩 경로) — 사람이 읽는 표시용.
+    source_anchor: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 병합(parsing): 원문 청크 FK — 문항/JIT 근거 주입 시 원문 조회 키.
+    source_chunk_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("doc_chunks.id", ondelete="SET NULL"), nullable=True
+    )
+    # 병합(parsing, ISSUE-015): 상류가 저장한 개념 임베딩(query 모델) — 하류는
+    # 재임베딩 없이 소비. doc_chunks.embedding(passage)과 비대칭 쌍.
+    embedding: Mapped[list[float] | None] = mapped_column(
+        HALFVEC(EMBED_DIM), nullable=True
+    )
+    # 병합(parsing): 생성 시각 (섭취 파이프라인 진행 로그·정렬 보조).
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
     course: Mapped["Course"] = relationship(back_populates="concepts")
     external_refs: Mapped[list["ExternalRef"]] = relationship(
         back_populates="concept", cascade="all, delete-orphan"
+    )
+    # 병합(parsing): 이 개념이 from(의존)인 에지 목록 — 선수 id 조회용
+    # (그래프 방향 규약: from=의존 → to=선수, GRAPH_ORIENTATION_CONTRACT).
+    prerequisite_edges: Mapped[list["ConceptEdge"]] = relationship(
+        "ConceptEdge",
+        foreign_keys="ConceptEdge.from_concept_id",
+        cascade="all, delete-orphan",
     )
 
 
