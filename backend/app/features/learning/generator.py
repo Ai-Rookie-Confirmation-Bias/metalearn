@@ -99,14 +99,25 @@ def build_prompt(inp: GenerationInput) -> str:
     evidence_lines: list[str] = []
     if inp.concept_source == ContentSource.BOOK:
         for c in inp.chunks:
-            evidence_lines.append(f"- (chunk {c.id}) {c.content[:800]}")
+            evidence_lines.append(f"- (chunk {c.id}) {c.content[:1500]}")
     else:
         for r in inp.external_refs:
-            evidence_lines.append(f"- (ref {r.id}) {r.title or ''} — {(r.snippet or '')[:600]}")
+            evidence_lines.append(f"- (ref {r.id}) {r.title or ''} — {(r.snippet or '')[:1000]}")
     evidence = "\n".join(evidence_lines) if evidence_lines else "(근거 없음)"
 
-    return f"""당신은 학습 콘텐츠 생성기다. 아래 근거 발췌만 사용해 블록을 생성한다.
-근거에 없는 사실을 지어내지 마라. 학습자가 직접 꺼내게(인출) 하는 문제 중심으로 구성한다.
+    return f"""당신은 학습 콘텐츠 생성기다. 아래 근거 발췌만 사용해 한 절(section)의
+학습 블록을 만든다. 근거에 없는 사실은 지어내지 마라.
+
+구성 원칙 — "충분히 가르친 뒤, 인출로 굳힌다":
+1) 먼저 개념을 원문 근거로 **충분히 설명**한다(concept 블록). 원문을 요약·재구성해
+   [정의 → 왜 필요한가/맥락 → 동작 원리 → 구체 예시] 순으로 풀어라. body는 최소
+   4~6문장으로 충실하게 쓰고, 내용이 많으면 concept 블록을 2개로 나눠도 된다.
+2) 필요하면 analogy(비유)로 직관을 돕는다.
+3) 그런 다음 인출 문제(cloze·mcq·explainBack)를 충분히 배치해 방금 배운 것을
+   학습자가 직접 꺼내게 한다(인출학습은 유지·강화한다).
+**핵심 규칙: 모든 인출 문제의 정답 근거는 위 설명(concept/analogy) 안에 반드시
+들어 있어야 한다. 설명하지 않은 것을 묻지 마라 — 학습자가 방금 읽은 설명만으로
+풀 수 있어야 한다.** 블록 순서는 반드시 '설명 먼저 → 인출 나중'.
 
 CONCEPT_NAME: {inp.concept_name}
 CONCEPT_DESC: {inp.concept_description or "(없음)"}
@@ -115,7 +126,8 @@ DIFFICULTY: {difficulty_word}
 [근거 발췌 — 이 내용만 사실로 사용]
 {evidence}
 
-BLOCKS_JSON 형식으로만 응답한다. 마크다운/설명 없이 JSON 하나:
+BLOCKS_JSON 형식으로만 응답한다. 마크다운/설명 없이 JSON 하나
+(concept는 1~2개로 충분히 설명, 그 뒤 인출 문제들):
 {{"blocks": [
   {{"type": "concept", "difficulty": "mid", "data": {{"title": "...", "body": "...", "whyItMatters": "..."}}}},
   {{"type": "analogy", "difficulty": "easy", "data": {{"label": "비유", "text": "..."}}}},
@@ -231,7 +243,7 @@ def _evidence_text(inp: GenerationInput) -> str:
     """프롬프트에 넣은 것과 동일한 근거 발췌 텍스트(대조 기준)."""
     lines: list[str] = []
     if inp.concept_source == ContentSource.BOOK:
-        lines = [c.content[:800] for c in inp.chunks]
+        lines = [c.content[:1500] for c in inp.chunks]
     else:
         lines = [f"{r.title or ''} {r.snippet or ''}".strip() for r in inp.external_refs]
     return "\n".join(x for x in lines if x)
@@ -267,9 +279,12 @@ async def check_faithfulness(
         return True  # 근거 없음은 게이트1에서 이미 걸러짐 → 여기선 관여 안 함
     claim = _block_claim_text(btype, data)
     prompt = (
-        "아래 [근거]만을 사실 기준으로 삼아 [블록]이 근거에 뒷받침되는지 판정하라.\n"
-        "근거에 없는 새로운 사실·수치·정의를 지어냈으면 불통과다. "
-        "표현이 달라도 의미가 근거로 뒷받침되면 통과다.\n\n"
+        "아래 [근거]를 사실 기준으로 삼아 [블록]의 사실성을 판정하라.\n"
+        "[블록]이 근거를 요약·부연·재구성하거나 교육적으로 풀어 설명한 것이면 통과다"
+        "(근거 범위 안에서 정의·맥락·왜 필요한지·예시를 자연스럽게 풀어 쓴 것 포함, "
+        "표현이 달라도 의미가 근거로 뒷받침되면 통과). "
+        "근거와 **모순**되거나, 근거로부터 합리적으로 추론할 수 없는 구체 사실"
+        "(수치·고유명사·정의)을 새로 지어냈을 때만 불통과다.\n\n"
         f"[근거]\n{evidence[:2000]}\n\n[블록]\n{claim[:1200]}\n\n"
         '반드시 JSON 하나로만: {"supported": true 또는 false, "reason": "간단히"}'
     )
