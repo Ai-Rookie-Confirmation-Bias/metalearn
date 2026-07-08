@@ -158,6 +158,62 @@ class SeedService:
         placement = await self.finalize_placement(course_id, purpose)
         return {**tree, **placement}
 
+    def finalize_onboarding(
+        self,
+        course_id: uuid.UUID,
+        *,
+        user_id: uuid.UUID,
+        foundation: dict,
+        diag_q_count: int,
+        purpose: str = "exam",
+    ) -> dict:
+        """온보딩(진단 재설계) 종료 확정 — 전 절 todo 시딩 + 갭 기록.
+
+        구 finalize_placement와의 차이(준거 §2.2 "내용을 깎지 않는다"):
+        - floor 아래 mastered 건너뛰기 / ceiling 위 locked 잠금을 하지 않는다.
+          진행선의 **모든** 개념이 todo — 진행 순서는 학습 커서가 잡는다.
+        - floor/ceiling 컬럼은 팀 계약이라 기록은 유지하되 참고 표식으로만:
+          ceiling=마지막 대표(목표), floor=첫 기반 갭(있으면).
+        - 수준 신호(온보딩 BKT strength)는 시딩이 덮지 않고 보존된다 —
+          소비는 복습 국면(오답노트·선행 결손 판정)에서만.
+        """
+        from app.features.learning import repository as learning_repo
+
+        course = self.db.get(Course, course_id)
+        if course is None:
+            raise HTTPException(status_code=404, detail="코스를 찾을 수 없습니다.")
+
+        # 진행선(섹션 매핑 개념) 전부 todo — 아무것도 잠그거나 건너뛰지 않는다.
+        order_by_id = learning_repo.get_curriculum_order(self.db, course_id)
+        seeds = [(cid, "todo", 0.0) for cid in order_by_id]
+        seeded, skipped = learning_repo.seed_mastery_if_absent(
+            self.db, user_id=user_id, seeds=seeds
+        )
+
+        # 참고 표식: ceiling=진행선 마지막(목표), floor=첫 갭 진입점(없으면 None).
+        ordered = sorted(order_by_id.items(), key=lambda kv: kv[1])
+        ceiling_id = ordered[-1][0] if ordered else None
+        gaps = foundation.get("gaps") or []
+        floor_id = uuid.UUID(gaps[0]["concept_id"]) if gaps else None
+
+        enrollment = self.db.get(Enrollment, (user_id, course_id))
+        if enrollment is None:
+            enrollment = Enrollment(user_id=user_id, course_id=course_id)
+            self.db.add(enrollment)
+        enrollment.ceiling_concept = ceiling_id
+        enrollment.floor_concept = floor_id
+        enrollment.floor_found = floor_id is not None
+        enrollment.purpose = enrollment.purpose or purpose
+        enrollment.diag_status = "completed"
+        enrollment.diag_q_count = diag_q_count
+        enrollment.self_report = {
+            **(enrollment.self_report or {}),
+            "foundation": foundation,
+        }
+        self.db.flush()
+        self.db.commit()
+        return {"seeded": seeded, "skipped": skipped, "gaps": len(gaps)}
+
     # ── ① key 슬러그 ────────────────────────────────────────────
     async def _fill_keys(self, concepts: list[Concept]) -> None:
         pending = [c for c in concepts if not c.key]

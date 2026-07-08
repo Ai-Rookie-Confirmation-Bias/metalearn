@@ -139,6 +139,62 @@ class PlacementState(BaseModel):
     seed: dict | None = None
 
 
+# ── 온보딩 (진단 재설계 — 성향 프로파일링 + 기반지식 체크) ──────────
+class DispositionItemOut(BaseModel):
+    """성향 상황판단 문항(고정 상수, 즉답형 — 정답 없음)."""
+
+    id: str
+    prompt: str
+    options: list[str]
+
+
+class ProbeOut(BaseModel):
+    """스타일 프로브 — 같은 개념을 두 방식으로 설명, 어느 쪽이 와닿는지 고른다."""
+
+    concept_id: uuid.UUID
+    concept_name: str
+    variant_a: str  # 비유·예시 중심
+    variant_b: str  # 정의·원리 중심
+
+
+class OnboardingAnswerRequest(BaseModel):
+    """단계별 입력: 성향/프로브는 choice_index, 내용 문항은 question_id + 답."""
+
+    choice_index: int | None = Field(default=None, ge=0, le=3)
+    question_id: uuid.UUID | None = None
+    selected_index: int | None = Field(default=None, ge=0, le=3)
+    answer_text: str | None = None
+
+
+class FoundationGapOut(BaseModel):
+    concept_id: uuid.UUID
+    concept_name: str
+    missing: list[str] = Field(default_factory=list)  # 결손 선수 개념 이름
+
+
+class OnboardingResult(BaseModel):
+    label: str
+    traits: list[str]
+    axes: dict
+    foundation_gaps: list[FoundationGapOut] = Field(default_factory=list)
+    injected_prereqs: list[str] = Field(default_factory=list)
+    seeded: int = 0
+
+
+class OnboardingState(BaseModel):
+    """온보딩 진행 상태 — phase에 따라 disposition/probe/question 중 하나가 채워진다."""
+
+    session_id: uuid.UUID
+    phase: Literal["disposition", "probe", "quiz", "done"]
+    step: int  # 1-based 현재 단계
+    total_steps: int  # 하강으로 늘어날 수 있음(동적)
+    done: bool
+    disposition: DispositionItemOut | None = None
+    probe: ProbeOut | None = None
+    question: QuestionOut | None = None
+    result: OnboardingResult | None = None
+
+
 class AnswerResult(BaseModel):
     is_correct: bool
     # 정답 공개: mcq는 correct_index, 인출형은 correct_answer(모범답안).

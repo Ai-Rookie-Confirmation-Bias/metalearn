@@ -14,6 +14,7 @@ from app.features.diagnostic.router import router as diagnostic_router
 from app.features.documents.router import router as documents_router
 from app.features.learning.router import router as learning_router
 from app.features.materials.router import router as materials_router
+from app.features.profile.router import router as profile_router
 from app.features.review.router import router as review_router
 from app.features.seed.router import router as seed_router
 
@@ -26,3 +27,4 @@ api_router.include_router(learning_router, tags=["learning"])
 api_router.include_router(review_router, prefix="/review", tags=["review"])
 api_router.include_router(documents_router, prefix="/documents", tags=["documents"])
 api_router.include_router(diagnostic_router, prefix="/diagnostic", tags=["diagnostic"])
+api_router.include_router(profile_router, prefix="/profile", tags=["profile"])

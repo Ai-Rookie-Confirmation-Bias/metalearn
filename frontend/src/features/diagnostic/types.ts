@@ -62,3 +62,46 @@ export interface AnswerResult {
   progress: Progress;
   next_question: QuestionOut | null;
 }
+
+// ── 온보딩 (진단 재설계) ─────────────────────────────────────────────
+export type OnboardingPhase = "disposition" | "probe" | "quiz" | "done";
+
+export interface DispositionItemOut {
+  id: string;
+  prompt: string;
+  options: string[];
+}
+
+export interface ProbeOut {
+  concept_id: string;
+  concept_name: string;
+  variant_a: string;
+  variant_b: string;
+}
+
+export interface FoundationGapOut {
+  concept_id: string;
+  concept_name: string;
+  missing: string[];
+}
+
+export interface OnboardingResult {
+  label: string;
+  traits: string[];
+  axes: Record<string, { score: number; confidence: number; n: number }>;
+  foundation_gaps: FoundationGapOut[];
+  injected_prereqs: string[];
+  seeded: number;
+}
+
+export interface OnboardingState {
+  session_id: string;
+  phase: OnboardingPhase;
+  step: number;
+  total_steps: number;
+  done: boolean;
+  disposition: DispositionItemOut | null;
+  probe: ProbeOut | null;
+  question: QuestionOut | null;
+  result: OnboardingResult | null;
+}

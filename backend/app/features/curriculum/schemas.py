@@ -59,6 +59,9 @@ class CourseListItem(_CamelModel):
     total_sections: int = 0
     completed_sections: int = 0
     progress: float = 0.0  # 0~1 = completed/total
+    # 진단 상태(ISSUE-018) — enrollments.diag_status. 섹션 수 프록시가 아니라
+    # 서버 진실. not_started | in_progress | completed
+    diag_status: str = "not_started"
     # MAX(attempts.created_at) — 저장 아닌 계산값
     last_activity_at: str | None = None
 

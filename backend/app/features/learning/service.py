@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from dataclasses import replace
 from datetime import datetime, timezone
 
 from sqlalchemy.orm import Session
@@ -25,7 +26,11 @@ from app.core.enums import (
 from app.core.llm.factory import get_llm_client
 from app.features.learning import repository as repo
 from app.features.learning.bkt import estimate_p_known, p_l0_from_prereqs
-from app.features.learning.generator import GenerationInput, generate_section_blocks
+from app.features.learning.generator import (
+    GenerationInput,
+    generate_retrieval_blocks,
+    generate_section_blocks,
+)
 from app.features.learning.grading import GRADABLE_TYPES, GradeResult, grade_block
 from app.features.learning.localization import Cause, PrereqState, localize
 from app.features.learning.mastery import (
@@ -53,7 +58,11 @@ from app.features.learning.schemas import (
     SectionBlocksResponse,
 )
 from app.features.learning.serializer import filter_by_variant, to_envelope
+from app.features.profile import repository as profile_repo
+from app.features.profile.logic import directive_from_axes
 from app.features.review.sm2 import update_review_schedule
+
+_REVIEW_CAP = 5
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +106,29 @@ def initialize_placement(
     if enrollment.ceiling_concept is None:
         raise ValueError("진단 미완료: ceiling_concept이 없습니다")
 
-    # 진행축 = 커리큘럼 순서(parsing 규약). 섹션에 매핑된 개념(진행선)만 시딩한다.
+    order_by_id = repo.get_curriculum_order(db, course_id)
+
+    # 온보딩(진단 재설계) 경로: finalize_onboarding가 이미 전 절 todo 시딩.
+    # floor/ceiling으로 mastered/locked 자르지 않는다(준거 §2.2).
+    foundation = (enrollment.self_report or {}).get("foundation")
+    if foundation is not None:
+        seeds = [(cid, MasteryStatus.TODO, 0.0) for cid in order_by_id]
+        seeded, skipped = repo.seed_mastery_if_absent(db, user_id=user_id, seeds=seeds)
+        db.commit()
+        return PlacementResponse(
+            course_id=str(course_id),
+            floor_concept_id=(
+                str(enrollment.floor_concept) if enrollment.floor_concept else None
+            ),
+            ceiling_concept_id=str(enrollment.ceiling_concept),
+            seeded=seeded,
+            skipped=skipped,
+            mastered=0,
+            todo=len(order_by_id),
+            locked=0,
+        )
+
+    # 구 배치고사(lab) 경로 — classify_placement 유지
     order_by_id = repo.get_curriculum_order(db, course_id)
     ceiling_pos = order_by_id.get(enrollment.ceiling_concept)
     floor_pos = (
@@ -165,12 +196,9 @@ async def _prepare_generation_input(
         else []
     )
 
-    # 난이도 힌트: 학습자 상태(mastery.difficulty)가 있으면 반영 — JIT 개인화 입력
-    mastery = repo.get_mastery(db, user_id=user_id, concept_id=concept.id)
-    difficulty_hint = 2
-    if mastery is not None:
-        # strength 기반 근사: 약하면 기초(1), 강하면 심화(3)
-        difficulty_hint = 1 if mastery.strength < 0.35 else (3 if mastery.strength >= 0.7 else 2)
+    # §2.3: 첫 생성 맞춤은 성향만 — strength 기반 난이도는 복습/보충으로 이관.
+    axes = profile_repo.get_axes(db, user_id)
+    disposition_directive = directive_from_axes(axes)
 
     return GenerationInput(
         concept_name=concept.name,
@@ -178,7 +206,8 @@ async def _prepare_generation_input(
         concept_source=concept.source,
         chunks=chunks,
         external_refs=ext_refs,
-        difficulty_hint=difficulty_hint,
+        difficulty_hint=2,
+        disposition_directive=disposition_directive,
     )
 
 
@@ -199,9 +228,44 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
             repo.set_gen_status(db, chapter_id, GenStatus.FAILED)
             return
 
+        llm = get_llm_client()
+        total = 0
+
+        # [0] 복습 섹션 — SM-2 due + 오답노트(브리프 §3-5, 챕터 경계 주입)
+        review_concepts = repo.collect_review_concepts(
+            db, user_id=user_id, course_id=course.id, limit=_REVIEW_CAP
+        )
+        if review_concepts:
+            review_section = repo.get_or_create_review_section(db, chapter_id)
+            review_drafts = []
+            for concept in review_concepts:
+                fake_section = type("_S", (), {"concept_id": concept.id})()
+                inp = await _prepare_generation_input(
+                    db, section=fake_section, course=course, user_id=user_id
+                )
+                if inp is None:
+                    continue
+                try:
+                    blocks = await generate_retrieval_blocks(llm, inp)
+                except Exception:
+                    logger.exception("복습 블록 생성 실패: %s", concept.name)
+                    continue
+                for b in blocks:
+                    review_drafts.append(replace(b, concept_id=concept.id))
+            if review_drafts:
+                repo.replace_section_blocks(
+                    db,
+                    section_id=review_section.id,
+                    concept_id=None,
+                    drafts=review_drafts,
+                )
+                total += len(review_drafts)
+
         # [수집] 절별 생성 입력 — DB·임베딩(직렬)
         plans: list[tuple[object, GenerationInput]] = []
         for section in repo.get_chapter_sections(db, chapter_id):
+            if section.concept_id is None:
+                continue  # 복습 섹션은 위에서 처리
             inp = await _prepare_generation_input(
                 db, section=section, course=course, user_id=user_id
             )
@@ -210,7 +274,7 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
 
         # [생성] 순수 계층만 병렬 실행 — 한 절이 실패해도 나머지는 계속(부분 성공 허용)
         results = await asyncio.gather(
-            *(generate_section_blocks(get_llm_client(), inp) for _, inp in plans),
+            *(generate_section_blocks(llm, inp) for _, inp in plans),
             return_exceptions=True,
         )
 

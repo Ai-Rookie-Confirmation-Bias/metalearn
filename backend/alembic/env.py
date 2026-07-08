@@ -15,6 +15,7 @@ from app.features.curriculum import models as _curriculum_models  # noqa: F401
 from app.features.diagnostic import models as _diagnostic_models  # noqa: F401
 from app.features.learning import models as _learning_models  # noqa: F401
 from app.features.materials import models as _materials_models  # noqa: F401
+from app.features.profile import models as _profile_models  # noqa: F401
 from app.features.seed import models as _seed_models  # noqa: F401
 
 config = context.config

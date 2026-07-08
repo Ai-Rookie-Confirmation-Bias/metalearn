@@ -11,6 +11,7 @@ type CourseListItemDTO = {
   totalSections: number;
   completedSections: number;
   progress: number;
+  diagStatus: string; // enrollments.diag_status (ISSUE-018)
   lastActivityAt: string | null;
 };
 
@@ -27,8 +28,8 @@ export async function getCourses(): Promise<CourseSummary[]> {
     lastActivityAt: c.lastActivityAt,
     // 아래는 상류(parsing/materials) 소관이라 우리 응답엔 없음 → 잠정 파생값.
     difficultyEst: 0, // documents.difficulty_est
-    // 진단 상태 프록시: 씨앗 조립(seed build) 전이면 섹션이 0개 → "진단 전"으로 간주.
-    // TODO: 서버가 enrollments.diag_status를 내려주면 그 값으로 교체.
-    diagStatus: c.totalSections > 0 ? "completed" : "not_started",
+    // 진단 상태(ISSUE-018): 서버 enrollments.diag_status를 그대로 사용.
+    // (예전 totalSections>0 프록시는 ingest 후 온보딩 전에도 완료로 오판했음)
+    diagStatus: (c.diagStatus ?? "not_started") as CourseSummary["diagStatus"],
   }));
 }

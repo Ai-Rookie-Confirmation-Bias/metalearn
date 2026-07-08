@@ -39,6 +39,7 @@ def list_courses(
     done = repo.count_completed_sections_by_course(db, user_id=user_id, course_ids=ids)
     concepts = repo.count_concepts_by_course(db, ids)
     activity = repo.last_activity_by_course(db, user_id=user_id, course_ids=ids)
+    diag = repo.diag_status_by_course(db, user_id=user_id, course_ids=ids)
 
     items: list[CourseListItem] = []
     for c in courses:
@@ -54,6 +55,7 @@ def list_courses(
                 total_sections=total,
                 completed_sections=comp,
                 progress=round(comp / total, 4) if total else 0.0,
+                diag_status=diag.get(c.id, "not_started"),
                 last_activity_at=la.isoformat() if la else None,
             )
         )

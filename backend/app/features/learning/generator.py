@@ -76,7 +76,12 @@ class GenerationInput:
     concept_source: str  # book | ai_prereq
     chunks: list[ChunkExcerpt] = field(default_factory=list)
     external_refs: list[ExternalRefInput] = field(default_factory=list)
-    difficulty_hint: int = 1  # 1~3 (mastery.difficulty)
+    # 진단 재설계 §2.3: 첫 생성 맞춤은 성향뿐 — 수준(strength) 기반 난이도
+    # 조정은 첫 생성에서 하지 않는다(복습/보충 국면으로 이관). 표준 고정.
+    difficulty_hint: int = 2
+    # 성향 지시문(profile.logic.directive_from_axes) — 설명의 '모양'만 바꾸고
+    # 내용 범위·분량은 못 건드린다(준거 §2.2 가드). 빈 문자열 = 중립 생성.
+    disposition_directive: str = ""
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,8 @@ class BlockDraft:
     meta: dict
     source_chunk_ids: list[uuid.UUID]
     external_ref_ids: list[uuid.UUID]
+    concept_id: uuid.UUID | None = None  # 복습 섹션 등 절 대표와 다른 개념
+    kind: str = "learn"  # learn | review
 
 
 def build_prompt(inp: GenerationInput) -> str:
@@ -104,9 +111,11 @@ def build_prompt(inp: GenerationInput) -> str:
         for r in inp.external_refs:
             evidence_lines.append(f"- (ref {r.id}) {r.title or ''} — {(r.snippet or '')[:1000]}")
     evidence = "\n".join(evidence_lines) if evidence_lines else "(근거 없음)"
+    disposition = f"\n{inp.disposition_directive}\n" if inp.disposition_directive else ""
 
     return f"""당신은 학습 콘텐츠 생성기다. 아래 근거 발췌만 사용해 한 절(section)의
 학습 블록을 만든다. 근거에 없는 사실은 지어내지 마라.
+{disposition}
 
 구성 원칙 — "충분히 가르친 뒤, 인출로 굳힌다":
 1) 먼저 개념을 원문 근거로 **충분히 설명**한다(concept 블록). 원문을 요약·재구성해
@@ -373,4 +382,82 @@ async def generate_section_blocks(
             )
         )
         order += 1
+    return drafts
+
+
+def _retrieval_prompt(inp: GenerationInput) -> str:
+    """복습 전용 — 설명 블록 없이 인출(cloze/mcq)만 생성."""
+    evidence_lines: list[str] = []
+    if inp.concept_source == ContentSource.BOOK:
+        for c in inp.chunks:
+            evidence_lines.append(f"- (chunk {c.id}) {c.content[:1200]}")
+    else:
+        for r in inp.external_refs:
+            evidence_lines.append(f"- (ref {r.id}) {r.title or ''} — {(r.snippet or '')[:800]}")
+    evidence = "\n".join(evidence_lines) if evidence_lines else "(근거 없음)"
+    disposition = f"\n{inp.disposition_directive}\n" if inp.disposition_directive else ""
+    return f"""당신은 복습용 인출 문제 생성기다. 아래 근거만 사용해 **인출 문제만** 만든다.
+설명(concept/analogy) 블록은 만들지 마라 — 학습자는 이미 배운 개념을 다시 꺼내는 연습이다.
+{disposition}
+CONCEPT_NAME: {inp.concept_name}
+CONCEPT_DESC: {inp.concept_description or "(없음)"}
+
+[근거 발췌]
+{evidence}
+
+BLOCKS_JSON 형식으로만 응답 — cloze 1개 + mcq 1개:
+{{"blocks": [
+  {{"type": "cloze", "difficulty": "mid", "data": {{"text": "... {{{{blank}}}} ...", "blanks": ["정답"], "hint": "..."}}}},
+  {{"type": "mcq", "difficulty": "mid", "data": {{"question": "...", "options": ["...", "...", "...", "..."], "answerIndex": 0, "explanation": "..."}}}}
+]}}"""
+
+
+async def generate_retrieval_blocks(
+    llm: LLMClient, inp: GenerationInput
+) -> list[BlockDraft]:
+    """복습 섹션용 — 개념당 인출 블록 1~2개만(경량)."""
+    chunk_ids = [c.id for c in inp.chunks]
+    ref_ids = [r.id for r in inp.external_refs]
+    items: list[dict] = []
+    for _ in range(2):
+        raw = await llm.generate(_retrieval_prompt(inp), json_mode=True)
+        items = parse_llm_blocks(raw)
+        if items:
+            break
+    evidence = _evidence_text(inp)
+    drafts: list[BlockDraft] = []
+    for item in items:
+        coerced = _coerce_block(item)
+        if coerced is None:
+            continue
+        btype, data, difficulty = coerced
+        if btype not in ("cloze", "mcq"):
+            continue
+        verified, source, use_chunks, use_refs = _verify(
+            btype=btype,
+            data=data,
+            concept_source=inp.concept_source,
+            chunk_ids=chunk_ids,
+            ref_ids=ref_ids,
+        )
+        if not verified:
+            continue
+        if btype in _FAITHFULNESS_TYPES:
+            ok = await check_faithfulness(llm, btype=btype, data=data, evidence=evidence)
+            if not ok:
+                continue
+        _, tracked = _TYPE_SPECS[btype]
+        drafts.append(
+            BlockDraft(
+                type=btype,
+                source=source,
+                tracked=tracked,
+                verified=True,
+                data=data,
+                meta={"difficulty": difficulty, "version": 1, "review": True},
+                source_chunk_ids=use_chunks,
+                external_ref_ids=use_refs,
+                kind="review",
+            )
+        )
     return drafts

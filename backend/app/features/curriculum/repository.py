@@ -9,7 +9,12 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.features.curriculum.models import Chapter, Section
-from app.features.learning.models import Attempt, ConceptMastery, SectionProgress
+from app.features.learning.models import (
+    Attempt,
+    ConceptMastery,
+    Enrollment,
+    SectionProgress,
+)
 from app.features.seed.models import Concept, Course
 
 
@@ -138,6 +143,23 @@ def last_activity_by_course(
         .group_by(Concept.course_id)
     )
     return {cid: ts for cid, ts in db.execute(stmt)}
+
+
+def diag_status_by_course(
+    db: Session, *, user_id: uuid.UUID, course_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """코스별 진단 상태 — enrollments.diag_status(서버 진실).
+
+    ISSUE-018: 예전엔 'totalSections>0'을 진단 완료 프록시로 썼는데, ingest 후
+    build_tree로 섹션이 생기면 온보딩 전에도 완료로 오판했다. 이제 enrollment의
+    실제 상태를 그대로 내려준다. 행이 없으면 'not_started'.
+    """
+    if not course_ids:
+        return {}
+    stmt = select(Enrollment.course_id, Enrollment.diag_status).where(
+        Enrollment.user_id == user_id, Enrollment.course_id.in_(course_ids)
+    )
+    return {cid: status for cid, status in db.execute(stmt)}
 
 
 # ── 개념별 숙련도 (GET /courses/:id/mastery) ─────────────────────────────────
