@@ -24,7 +24,7 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 
-import { uploadDocument } from "@/features/documents/api/uploadDocument";
+import { uploadDocument, uploadDocumentBatch } from "@/features/documents/api/uploadDocument";
 import { apiErrorMessage } from "@/shared/api/errors";
 import type { DocumentKind, Material, Purpose } from "@/features/course-create/types";
 
@@ -190,7 +190,17 @@ export function CreateCoursePage() {
       role,
       file: f, // 실제 업로드용 원본 파일 보존
     }));
-    (role === "primary" ? setPrimaries : setSupps)((prev) => [...prev, ...items]);
+    (role === "primary" ? setPrimaries : setSupps)((prev) => {
+      const merged = [...prev, ...items];
+      // 주교재는 파일명 숫자 기준 자동 정렬(ch01·ch02·ch10 순) — 학습 순서 초안.
+      // 사용자가 ↑↓로 언제든 재배열 가능(확정은 사람).
+      if (role === "primary") {
+        merged.sort((a, b) =>
+          a.name.localeCompare(b.name, undefined, { numeric: true }),
+        );
+      }
+      return merged;
+    });
   };
 
   const addLink = () => {
@@ -230,18 +240,29 @@ export function CreateCoursePage() {
     void submitCourse();
   };
 
-  // 제출: 메인 자료 첫 파일 업로드 → 코스 생성 → 진단으로 직행.
-  // TODO(ISSUE-011): primaries[1..]·supps·링크는 아직 전송 안 함(다중 문서 미지원).
+  // 제출: 주교재(순서대로) + 보조자료를 하나의 코스로 업로드 → 진단으로 직행.
+  // 파일 1개면 단일 업로드, 여러 개면 배치(1:N 통합). 링크(파일 없음)는 제외.
   const submitCourse = async () => {
-    const main = primaries[0];
-    if (!main?.file) {
+    const primaryFiles = primaries.filter((m) => m.file);
+    if (primaryFiles.length === 0) {
       setUploadError("메인 자료 파일을 다시 선택해주세요.");
       return;
     }
     setUploading(true);
     setUploadError(null);
     try {
-      const course = await uploadDocument(main.file, stripExt(main.name));
+      const suppFiles = supps.filter((m) => m.file);
+      const title = stripExt(primaryFiles[0].name);
+      const course =
+        primaryFiles.length === 1 && suppFiles.length === 0
+          ? await uploadDocument(primaryFiles[0].file!, title)
+          : await uploadDocumentBatch(
+              [
+                ...primaryFiles.map((m) => ({ file: m.file!, role: "primary" as const })),
+                ...suppFiles.map((m) => ({ file: m.file!, role: "supplementary" as const })),
+              ],
+              title,
+            );
       // 업로드 완료 → 바로 수준 진단으로 (목표는 진단 완료 시 씨앗 조립 purpose로 전달)
       navigate(`/diagnosis/${course.id}${purpose ? `?purpose=${purpose}` : ""}`);
     } catch (e) {

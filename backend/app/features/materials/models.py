@@ -41,6 +41,17 @@ class Document(Base):
     # 병합(parsing): 섭취 실패 사유 기록.
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     difficulty_est: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    # 다중 PDF 통합(1:N): 코스가 문서 N개를 순서대로 소유. 문서는 course 생성
+    # 후 연결되므로 nullable. seq = 코스 내 학습 순서, role = primary(교재 척추,
+    # 트리에 포함) | supplementary(RAG 근거로만, 트리 제외).
+    course_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"),
+        nullable=True, index=True,
+    )
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    role: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="primary"
+    )
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default="processing"
     )
@@ -53,7 +64,8 @@ class Document(Base):
     )
     # 병합(parsing): 코스 조회 시 문서 메타(filename/status) 접근용.
     courses: Mapped[list["Course"]] = relationship(  # noqa: F821 — seed.models.Course
-        "Course", back_populates="document", cascade="all, delete-orphan"
+        "Course", back_populates="document", cascade="all, delete-orphan",
+        foreign_keys="Course.document_id",
     )
 
 

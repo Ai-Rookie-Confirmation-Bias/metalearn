@@ -27,8 +27,21 @@ from app.features.learning.models import (
     LearningCursor,
     SectionProgress,
 )
-from app.features.materials.models import DocChunk
+from app.features.materials.models import DocChunk, Document
 from app.features.seed.models import Concept, ConceptEdge, Course, ExternalRef
+
+
+def _course_doc_ids(db: Session, course: Course) -> list[uuid.UUID]:
+    """코스가 소유한 모든 문서 id(primary+supplementary). RAG는 보조자료도 근거로.
+
+    다중 PDF(1:N): Document.course_id로 귀속. 하위호환: 없으면 course.document_id.
+    """
+    ids = list(
+        db.scalars(select(Document.id).where(Document.course_id == course.id))
+    )
+    if not ids and course.document_id is not None:
+        ids = [course.document_id]
+    return ids
 
 
 # ── 챕터 / 절 ────────────────────────────────────────────────────────────────
@@ -177,7 +190,7 @@ def get_concept_chunks(
     """
     stmt = (
         select(DocChunk)
-        .where(DocChunk.document_id == course.document_id)
+        .where(DocChunk.document_id.in_(_course_doc_ids(db, course)))
         .order_by(DocChunk.chunk_index)
     )
     chunks = list(db.scalars(stmt))
@@ -207,7 +220,7 @@ def search_concept_chunks(
         stmt = (
             select(DocChunk)
             .where(
-                DocChunk.document_id == course.document_id,
+                DocChunk.document_id.in_(_course_doc_ids(db, course)),
                 DocChunk.embedding.isnot(None),
             )
             .order_by(DocChunk.embedding.cosine_distance(query_embedding))

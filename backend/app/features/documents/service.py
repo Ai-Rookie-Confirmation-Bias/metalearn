@@ -17,6 +17,7 @@ import uuid
 
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -25,6 +26,7 @@ from app.features.auth.repository import AuthRepository
 from app.features.diagnostic.repository import DiagnosticRepository
 from app.features.documents import refinement, sectioning
 from app.features.documents.repository import DocumentRepository
+from app.features.seed.models import Concept
 from app.features.documents.schemas import (
     ConceptNode,
     ConceptOut,
@@ -142,7 +144,7 @@ class DocumentService:
         self.diag_repo = DiagnosticRepository(db)
 
     def create_stub(self, *, filename: str, title: str | None) -> tuple[uuid.UUID, uuid.UUID]:
-        """업로드 즉시 응답용 스텁 — document(processing) + course + enrollment.
+        """업로드 즉시 응답용 스텁(단일 PDF) — document + course + enrollment.
 
         비동기 ingest(ISSUE-010②): 파이프라인은 run_pipeline이 백그라운드에서
         실행하고, 프론트는 course 상세의 status를 폴링한다.
@@ -152,68 +154,117 @@ class DocumentService:
         course = self.repo.create_course(
             document_id=document.id, user_id=user.id, title=title or filename
         )
+        # 다중 PDF 통합: 단일도 코스에 귀속(seq=0/primary)해 이후 로직 일관.
+        document.course_id = course.id
+        document.seq = 0
+        document.role = "primary"
         self.diag_repo.ensure_enrollment(user_id=user.id, course_id=course.id)
         self.db.commit()
         return document.id, course.id
 
+    def create_batch_stub(
+        self, *, files: list[dict], title: str | None
+    ) -> tuple[uuid.UUID, uuid.UUID, list[dict]]:
+        """다중 PDF 스텁 — 코스 1개 + 문서 N개(순서/역할). files는 순서대로:
+        [{"filename": str, "role": "primary"|"supplementary"}]. primary가 먼저 오도록
+        호출측이 정렬. 반환: (anchor_document_id, course_id, [{document_id, role} …]).
+        """
+        user = self.auth_repo.get_default_user()
+        # 앵커(코스 진행표시용) = 첫 primary. 코스 생성엔 document_id가 필요하므로 먼저.
+        anchor_meta = files[0]
+        anchor = self.repo.create_document(user_id=user.id, filename=anchor_meta["filename"])
+        course = self.repo.create_course(
+            document_id=anchor.id, user_id=user.id, title=title or anchor_meta["filename"]
+        )
+        anchor.course_id = course.id
+        anchor.seq = 0
+        anchor.role = anchor_meta.get("role", "primary")
+        specs = [{"document_id": anchor.id, "role": anchor.role}]
+        for i, meta in enumerate(files[1:], start=1):
+            doc = self.repo.create_document(
+                user_id=user.id,
+                filename=meta["filename"],
+                course_id=course.id,
+                seq=i,
+                role=meta.get("role", "primary"),
+            )
+            specs.append({"document_id": doc.id, "role": doc.role})
+        self.diag_repo.ensure_enrollment(user_id=user.id, course_id=course.id)
+        self.db.commit()
+        return anchor.id, course.id, specs
+
+    async def _ingest_document(
+        self,
+        *,
+        document,
+        course_id: uuid.UUID,
+        file_bytes: bytes,
+        filename: str,
+        extract_graph: bool,
+    ) -> None:
+        """문서 1개: 파싱→정제→청킹→(추출→그래프). dedup·트리는 코스 단위(호출측).
+
+        extract_graph=False(supplementary)면 청크·임베딩만 남겨 RAG 근거로 쓴다.
+        """
+        def stage(name: str) -> None:
+            document.status = name
+            self.db.commit()
+
+        stage("parsing")
+        parsed, elements = await solar_client.parse_document(file_bytes, filename)
+        if not parsed.strip():
+            raise ValueError("Document Parse 결과가 비어 있습니다.")
+        document.raw_text = parsed
+        self.db.commit()
+
+        stage("refining")
+        refined, profile = await refinement.refine(elements)
+        document.refined_elements = refined
+        document.profile = profile
+        self.db.commit()
+
+        stage("chunking")
+        chunks = sectioning.chunk_elements(
+            refined["elements"], settings.EXTRACTION_SECTION_CHAR_BUDGET
+        )
+        if not chunks:
+            chunks = sectioning.chunk_sections(
+                sectioning.split_sections(parsed),
+                settings.EXTRACTION_SECTION_CHAR_BUDGET,
+            )
+        chunk_rows = self.repo.add_chunks(
+            document_id=document.id,
+            chunks=chunks,
+            embeddings=await self._embed_chunks(chunks),
+        )
+        self.db.commit()
+
+        if extract_graph:
+            stage("extracting")
+            extractions = await self._extract_all(chunks)
+            await self._persist_graph(
+                course_id, extractions, chunk_ids=[row.id for row in chunk_rows]
+            )
+
     async def run_pipeline(
         self, *, document_id: uuid.UUID, course_id: uuid.UUID, file_bytes: bytes, filename: str
     ) -> None:
-        """파싱→정제→청킹→추출→dedup→씨앗 트리. status로 단계 노출."""
+        """(단일 PDF) 파싱→추출→dedup→씨앗 트리. status로 단계 노출."""
         from app.features.materials.models import Document
         from app.features.seed.service import SeedService
 
         document = self.db.get(Document, document_id)
         if document is None:
             return
-
-        def stage(name: str) -> None:
-            document.status = name
-            self.db.commit()
-
         try:
-            stage("parsing")
-            parsed, elements = await solar_client.parse_document(file_bytes, filename)
-            if not parsed.strip():
-                raise ValueError("Document Parse 결과가 비어 있습니다.")
-            document.raw_text = parsed
-            self.db.commit()
-
-            # 정제 v1 (ISSUE-014): elements를 마킹 정제해 운영용 원본으로 저장.
-            stage("refining")
-            refined, profile = await refinement.refine(elements)
-            document.refined_elements = refined
-            document.profile = profile
-            self.db.commit()
-
-            # 1순위: 정제된 요소 기반 청킹. elements가 없으면 마크다운 폴백.
-            stage("chunking")
-            chunks = sectioning.chunk_elements(
-                refined["elements"], settings.EXTRACTION_SECTION_CHAR_BUDGET
-            )
-            if not chunks:
-                chunks = sectioning.chunk_sections(
-                    sectioning.split_sections(parsed),
-                    settings.EXTRACTION_SECTION_CHAR_BUDGET,
-                )
-            chunk_rows = self.repo.add_chunks(
-                document_id=document.id,
-                chunks=chunks,
-                embeddings=await self._embed_chunks(chunks),
-            )
-            self.db.commit()
-
-            stage("extracting")
-            extractions = await self._extract_all(chunks)
-            await self._persist_graph(
-                course_id, extractions, chunk_ids=[row.id for row in chunk_rows]
+            await self._ingest_document(
+                document=document, course_id=course_id,
+                file_bytes=file_bytes, filename=filename, extract_graph=True,
             )
             await self._dedup_pass(course_id)
-
-            # 씨앗 1단계(트리·슬러그·외부근거) — 생성 직후 트리 존재(프론트 계약)
-            stage("building_seed")
+            document.status = "building_seed"
+            self.db.commit()
             await SeedService(self.db).build_tree(course_id)
-
             document.status = "ready"
             self.db.commit()
         except Exception as exc:  # noqa: BLE001
@@ -222,6 +273,49 @@ class DocumentService:
             document.error = str(exc)[:2000]
             self.db.commit()
             _log.exception("섭취 실패(document=%s)", document_id)
+            raise
+
+    async def run_batch_pipeline(
+        self, *, anchor_document_id: uuid.UUID, course_id: uuid.UUID, docs: list[dict]
+    ) -> None:
+        """(다중 PDF) 문서들을 순서대로 ingest → 코스 단위 dedup + 트리 1회.
+
+        docs: [{"document_id", "file_bytes", "filename", "role"} …] (seq 순서).
+        앵커(첫 primary) 문서의 status를 코스 진행표시로 쓴다(프론트 폴링).
+        """
+        from app.features.materials.models import Document
+        from app.features.seed.service import SeedService
+
+        anchor = self.db.get(Document, anchor_document_id)
+        if anchor is None:
+            return
+        try:
+            for spec in docs:
+                document = self.db.get(Document, spec["document_id"])
+                if document is None:
+                    continue
+                await self._ingest_document(
+                    document=document, course_id=course_id,
+                    file_bytes=spec["file_bytes"], filename=spec["filename"],
+                    extract_graph=(spec.get("role") == "primary"),
+                )
+                # 개별 문서는 ingest 완료로 마킹(앵커는 아래 트리 후 ready).
+                if document.id != anchor.id:
+                    document.status = "ready"
+                    self.db.commit()
+
+            await self._dedup_pass(course_id)
+            anchor.status = "building_seed"
+            self.db.commit()
+            await SeedService(self.db).build_tree(course_id)
+            anchor.status = "ready"
+            self.db.commit()
+        except Exception as exc:  # noqa: BLE001
+            self.db.rollback()
+            anchor.status = "failed"
+            anchor.error = str(exc)[:2000]
+            self.db.commit()
+            _log.exception("배치 섭취 실패(course=%s)", course_id)
             raise
 
     async def ingest(self, *, file_bytes: bytes, filename: str, title: str | None) -> CourseDetail:
@@ -405,7 +499,16 @@ class DocumentService:
         """
         by_norm: dict[str, uuid.UUID] = {}  # 정규화 이름 → concept_id
         edges: set[tuple[uuid.UUID, uuid.UUID]] = set()
-        used_keys: set[str] = set()  # 코스 내 슬러그 유니크 가드 (병렬 추출 중복 방지)
+        # 코스 내 슬러그 유니크 가드. 다중 PDF: 이전 문서가 이미 만든 슬러그를
+        # DB에서 미리 로드해 문서 간 충돌(예: 두 PDF의 'protocol')을 막는다.
+        # 충돌 슬러그는 None으로 두고 dedup/seed 폴백에 맡긴다(NULL은 유니크 예외).
+        used_keys: set[str] = set(
+            self.db.scalars(
+                select(Concept.key).where(
+                    Concept.course_id == course_id, Concept.key.isnot(None)
+                )
+            )
+        )
         embed_cache = await self._embed_all(extractions)
         ids = chunk_ids or [None] * len(extractions)
 

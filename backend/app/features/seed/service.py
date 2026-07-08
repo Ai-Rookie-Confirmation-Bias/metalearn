@@ -52,13 +52,35 @@ class SeedService:
     def __init__(self, db: Session) -> None:
         self.db = db
 
+    def _course_documents(
+        self, course_id: uuid.UUID, *, role: str | None = None
+    ) -> list[Document]:
+        """코스의 문서를 seq 순서로. role 지정 시 필터(primary=척추, supplementary=RAG).
+
+        하위호환: course_id로 연결된 문서가 없으면(옛 단일 코스) course.document_id 폴백.
+        """
+        stmt = select(Document).where(Document.course_id == course_id)
+        if role is not None:
+            stmt = stmt.where(Document.role == role)
+        docs = list(self.db.scalars(stmt.order_by(Document.seq, Document.created_at)))
+        if not docs:
+            course = self.db.get(Course, course_id)
+            single = self.db.get(Document, course.document_id) if course else None
+            docs = [single] if single is not None else []
+        return docs
+
     async def build_tree(self, course_id: uuid.UUID) -> dict:
-        """1단계(진단 무관): 슬러그 + 커리큘럼 트리 + external_refs. ingest 직후 호출."""
+        """1단계(진단 무관): 슬러그 + 커리큘럼 트리 + external_refs. ingest 직후 호출.
+
+        다중 PDF: primary 문서들을 seq 순서로 쌓아 하나의 트리를 만든다.
+        """
         from app.features.seed.refs import collect_external_refs
 
         course = self.db.get(Course, course_id)
-        document = self.db.get(Document, course.document_id) if course else None
-        if document is None:
+        if course is None:
+            raise HTTPException(status_code=404, detail="코스를 찾을 수 없습니다.")
+        documents = self._course_documents(course_id, role="primary")
+        if not documents:
             raise HTTPException(status_code=404, detail="코스/문서를 찾을 수 없습니다.")
 
         concepts = list(
@@ -68,15 +90,16 @@ class SeedService:
             raise HTTPException(status_code=400, detail="개념이 없는 코스입니다.")
 
         await self._fill_keys(concepts)
-        chapters, sections = self._build_tree(course_id, document, concepts)
+        chapters, sections = self._build_tree(course_id, documents, concepts)
         refs_stats = await collect_external_refs(self.db, course_id)
         self.db.commit()
 
         return {
             "course_id": course_id,
             "document": {
-                "profile": document.profile,
+                "profile": documents[0].profile,
                 "concept_count": len(concepts),
+                "document_count": len(documents),
             },
             "curriculum": {
                 "chapters": len(chapters),
@@ -100,8 +123,10 @@ class SeedService:
         mastery 신호에서 유도한다(구 진단 경로 하위호환).
         """
         course = self.db.get(Course, course_id)
-        document = self.db.get(Document, course.document_id) if course else None
-        if document is None:
+        if course is None:
+            raise HTTPException(status_code=404, detail="코스를 찾을 수 없습니다.")
+        documents = self._course_documents(course_id, role="primary")
+        if not documents:
             raise HTTPException(status_code=404, detail="코스/문서를 찾을 수 없습니다.")
         concepts = list(
             self.db.scalars(select(Concept).where(Concept.course_id == course_id))
@@ -110,7 +135,7 @@ class SeedService:
             raise HTTPException(status_code=400, detail="개념이 없는 코스입니다.")
 
         mastery, derived_floor, derived_ceiling = self._mastery_seed(
-            course_id, document, concepts
+            course_id, documents, concepts
         )
         floor_id = floor_id if floor_id is not None else derived_floor
         ceiling_id = ceiling_id if ceiling_id is not None else derived_ceiling
@@ -172,42 +197,60 @@ class SeedService:
 
     # ── ③ chapters/sections ────────────────────────────────────
     def _build_tree(
-        self, course_id: uuid.UUID, document: Document, concepts: list[Concept]
+        self, course_id: uuid.UUID, documents: list[Document], concepts: list[Concept]
     ) -> tuple[list[Chapter], list[Section]]:
+        """다중 PDF: primary 문서들을 seq 순서로 이어 하나의 트리로.
+
+        각 문서의 parts를 챕터로 만들되 order_index를 문서 경계마다 누적 오프셋해
+        [PDF1의 장들 → PDF2의 장들 → …] 순으로 쌓는다. 개념은 출처 청크가 속한
+        문서의 챕터로 배정한다(문서 간 순서 = 사용자가 정한 업로드 순서).
+        """
         # 재실행 대비: 기존 트리는 지우고 다시 만든다 (gen_status pending 전제)
         for old in self.db.scalars(select(Chapter).where(Chapter.course_id == course_id)):
             self.db.delete(old)
         self.db.flush()
 
-        scan = (document.refined_elements or {}).get("scan") or {}
-        part_titles = [p["title"] for p in scan.get("parts") or []]
-
-        chapters: list[Chapter] = []
-        titles = part_titles or [document.filename]
-        for i, title in enumerate(titles):
-            chapter = Chapter(
-                course_id=course_id, order_index=(i + 1) * 10, title=title[:200]
-            )
-            self.db.add(chapter)
-            chapters.append(chapter)
-        self.db.flush()
-
-        # 대표 개념(depth 0, 교재 출처)을 출처 청크의 파트로 배정.
-        # UUID 포팅 주: Integer id의 '생성순 ≈ 문서순'이 사라졌으므로 문서
-        # 순서는 출처 청크의 chunk_index로 잡는다(원 의도인 문서순의 정밀판).
+        doc_ids = [d.id for d in documents]
+        doc_seq = {d.id: i for i, d in enumerate(documents)}
+        # 청크 메타(모든 문서): chunk_id -> (document_id, part_index, chunk_index)
+        chunk_doc: dict[uuid.UUID, uuid.UUID] = {}
         chunk_part: dict[uuid.UUID, int] = {}
         chunk_order: dict[uuid.UUID, int] = {}
         for row in self.db.scalars(
-            select(DocChunk).where(DocChunk.document_id == document.id)
+            select(DocChunk).where(DocChunk.document_id.in_(doc_ids))
         ):
+            chunk_doc[row.id] = row.document_id
             chunk_part[row.id] = row.part_index or 0
             chunk_order[row.id] = row.chunk_index
 
+        # 챕터: 문서 순서대로, 문서마다 order_index 오프셋 누적
+        chapters: list[Chapter] = []
+        doc_chapters: dict[uuid.UUID, tuple[list[Chapter], bool]] = {}
+        order_cursor = 0
+        for d in documents:
+            scan = (d.refined_elements or {}).get("scan") or {}
+            part_titles = [p["title"] for p in scan.get("parts") or []]
+            titles = part_titles or [d.filename]
+            chs: list[Chapter] = []
+            for title in titles:
+                order_cursor += 10
+                ch = Chapter(course_id=course_id, order_index=order_cursor, title=title[:200])
+                self.db.add(ch)
+                chapters.append(ch)
+                chs.append(ch)
+            doc_chapters[d.id] = (chs, bool(part_titles))
+        self.db.flush()
+
+        def concept_doc(c: Concept) -> uuid.UUID | None:
+            return chunk_doc.get(c.source_chunk_id)
+
         def doc_order(c: Concept) -> tuple:
+            did = concept_doc(c)
             return (
+                doc_seq.get(did, 999),
                 chunk_part.get(c.source_chunk_id, 0),
                 chunk_order.get(c.source_chunk_id, -1),
-                c.id,
+                str(c.id),
             )
 
         reps = sorted(
@@ -216,11 +259,17 @@ class SeedService:
         )
         sections: list[Section] = []
         per_chapter_count: dict[uuid.UUID, int] = {}
+        fallback = (chapters, False)
         for concept in reps:
+            did = concept_doc(concept)
+            chs, has_parts = doc_chapters.get(did, fallback) if did else fallback
+            if not chs:
+                chs = chapters
+                has_parts = False
             part = chunk_part.get(concept.source_chunk_id, 0)
-            # part 0(첫 경계 이전)은 1장으로, 범위 밖은 마지막 장으로
-            idx = min(max(part, 1), len(chapters)) - 1 if part_titles else 0
-            chapter = chapters[idx]
+            # part 0(첫 경계 이전)은 문서 1장으로, 범위 밖은 문서 마지막 장으로
+            idx = min(max(part, 1), len(chs)) - 1 if has_parts else 0
+            chapter = chs[idx]
             order = (per_chapter_count.get(chapter.id, 0) + 1) * 10
             per_chapter_count[chapter.id] = per_chapter_count.get(chapter.id, 0) + 1
             section = Section(
@@ -236,7 +285,7 @@ class SeedService:
 
     # ── ④ mastery/enrollment ───────────────────────────────────
     def _mastery_seed(
-        self, course_id: uuid.UUID, document: Document, concepts: list[Concept]
+        self, course_id: uuid.UUID, documents: list[Document], concepts: list[Concept]
     ) -> tuple[list[dict], uuid.UUID | None, uuid.UUID | None]:
         # 진단 신호가 가장 많은 세션을 채택 (dev에는 미응답 세션이 쌓일 수 있음)
         sessions = list(
@@ -261,13 +310,16 @@ class SeedService:
                 best_signal = signal
                 strengths = {m.concept_id: m for m in rows}
 
-        # UUID 포팅 주: floor/ceiling은 문서순 좌표 — Integer id 순 대신 출처
-        # 청크의 (part, chunk_index)로 문서 순서를 잡는다 (_build_tree와 동일).
+        # floor/ceiling은 문서순 좌표 — 다중 PDF는 (문서 seq, part, chunk_index)로
+        # 전 코스 순서를 잡는다 (_build_tree와 동일 규약).
+        doc_seq = {d.id: i for i, d in enumerate(documents)}
+        chunk_doc: dict[uuid.UUID, uuid.UUID] = {}
         chunk_part: dict[uuid.UUID, int] = {}
         chunk_order: dict[uuid.UUID, int] = {}
         for row in self.db.scalars(
-            select(DocChunk).where(DocChunk.document_id == document.id)
+            select(DocChunk).where(DocChunk.document_id.in_([d.id for d in documents]))
         ):
+            chunk_doc[row.id] = row.document_id
             chunk_part[row.id] = row.part_index or 0
             chunk_order[row.id] = row.chunk_index
 
@@ -277,6 +329,7 @@ class SeedService:
         for c in sorted(
             concepts,
             key=lambda x: (
+                doc_seq.get(chunk_doc.get(x.source_chunk_id), 999),
                 chunk_part.get(x.source_chunk_id, 0),
                 chunk_order.get(x.source_chunk_id, -1),
                 x.id,

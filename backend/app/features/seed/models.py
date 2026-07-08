@@ -50,7 +50,7 @@ class Course(Base):
     )
     # 병합(parsing): 코스 목록/상세에서 문서 메타(filename/status) 접근용.
     document: Mapped["Document"] = relationship(  # noqa: F821 — materials.models.Document
-        "Document", back_populates="courses"
+        "Document", back_populates="courses", foreign_keys="Course.document_id"
     )
 
 

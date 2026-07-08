@@ -13,26 +13,8 @@ const POLL_TIMEOUT_MS = 30 * 60_000; // 대형 문서 대비 여유
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * 비동기 ingest(ISSUE-010②): 업로드는 즉시 접수(processing)되고 파이프라인은
- * 서버 백그라운드에서 돈다. 여기서 상태를 폴링해 완성된 CourseDetail을
- * 반환하므로 호출부 계약은 기존(동기 업로드)과 동일하다.
- */
-export async function uploadDocument(
-  file: File,
-  title?: string,
-): Promise<CourseDetail> {
-  const form = new FormData();
-  form.append("file", file);
-  if (title) form.append("title", title);
-
-  const { data: accepted } = await apiClient.post<UploadAccepted>(
-    "/api/documents/upload",
-    form,
-    { headers: { "Content-Type": "multipart/form-data" }, timeout: 60_000 },
-  );
-
-  const courseId = accepted.course_id ?? accepted.id;
+/** 비동기 ingest 완료까지 course status를 폴링해 완성된 CourseDetail을 반환. */
+async function pollCourseReady(courseId: string): Promise<CourseDetail> {
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   for (;;) {
     await sleep(POLL_INTERVAL_MS);
@@ -47,4 +29,53 @@ export async function uploadDocument(
       throw new Error("문서 처리가 너무 오래 걸립니다. 잠시 후 책장에서 확인해 주세요.");
     }
   }
+}
+
+/**
+ * 단일 PDF 업로드. 비동기 ingest(ISSUE-010②)라 접수 후 상태를 폴링해
+ * 완성된 CourseDetail을 반환한다(호출부 계약은 동기 업로드와 동일).
+ */
+export async function uploadDocument(
+  file: File,
+  title?: string,
+): Promise<CourseDetail> {
+  const form = new FormData();
+  form.append("file", file);
+  if (title) form.append("title", title);
+
+  const { data: accepted } = await apiClient.post<UploadAccepted>(
+    "/api/documents/upload",
+    form,
+    { headers: { "Content-Type": "multipart/form-data" }, timeout: 60_000 },
+  );
+  return pollCourseReady(accepted.course_id ?? accepted.id);
+}
+
+export interface BatchFile {
+  file: File;
+  role: "primary" | "supplementary";
+}
+
+/**
+ * 다중 PDF 업로드 — 여러 PDF를 순서대로 하나의 코스로 통합(1:N).
+ * files 배열 순서 = 학습 순서(primary 척추). supplementary는 RAG 근거로만.
+ * 서버가 문서들을 순서대로 ingest하고 트리를 한 번에 만든 뒤 ready가 된다.
+ */
+export async function uploadDocumentBatch(
+  files: BatchFile[],
+  title?: string,
+): Promise<CourseDetail> {
+  const form = new FormData();
+  for (const f of files) {
+    form.append("files", f.file);
+    form.append("roles", f.role);
+  }
+  if (title) form.append("title", title);
+
+  const { data: accepted } = await apiClient.post<UploadAccepted>(
+    "/api/documents/upload-batch",
+    form,
+    { headers: { "Content-Type": "multipart/form-data" }, timeout: 60_000 },
+  );
+  return pollCourseReady(accepted.course_id ?? accepted.id);
 }

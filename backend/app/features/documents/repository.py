@@ -16,8 +16,23 @@ class DocumentRepository:
     def __init__(self, db: Session) -> None:
         self.db = db
 
-    def create_document(self, *, user_id: uuid.UUID, filename: str) -> Document:
-        document = Document(user_id=user_id, filename=filename, status="processing")
+    def create_document(
+        self,
+        *,
+        user_id: uuid.UUID,
+        filename: str,
+        course_id: uuid.UUID | None = None,
+        seq: int = 0,
+        role: str = "primary",
+    ) -> Document:
+        document = Document(
+            user_id=user_id,
+            filename=filename,
+            status="processing",
+            course_id=course_id,
+            seq=seq,
+            role=role,
+        )
         self.db.add(document)
         self.db.flush()
         return document

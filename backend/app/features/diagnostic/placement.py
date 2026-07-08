@@ -52,11 +52,16 @@ class PlacementService:
         course = self.db.get(Course, course_id)
         if course is None:
             raise HTTPException(status_code=404, detail="코스를 찾을 수 없습니다.")
-        document = self.db.get(Document, course.document_id)
-        profile = (document.profile if document else None) or "enumerative"
+        # 프로파일은 첫 primary 문서 기준(대개 코스 성격을 대표).
+        first_doc = self.db.scalars(
+            select(Document)
+            .where(Document.course_id == course_id, Document.role == "primary")
+            .order_by(Document.seq, Document.created_at)
+        ).first() or self.db.get(Document, course.document_id)
+        profile = (first_doc.profile if first_doc else None) or "enumerative"
         mode = "linked" if profile == "linked" else "enumerative"
 
-        reps = self._part_representatives(course_id, course.document_id)
+        reps = self._part_representatives(course_id)
         if not reps:
             raise HTTPException(
                 status_code=400,
@@ -281,23 +286,40 @@ class PlacementService:
         mastery.resolved = True  # 배치고사 응답은 시드 신호로 확정 취급
         self.db.flush()
 
-    def _part_representatives(
-        self, course_id: uuid.UUID, document_id: uuid.UUID
-    ) -> list[Concept]:
-        """파트당 대표 1개 — 문서순. 노이즈 파트 필터(ISSUE-018): special(내용)
-        + 꼬마 파트(크기) 제외, 전멸 시 무필터 폴백. 배제는 배치고사 한정 —
-        커리큘럼 트리엔 유지된다."""
+    def _part_representatives(self, course_id: uuid.UUID) -> list[Concept]:
+        """파트당 대표 1개 — 다중 PDF는 (문서 seq, part_index)를 전역 파트 키로 삼아
+        문서 경계를 넘어 대표를 고른다. 노이즈 파트 필터(ISSUE-018): special(내용)
+        + 꼬마 파트(크기) 제외, 전멸 시 무필터 폴백. 배제는 배치고사 한정."""
+        documents = list(
+            self.db.scalars(
+                select(Document)
+                .where(Document.course_id == course_id, Document.role == "primary")
+                .order_by(Document.seq, Document.created_at)
+            )
+        )
+        if not documents:
+            course = self.db.get(Course, course_id)
+            single = self.db.get(Document, course.document_id) if course else None
+            documents = [single] if single is not None else []
+        doc_seq = {d.id: i for i, d in enumerate(documents)}
+
+        chunk_doc: dict[uuid.UUID, uuid.UUID] = {}
         chunk_part: dict[uuid.UUID, int] = {}
         chunk_order: dict[uuid.UUID, int] = {}
         for row in self.db.scalars(
-            select(DocChunk).where(DocChunk.document_id == document_id)
+            select(DocChunk).where(DocChunk.document_id.in_([d.id for d in documents]))
         ):
+            chunk_doc[row.id] = row.document_id
             chunk_part[row.id] = row.part_index or 0
             chunk_order[row.id] = row.chunk_index
 
-        document = self.db.get(Document, document_id)
-        scan_parts = ((document.refined_elements or {}).get("scan") or {}).get("parts") or []
-        special_parts = {i + 1 for i, p in enumerate(scan_parts) if p.get("kind") == "special"}
+        # special 파트: (문서 seq, part_index) 전역 키
+        special_parts: set[tuple[int, int]] = set()
+        for d in documents:
+            scan_parts = ((d.refined_elements or {}).get("scan") or {}).get("parts") or []
+            for i, p in enumerate(scan_parts):
+                if p.get("kind") == "special":
+                    special_parts.add((doc_seq[d.id], i + 1))
 
         book_concepts = list(
             self.db.scalars(
@@ -307,8 +329,11 @@ class PlacementService:
             )
         )
 
-        def part_of(c: Concept) -> int:
-            return chunk_part.get(c.source_chunk_id, 0) if c.source_chunk_id else 0
+        def part_of(c: Concept) -> tuple[int, int]:
+            cid = c.source_chunk_id
+            if not cid:
+                return (999, 0)
+            return (doc_seq.get(chunk_doc.get(cid), 999), chunk_part.get(cid, 0))
 
         def order_of(c: Concept) -> int:
             return chunk_order.get(c.source_chunk_id, -1) if c.source_chunk_id else -1
