@@ -7,7 +7,7 @@ bcrypt는 72바이트 초과 입력을 거부하므로 미리 절단한다.
 from datetime import datetime, timedelta, timezone
 
 import bcrypt
-from jose import jwt
+from jose import JWTError, jwt
 
 from app.core.config import settings
 
@@ -32,3 +32,13 @@ def create_access_token(subject: str) -> str:
     )
     payload = {"sub": subject, "exp": expire}
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=ALGORITHM)
+
+
+def decode_access_token(token: str) -> str | None:
+    """JWT를 검증하고 subject(sub)를 반환. 만료·서명오류·형식오류면 None."""
+    try:
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[ALGORITHM])
+    except JWTError:
+        return None
+    sub = payload.get("sub")
+    return str(sub) if sub is not None else None

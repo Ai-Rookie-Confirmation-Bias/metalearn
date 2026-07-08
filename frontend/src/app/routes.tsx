@@ -4,6 +4,7 @@ import App from "@/App";
 import AppLayout from "@/AppLayout";
 import { LandingPage } from "@/pages/LandingPage";
 import { AuthPage } from "@/pages/AuthPage";
+import { AuthCallbackPage } from "@/pages/AuthCallbackPage";
 import { ProfileSetupPage } from "@/pages/ProfileSetupPage";
 import { LearningPage } from "@/pages/LearningPage";
 import { LibraryPage } from "@/pages/LibraryPage";
@@ -28,6 +29,8 @@ export const router = createBrowserRouter([
       { path: "welcome", element: <ProfileSetupPage /> },
     ],
   },
+  // OAuth 콜백 — 제공자→백엔드→여기(#token=...). 토큰 저장 후 /library로.
+  { path: "/auth/callback", element: <AuthCallbackPage /> },
   // 학습 화면 — 자체 헤더를 가진 전체화면 3컬럼 (셸 밖)
   { path: "/learning", element: <LearningPage /> },
   {

@@ -1,3 +1,5 @@
+import { startLogin } from "@/features/auth/api";
+
 // 구글 공식 4색 G 로고 (Phosphor는 단색이라 공식 SVG 인라인)
 function GoogleG({ className = "h-[1.15rem] w-[1.15rem]" }: { className?: string }) {
   return (
@@ -45,6 +47,7 @@ export function AuthPage() {
         <div className="flex flex-col gap-3">
           <button
             type="button"
+            onClick={() => startLogin("google")}
             className="relative w-full flex items-center justify-center gap-3 py-3 rounded-xl border border-border-primary bg-white text-[0.95rem] font-semibold text-text-primary shadow-sm hover:bg-bg-secondary hover:shadow-md transition-all"
           >
             <GoogleG />
@@ -54,6 +57,7 @@ export function AuthPage() {
 
           <button
             type="button"
+            onClick={() => startLogin("naver")}
             className="relative w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-[#03C75A] text-[0.95rem] font-semibold text-white shadow-sm hover:brightness-95 hover:shadow-md transition-all"
           >
             <span className="text-[1.15rem] font-black leading-none">N</span>

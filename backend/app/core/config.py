@@ -14,6 +14,19 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-env"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
+    # ── OAuth 소셜 로그인 (Google / Naver) ────────────────────────
+    # 각 제공자 콘솔에서 앱 등록 후 client id/secret를 .env로 주입한다.
+    # 미설정이면 해당 제공자 로그인은 503으로 막힌다(is_provider_configured).
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    NAVER_CLIENT_ID: str = ""
+    NAVER_CLIENT_SECRET: str = ""
+    # 콜백 redirect_uri 조립용 백엔드 공개 주소(제공자 콘솔 등록값과 일치해야 함).
+    # 예: 콜백은 {OAUTH_BACKEND_BASE_URL}/api/auth/callback/{provider}
+    OAUTH_BACKEND_BASE_URL: str = "http://localhost:58001"
+    # 로그인 성공 후 토큰을 실어 되돌려보낼 프론트 주소.
+    FRONTEND_BASE_URL: str = "http://localhost:55173"
+
     # Upstage Solar (메인 LLM)
     UPSTAGE_API_KEY: str = ""
     SOLAR_BASE_URL: str = "https://api.upstage.ai/v1"
