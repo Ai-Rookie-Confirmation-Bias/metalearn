@@ -140,8 +140,18 @@ def replace_section_blocks(
     concept_id: uuid.UUID | None,
     drafts: list[BlockDraft],
 ) -> list[Block]:
-    """절의 학습 블록을 새 세트로 교체(재생성 대응). 진단 블록은 절에 안 묶이므로 무관."""
-    db.query(Block).filter(Block.section_id == section_id).delete()
+    """절의 학습 블록을 새 세트로 교체(재생성 대응). 진단 블록은 절에 안 묶이므로 무관.
+
+    이미 푼 블록은 attempts가 FK로 참조하므로, 블록 삭제 전 그 attempts를 먼저
+    지운다(재생성되면 옛 블록 답변 기록은 무의미). mastery는 별도 테이블이라 보존.
+    """
+    old_ids = select(Block.id).where(Block.section_id == section_id)
+    db.query(Attempt).filter(Attempt.block_id.in_(old_ids)).delete(
+        synchronize_session=False
+    )
+    db.query(Block).filter(Block.section_id == section_id).delete(
+        synchronize_session=False
+    )
     rows: list[Block] = []
     for i, d in enumerate(drafts):
         rows.append(
