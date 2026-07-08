@@ -75,10 +75,24 @@ export function CurriculumPanel({
                   isOpen ? "bg-white" : "bg-bg-secondary",
                 )}
               >
-                <h4 className="flex items-center gap-2 text-[0.95rem] font-bold text-text-primary">
-                  {ch.title}
-                  {chapterDone && <CheckCircleIcon weight="fill" className="text-[#10b981]" />}
-                </h4>
+                <div className="min-w-0 flex-1">
+                  <h4 className="flex items-center gap-1.5 text-[0.95rem] font-bold text-text-primary">
+                    {ch.origin === "prereq" && (
+                      <span className="shrink-0 rounded-md bg-[#f59e0b]/15 px-1.5 py-0.5 text-[0.68rem] font-bold text-[#b45309]">
+                        선행
+                      </span>
+                    )}
+                    <span className="truncate">{ch.title}</span>
+                    {chapterDone && (
+                      <CheckCircleIcon weight="fill" className="shrink-0 text-[#10b981]" />
+                    )}
+                  </h4>
+                  {ch.origin === "prereq" && ch.prereqForTitle && (
+                    <p className="mt-0.5 truncate text-[0.72rem] text-text-tertiary">
+                      ↳ {ch.prereqForTitle} 준비
+                    </p>
+                  )}
+                </div>
                 {isOpen ? (
                   <CaretUpIcon className="text-text-tertiary" />
                 ) : (

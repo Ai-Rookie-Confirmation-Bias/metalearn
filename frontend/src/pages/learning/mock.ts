@@ -5,7 +5,13 @@
 import type { SectionPayload } from "@/features/learning/blocks/types";
 import type { ReviewDueItem } from "@/features/learning/blocks/ReviewGateModal";
 
-export type Chapter = { id: string; title: string; sections: SectionPayload[] };
+export type Chapter = {
+  id: string;
+  title: string;
+  origin?: "book" | "prereq"; // prereq = 선행학습 장(적응형 삽입)
+  prereqForTitle?: string; // 이 선행이 준비시키는 본편 장 제목(prereq일 때)
+  sections: SectionPayload[];
+};
 export type Course = { id: string; title: string; category: string; chapters: Chapter[] };
 
 export const course: Course = {

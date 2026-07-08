@@ -122,11 +122,25 @@ export function LearningPage() {
   const hasTracked = blocks.some((b) => b.tracked);
 
   // CurriculumPanel용 chapters(패널은 블록을 안 쓰므로 빈 배열)
-  const panelChapters: PanelChapter[] = chapters.map((c) => ({
+  // 선행 장(origin=prereq)이 준비시키는 본편 = 그 뒤에 오는 첫 book 장.
+  const panelChapters: PanelChapter[] = chapters.map((c, i) => ({
     id: c.id,
     title: c.title,
+    origin: c.origin as "book" | "prereq" | undefined,
+    prereqForTitle:
+      c.origin === "prereq"
+        ? chapters.slice(i + 1).find((x) => x.origin === "book")?.title
+        : undefined,
     sections: c.sections.map((s) => ({ id: s.id, title: s.title, blocks: [] })),
   }));
+
+  // 현재 절이 선행 장에 속하면, 어느 본편을 위한 선행인지(배너용)
+  const currentPrereqFor =
+    currentChapter?.origin === "prereq"
+      ? chapters
+          .slice(chapters.findIndex((c) => c.id === currentChapter.id) + 1)
+          .find((x) => x.origin === "book")?.title
+      : undefined;
 
   const goNext = () => {
     // 완료 판정은 서버(section_progress)가 이미 처리 → 프론트는 다음 절로 이동만.
@@ -210,6 +224,26 @@ export function LearningPage() {
             <h2 className="mb-6 text-[2rem] font-extrabold tracking-tight text-text-primary">
               {currentSection?.title ?? ""}
             </h2>
+
+            {/* 선행 장 진입 안내 — 지금 학습 중인 절이 선행학습이면 명시적으로 알림 */}
+            {currentChapter?.origin === "prereq" && (
+              <div className="mb-6 flex items-start gap-3 rounded-2xl border border-[#f59e0b]/40 bg-[#f59e0b]/10 px-5 py-4">
+                <span className="mt-0.5 shrink-0 rounded-md bg-[#f59e0b] px-2 py-1 text-[0.72rem] font-bold text-white">
+                  선행 학습
+                </span>
+                <div className="text-[0.9rem] leading-relaxed text-[#b45309]">
+                  <b>기초를 먼저 다지는 선행 학습이에요.</b>{" "}
+                  {currentPrereqFor ? (
+                    <>
+                      다음 본편 <b>"{currentPrereqFor}"</b>을(를) 배우기 전에 필요한 선수
+                      개념이라, 여기서 먼저 익히고 넘어가요.
+                    </>
+                  ) : (
+                    "본 강의 전에 필요한 선수 개념이라 먼저 익히고 넘어가요."
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* 살아있는 커리큘럼 — 서버가 선수결손 감지 시 선행 절 삽입 후 이동 유도 */}
             {signal?.prerequisite && (
