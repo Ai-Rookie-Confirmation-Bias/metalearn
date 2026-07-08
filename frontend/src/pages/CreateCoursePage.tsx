@@ -176,6 +176,7 @@ export function CreateCoursePage() {
   const [step, setStep] = useState(0); // 0 메인 / 1 추가 / 2 목표
   const [primaries, setPrimaries] = useState<Material[]>([]);
   const [supps, setSupps] = useState<Material[]>([]);
+  const [courseName, setCourseName] = useState(""); // 비우면 첫 파일명으로 폴백
   const [linkUrl, setLinkUrl] = useState("");
   const [purpose, setPurpose] = useState<Purpose | null>(null);
   // 업로드(파싱 포함) 상태 — Document Parse + 개념 추출이라 2~5분 걸린다.
@@ -252,7 +253,8 @@ export function CreateCoursePage() {
     setUploadError(null);
     try {
       const suppFiles = supps.filter((m) => m.file);
-      const title = stripExt(primaryFiles[0].name);
+      // 코스 이름: 사용자 입력 우선, 비우면 첫 주교재 파일명으로 폴백.
+      const title = courseName.trim() || stripExt(primaryFiles[0].name);
       const course =
         primaryFiles.length === 1 && suppFiles.length === 0
           ? await uploadDocument(primaryFiles[0].file!, title)
@@ -303,6 +305,22 @@ export function CreateCoursePage() {
                       canDown={i < primaries.length - 1}
                     />
                   ))}
+                </div>
+              )}
+              {primaries.length > 0 && (
+                <div className="mt-6">
+                  <label className="mb-1.5 block text-[0.85rem] font-semibold text-text-secondary">
+                    코스 이름
+                  </label>
+                  <input
+                    value={courseName}
+                    onChange={(e) => setCourseName(e.target.value)}
+                    placeholder={stripExt(primaries[0].name)}
+                    className="w-full rounded-xl border border-border-primary bg-white px-4 py-2.5 text-[0.95rem] text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
+                  />
+                  <p className="mt-1 text-[0.8rem] text-text-tertiary">
+                    비워두면 첫 파일명(<span className="font-medium">{stripExt(primaries[0].name)}</span>)으로 정해져요.
+                  </p>
                 </div>
               )}
             </>
