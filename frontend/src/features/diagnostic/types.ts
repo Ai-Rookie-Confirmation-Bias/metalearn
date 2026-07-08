@@ -36,6 +36,21 @@ export interface SessionState {
   masteries: MasteryOut[];
 }
 
+// 배치고사(placement, ISSUE-015) — 문항 1개씩 서빙, 바닥(floor)만 찾는다.
+// 구형 진단(SessionState/AnswerResult)과 달리 문항별 정오답 피드백이 없다:
+// 답하면 바로 다음 문항, done=true일 때 floor/ceiling + 시드 결과가 채워진다.
+export interface PlacementState {
+  session_id: string;
+  done: boolean;
+  asked: number; // 지금까지 답한 문항 수
+  max_questions: number; // 상한(보통 12)
+  question: QuestionOut | null; // 다음 문항(done이면 null)
+  floor_concept: string | null;
+  ceiling_concept: string | null;
+  weak_concept_ids: string[];
+  seed: unknown | null;
+}
+
 export interface AnswerResult {
   is_correct: boolean;
   correct_index: number | null;
