@@ -3,10 +3,8 @@ import { clsx } from "clsx";
 
 import type { AttemptResult, ClozeBlockData, OnAnswer } from "./types";
 
-const norm = (s: string) => s.trim().toLowerCase();
-
 // ② 빈칸 채우기 — 정답은 스트립됨(서버 채점). 모든 빈칸 입력 후 "확인" → 라운드트립 채점.
-// 채점 응답의 reveal.blanks로 빈칸별 정오를 표시한다.
+// 첫 확인으로 확정(정답이든 오답이든), 서버가 내려준 빈칸별 정오로 색을 칠한다.
 export function ClozeBlock({
   blockId,
   conceptId,
@@ -22,7 +20,7 @@ export function ClozeBlock({
   const [values, setValues] = useState<Record<number, string>>({});
   const [result, setResult] = useState<AttemptResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const locked = result?.correct === true;
+  const locked = result != null; // 첫 확인으로 확정(정답이든 오답이든 못 바꿈)
 
   const ordered = useMemo(
     () => Array.from({ length: blankCount }, (_, i) => values[i] ?? ""),
@@ -42,12 +40,13 @@ export function ClozeBlock({
     }
   };
 
-  // 채점 후 빈칸별 정오 — reveal.blanks와 대조(대소문자/공백 무시)
+  // 채점 후 빈칸별 정오 — 서버가 빈칸별로 판정한 결과(정규화·의미채점 반영)를 신뢰.
+  // 프론트가 문자열을 재비교하지 않는다(백엔드와 정규화가 달라 오탐하던 버그 해소).
   const blankState = (idx: number): "idle" | "correct" | "incorrect" => {
     if (!result) return "idle";
-    const ans = result.reveal?.blanks?.[idx];
-    if (ans === undefined) return result.correct ? "correct" : "incorrect";
-    return norm(values[idx] ?? "") === norm(ans) ? "correct" : "incorrect";
+    const per = result.reveal?.blankResults;
+    if (per && idx < per.length) return per[idx] ? "correct" : "incorrect";
+    return result.correct ? "correct" : "incorrect";
   };
 
   let blankIdx = -1;
@@ -106,9 +105,29 @@ export function ClozeBlock({
           {submitting ? "채점 중…" : "확인"}
         </button>
       )}
-      {result && !result.correct && (
-        <div className="mt-3 text-[0.9rem] font-medium text-[#b91c1c]">
-          틀린 빈칸이 있어요. 다시 시도해보세요.
+      {result && (
+        <div
+          className={clsx(
+            "mt-3 text-[0.9rem] font-semibold",
+            result.correct ? "text-[#047857]" : "text-[#b91c1c]",
+          )}
+        >
+          {result.correct ? "✅ 정답이에요!" : "❌ 오답이에요."}
+        </div>
+      )}
+      {/* 오답 시 정답 공개 + 해설(왜 정답인지) — 정답일 때도 해설은 노출 */}
+      {result && (!result.correct || result.reveal?.explanation) && (
+        <div className="mt-2 rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
+          {!result.correct && result.reveal?.blanks?.length ? (
+            <div className="font-semibold text-text-primary">
+              정답: {result.reveal.blanks.join(", ")}
+            </div>
+          ) : null}
+          {result.reveal?.explanation ? (
+            <div className={clsx(!result.correct && result.reveal?.blanks?.length && "mt-1")}>
+              💡 {result.reveal.explanation}
+            </div>
+          ) : null}
         </div>
       )}
     </div>

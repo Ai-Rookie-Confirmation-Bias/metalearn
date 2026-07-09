@@ -94,6 +94,11 @@ export interface OnboardingResult {
   seeded: number;
 }
 
+export interface OnboardingReveal {
+  correct: boolean;
+  correct_answer: string;
+}
+
 export interface OnboardingState {
   session_id: string;
   phase: OnboardingPhase;
@@ -104,4 +109,6 @@ export interface OnboardingState {
   probe: ProbeOut | null;
   question: QuestionOut | null;
   result: OnboardingResult | null;
+  // 직전 기반지식 문항의 정답(표시용) — quiz phase 답변 직후에만 채워진다.
+  last_reveal?: OnboardingReveal | null;
 }

@@ -564,15 +564,19 @@ def _ensure_prerequisite_target(
     )
 
 
-def _build_reveal(block) -> RevealOut | None:
-    """채점 후 공개할 정답/해설(유출 아님). mcq=정답+해설, cloze=정답들. 그 외 None."""
+def _build_reveal(block, result: "GradeResult | None" = None) -> RevealOut | None:
+    """채점 후 공개할 정답/해설(유출 아님). mcq=정답+해설, cloze=정답들+빈칸별 정오+힌트."""
     data = block.data or {}
     if block.type == "mcq":
         return RevealOut(
             answer_index=data.get("answerIndex"), explanation=data.get("explanation")
         )
     if block.type == "cloze":
-        return RevealOut(blanks=data.get("blanks"))
+        return RevealOut(
+            blanks=data.get("blanks"),
+            blank_results=result.blank_results if result else None,
+            explanation=data.get("hint"),  # 생성 시 만든 힌트 = 왜 정답인지
+        )
     return None
 
 
@@ -699,15 +703,17 @@ async def record_attempt(
         },
     )
 
-    # [6] 절 진행/완료 판정: tracked 블록 전부 통과 → completed
+    # [6] 절 진행/완료 판정: tracked 블록 전부 '시도' → completed
+    #     (진단 재설계 §2.2: 맞혀야 통과가 아니라 풀면 진행. 오답은 BKT·오답노트로
+    #      흘러가 다음 장 복습에서 재출제된다 — 내용을 막지 않는다.)
     #     완료 확정+커서 복귀 pop([6b])은 read-complete와 공용 헬퍼로 처리.
     resume_section_id: str | None = None
     if block.section_id is not None:
         tracked_ids = repo.get_tracked_block_ids(db, block.section_id)
-        passed_ids = repo.get_passed_block_ids(
+        attempted_ids = repo.get_attempted_block_ids(
             db, user_id=user_id, block_ids=tracked_ids
         )
-        completed = bool(tracked_ids) and passed_ids >= set(tracked_ids)
+        completed = bool(tracked_ids) and attempted_ids >= set(tracked_ids)
         if completed:
             resume_section_id = _finalize_section_completion(
                 db, user_id=user_id, section_id=block.section_id
@@ -729,7 +735,7 @@ async def record_attempt(
             if result.score is not None
             else None
         ),
-        reveal=_build_reveal(block),
+        reveal=_build_reveal(block, result),
         concept=ConceptStateOut(
             concept_id=str(concept_id),
             strength=mastery.strength,

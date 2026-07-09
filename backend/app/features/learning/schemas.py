@@ -203,7 +203,8 @@ class RevealOut(_CamelModel):
 
     answer_index: int | None = None  # mcq 정답 인덱스
     blanks: list[str] | None = None  # cloze 정답들(순서대로)
-    explanation: str | None = None   # mcq 해설
+    blank_results: list[bool] | None = None  # cloze 빈칸별 정오(순서대로, 서버 판정)
+    explanation: str | None = None   # mcq 해설 / cloze 힌트(왜 정답인지)
 
 
 class AttemptResponse(_CamelModel):

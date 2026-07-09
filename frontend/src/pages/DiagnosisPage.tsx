@@ -20,6 +20,7 @@ import {
   answerOnboarding,
   startOnboarding,
 } from "@/features/diagnostic/api/onboardingApi";
+import { getCourses } from "@/features/library/api/getCourses";
 import type { OnboardingResult, OnboardingState, QuestionOut, QuestionType } from "@/features/diagnostic/types";
 
 const QTYPE_LABEL: Record<QuestionType, string> = {
@@ -205,11 +206,34 @@ export function DiagnosisPage() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const startedRef = useRef(false);
 
+  // 방금 업로드한 코스는 파싱·시드가 백그라운드로 도는 중일 수 있다.
+  // 커리큘럼(섹션)이 생기기 전 온보딩을 시작하면 대표 개념이 없어 실패하므로,
+  // sectionsTotal>0 이 될 때까지 폴링한 뒤 온보딩을 시작한다.
+  async function waitForCourseReady(id: string) {
+    const deadline = Date.now() + 180_000; // 최대 3분
+    for (;;) {
+      try {
+        const courses = await getCourses();
+        const c = courses.find((x) => x.id === id);
+        if (c && c.sectionsTotal > 0) return;
+      } catch {
+        // 일시 오류 — 계속 폴링
+      }
+      if (Date.now() > deadline) {
+        throw new Error(
+          "커리큘럼 생성이 아직 끝나지 않았어요. 잠시 후 다시 시도해주세요.",
+        );
+      }
+      await new Promise((r) => setTimeout(r, 2500));
+    }
+  }
+
   async function start() {
     if (!courseId) return;
     setPhase("starting");
     setErrorMsg(null);
     try {
+      await waitForCourseReady(courseId);
       const s = await startOnboarding(courseId);
       applyState(s);
     } catch (e) {
@@ -276,9 +300,9 @@ export function DiagnosisPage() {
         {phase === "starting" && (
           <CenterNotice
             icon={<Spinner className="h-9 w-9 border-[3px]" />}
-            title="온보딩을 준비하고 있어요"
+            title="학습을 준비하고 있어요"
             desc={
-              "먼저 당신의 학습 성향을 알아보고,\n교재와 가볍게 만나볼게요.\n최대 1~2분 정도 걸릴 수 있어요."
+              "교재로 커리큘럼을 만들고,\n당신의 학습 성향을 볼 준비를 하고 있어요.\n최대 1~2분 정도 걸릴 수 있어요."
             }
           />
         )}
@@ -394,6 +418,26 @@ export function DiagnosisPage() {
                   ))}
                 </div>
               </>
+            )}
+
+            {state.phase === "quiz" && state.last_reveal && (
+              <div
+                className={clsx(
+                  "mb-6 rounded-xl border px-4 py-3 text-[0.9rem]",
+                  state.last_reveal.correct
+                    ? "border-[#10b981]/40 bg-[#10b981]/10 text-[#047857]"
+                    : "border-[#ef4444]/40 bg-[#ef4444]/10 text-[#b91c1c]",
+                )}
+              >
+                <span className="font-semibold">
+                  {state.last_reveal.correct ? "✅ 정답이에요!" : "❌ 오답이에요."}
+                </span>
+                {!state.last_reveal.correct && state.last_reveal.correct_answer && (
+                  <span className="ml-1 text-text-secondary">
+                    정답: {state.last_reveal.correct_answer}
+                  </span>
+                )}
+              </div>
             )}
 
             {state.phase === "quiz" && state.question && (

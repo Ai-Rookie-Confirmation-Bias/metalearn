@@ -72,7 +72,8 @@ export type AnswerEvent = {
 export type AttemptReveal = {
   answerIndex?: number; // mcq 정답
   blanks?: string[]; // cloze 정답들
-  explanation?: string; // mcq 해설
+  blankResults?: boolean[]; // cloze 빈칸별 정오(서버 판정) — 순서대로
+  explanation?: string; // mcq 해설 / cloze 힌트
 };
 export type AttemptResult = {
   correct: boolean | null;

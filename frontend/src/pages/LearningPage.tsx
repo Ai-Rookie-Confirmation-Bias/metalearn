@@ -40,6 +40,8 @@ export function LearningPage() {
 
   // 휘발성 UI(현재 보고 있는 절)만 클라 상태. 진행/완료/잠금은 전부 서버(트리) 미러.
   const [currentSectionId, setCurrentSectionId] = useState<string | null>(null);
+  // 몰입 뷰어 — 좌(커리큘럼)·우(AI튜터) 패널을 숨기고 본문에만 집중.
+  const [immersive, setImmersive] = useState(false);
   // 살아있는 커리큘럼 신호(서버 attempt 응답) — 원인 국소화·선행 삽입·복귀 표면화
   const [signal, setSignal] = useState<AttemptResponse | null>(null);
 
@@ -195,9 +197,17 @@ export function LearningPage() {
         <div className="flex items-center gap-4">
           <button
             type="button"
-            className="flex items-center gap-2 rounded-xl border border-border-primary bg-bg-secondary px-4 py-2 text-[0.85rem] font-semibold text-text-primary transition-colors hover:bg-border-primary/50"
+            onClick={() => setImmersive((v) => !v)}
+            aria-pressed={immersive}
+            className={clsx(
+              "flex items-center gap-2 rounded-xl border px-4 py-2 text-[0.85rem] font-semibold transition-colors",
+              immersive
+                ? "border-primary bg-primary text-white hover:bg-primary-hover"
+                : "border-border-primary bg-bg-secondary text-text-primary hover:bg-border-primary/50",
+            )}
           >
-            <ArrowsOutSimpleIcon weight="fill" /> 몰입 뷰어 켜기
+            <ArrowsOutSimpleIcon weight="fill" />{" "}
+            {immersive ? "몰입 뷰어 끄기" : "몰입 뷰어 켜기"}
           </button>
           <button
             type="button"
@@ -208,15 +218,17 @@ export function LearningPage() {
         </div>
       </header>
 
-      {/* 3컬럼 */}
+      {/* 3컬럼 (몰입 뷰어 켜면 좌우 패널 숨김) */}
       <div className="flex flex-1 overflow-hidden">
-        <CurriculumPanel
-          chapters={panelChapters}
-          currentSectionId={currentSectionId ?? ""}
-          completedIds={completedIds}
-          unlockedIds={unlockedIds}
-          onSelect={setCurrentSectionId}
-        />
+        {!immersive && (
+          <CurriculumPanel
+            chapters={panelChapters}
+            currentSectionId={currentSectionId ?? ""}
+            completedIds={completedIds}
+            unlockedIds={unlockedIds}
+            onSelect={setCurrentSectionId}
+          />
+        )}
 
         {/* 중앙: 현재 절의 블록 렌더 */}
         <main className="flex-1 overflow-y-auto bg-white" key={currentSectionId}>
@@ -371,7 +383,7 @@ export function LearningPage() {
           </div>
         </main>
 
-        <AiTutorPanel signal={signal} />
+        {!immersive && <AiTutorPanel signal={signal} />}
       </div>
     </div>
   );

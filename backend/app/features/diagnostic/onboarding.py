@@ -350,10 +350,14 @@ class OnboardingService:
             },
         ]
 
+        # 가벼운 정답 공개(사용자 요청) — 답한 문항의 정답만 잠깐 보여주고 진행.
+        reveal = self._quiz_reveal(question, correct)
+
         next_concept = self._next_step(state, question.concept_id, correct)
         if next_concept is None or len(state["asked"]) >= _MAX_CONTENT_QUESTIONS:
             session.state = state
             result = await self._complete(session, state)
+            result.last_reveal = reveal
             self.db.commit()
             return result
 
@@ -364,7 +368,23 @@ class OnboardingService:
         await self._make_question(session, next_concept)
         session.state = state
         self.db.commit()
-        return self._state(session)
+        out = self._state(session)
+        out.last_reveal = reveal
+        return out
+
+    def _quiz_reveal(
+        self, question: DiagnosticQuestion, correct: bool
+    ) -> "OnboardingReveal":
+        """직전 퀴즈 문항의 정답(표시용) — mcq는 정답 보기, 인출형은 기대 답안."""
+        from app.features.diagnostic.schemas import OnboardingReveal
+
+        if question.qtype == "mcq":
+            opts = list(question.options or [])
+            ai = question.answer_index
+            answer = opts[ai] if ai is not None and 0 <= ai < len(opts) else ""
+        else:
+            answer = question.expected_answer or ""
+        return OnboardingReveal(correct=correct, correct_answer=answer)
 
     def _next_step(
         self, state: dict, answered_id: uuid.UUID, correct: bool

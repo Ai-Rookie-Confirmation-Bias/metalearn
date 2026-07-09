@@ -18,7 +18,8 @@ from dataclasses import dataclass
 from app.core.llm.base import LLMClient
 from app.core.verify_grade import (
     ExplainBackGrade,
-    grade_cloze,
+    cloze_parts,
+    grade_cloze_blanks,
     grade_explain_back_rubric,
     grade_mcq,
 )
@@ -40,6 +41,7 @@ class GradeResult:
     score: float | None = None
     missed_points: list[str] | None = None
     comment: str | None = None
+    blank_results: list[bool] | None = None  # cloze 빈칸별 정오(순서대로)
 
     @property
     def passed(self) -> bool:
@@ -118,24 +120,29 @@ _CLOZE_JUDGE_SYSTEM = (
 )
 
 
-async def grade_cloze_llm(
-    llm: LLMClient, *, text: str, blanks: list[str], user_input: str
-) -> bool:
-    """빈칸 의미 채점(폴백) — 정확일치가 실패했을 때만 호출.
+async def grade_cloze_llm_blanks(
+    llm: LLMClient, *, text: str, blanks: list[str], parts: list[str]
+) -> list[bool]:
+    """빈칸별 의미 채점(폴백) — 정확일치가 실패한 빈칸만 의미로 재판정.
 
     자유서술 빈칸(수식·개념)은 표기·어순·동의어 차이로 정확일치가 자주 실패한다
     (ISSUE-016③ 계보: 진단엔 이미 LLM 심판 폴백이 있으나 학습 채점엔 없었음).
-    LLM이 의미 동등성만 본다. 호출/파싱 실패 시 False(정확일치 결과 유지)."""
+    빈칸별로 정답과 의미가 같은지 판정한다. 호출/파싱 실패 시 전부 False.
+    반환: blanks와 같은 길이의 bool 배열."""
+    pairs = "\n".join(
+        f'{i}. 정답="{blanks[i]}" / 학습자답="{parts[i] if i < len(parts) else ""}"'
+        for i in range(len(blanks))
+    )
     prompt = (
-        "너는 빈칸 채우기 채점관이다. 학습자 답이 정답과 의미상 같은지만 판정한다.\n"
-        "빈칸 문장에서 학습자 답이 정답과 의미상 일치하는지 판정하라.\n"
+        "너는 빈칸 채우기 채점관이다. 각 빈칸에서 학습자 답이 정답과 의미상 같은지만"
+        " 빈칸별로 판정한다.\n"
         f"문장: {text}\n"
-        f"정답(빈칸 순서대로): {blanks}\n"
-        f"학습자 답: {user_input}\n"
+        f"빈칸별 (정답 / 학습자답):\n{pairs}\n"
         "인정: 표기 차이(공백·기호·괄호), 어순, 동의어, 수식의 다른 표기"
         "(예: 'f''(a)=0'와 'f''(a) = 0', '√(ax²+ay²)'와 'sqrt(ax^2+ay^2)'). "
         "핵심 의미·값이 다르면 오답.\n"
-        '출력 JSON: {"correct": true|false}'
+        '출력 JSON: {"results": [true|false, ...]}  (빈칸 순서대로, 길이 '
+        f"{len(blanks)})"
     )
     try:
         raw = await llm.generate(prompt, system=_CLOZE_JUDGE_SYSTEM, json_mode=True)
@@ -145,11 +152,13 @@ async def grade_cloze_llm(
             cleaned = fence.group(1).strip()
         start, end = cleaned.find("{"), cleaned.rfind("}")
         if start == -1 or end == -1:
-            return False
-        return bool(json.loads(cleaned[start : end + 1]).get("correct"))
+            return [False] * len(blanks)
+        results = json.loads(cleaned[start : end + 1]).get("results") or []
+        return [bool(results[i]) if i < len(results) else False
+                for i in range(len(blanks))]
     except Exception:
         logger.exception("cloze LLM 채점 실패 — 정확일치 결과 유지")
-        return False
+        return [False] * len(blanks)
 
 
 async def grade_block(
@@ -166,22 +175,21 @@ async def grade_block(
         )
 
     if block_type == "cloze":
-        blanks = block_data.get("blanks") or []
+        blanks = [str(b) for b in (block_data.get("blanks") or [])]
         if not blanks:
             raise ValueError("cloze 블록에 정답 데이터가 없습니다")
-        if isinstance(user_input, list):
-            user_input = ",".join(str(v) for v in user_input)
-        user_input = str(user_input)
-        # 빠른 경로: 정규화 정확일치. 실패 시에만 LLM 의미 채점(비용 절약).
-        correct = grade_cloze(user_input, list(blanks))
-        if not correct:
-            correct = await grade_cloze_llm(
+        parts = cloze_parts(user_input, len(blanks))
+        # 빠른 경로: 빈칸별 정규화 정확일치. 실패한 빈칸만 LLM 의미 채점(비용 절약).
+        per_blank = grade_cloze_blanks(parts, blanks)
+        if not all(per_blank):
+            llm_res = await grade_cloze_llm_blanks(
                 llm,
                 text=str(block_data.get("text") or ""),
-                blanks=[str(b) for b in blanks],
-                user_input=user_input,
+                blanks=blanks,
+                parts=parts,
             )
-        return GradeResult(correct=correct)
+            per_blank = [e or l for e, l in zip(per_blank, llm_res, strict=True)]
+        return GradeResult(correct=all(per_blank), blank_results=per_blank)
 
     if block_type in ("explainBack", "reviewGate"):
         rubric = list(block_data.get("rubric") or [])

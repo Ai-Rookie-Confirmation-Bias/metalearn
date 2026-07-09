@@ -37,20 +37,35 @@ def grade_mcq(user_input: str | int, answer_index: int, options_count: int) -> b
     return idx == answer_index
 
 
+def cloze_parts(user_input: object, blank_count: int) -> list[str]:
+    """user_input(리스트 또는 '답1,답2' 문자열)을 빈칸 수에 맞춘 파트 배열로.
+
+    프론트는 빈칸별 입력을 리스트로 보낸다(콤마 포함 답도 안전). 하위호환으로
+    문자열도 받는다: 단일 빈칸이면 통째로, 아니면 콤마 분리.
+    """
+    if isinstance(user_input, (list, tuple)):
+        parts = [str(v).strip() for v in user_input]
+    else:
+        s = str(user_input or "")
+        parts = [s.strip()] if blank_count == 1 else [p.strip() for p in s.split(",")]
+    # 길이 정규화(부족分은 빈 문자열, 초과分은 잘라냄)
+    if len(parts) < blank_count:
+        parts = parts + [""] * (blank_count - len(parts))
+    return parts[:blank_count]
+
+
+def grade_cloze_blanks(user_input: object, blanks: list[str]) -> list[bool]:
+    """빈칸별 정규화 정확일치 → 빈칸별 bool 배열. parts[i] ↔ blanks[i]."""
+    parts = cloze_parts(user_input, len(blanks))
+    return [normalize_text(parts[i]) == normalize_text(expected)
+            for i, expected in enumerate(blanks)]
+
+
 def grade_cloze(user_input: str, blanks: list[str]) -> bool:
-    """user_input: '답1,답2' 또는 단일 blank."""
+    """전체 정오(모든 빈칸 정답일 때만 True). 하위호환용."""
     if not blanks:
         return False
-    parts = [p.strip() for p in str(user_input).split(",")]
-    if len(parts) != len(blanks):
-        if len(blanks) == 1:
-            parts = [str(user_input).strip()]
-        else:
-            return False
-    for got, expected in zip(parts, blanks, strict=True):
-        if normalize_text(got) != normalize_text(expected):
-            return False
-    return True
+    return all(grade_cloze_blanks(user_input, blanks))
 
 
 @dataclass(frozen=True)

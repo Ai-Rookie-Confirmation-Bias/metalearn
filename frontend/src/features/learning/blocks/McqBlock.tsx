@@ -3,7 +3,8 @@ import { clsx } from "clsx";
 
 import type { AttemptResult, McqBlockData, OnAnswer } from "./types";
 
-// ② 객관식 — idle → 선택 → correct(초록, 잠금)/incorrect(빨강, 재시도 가능) + 해설
+// ② 객관식 — 첫 선택이 확정(정답이든 오답이든 못 바꿈). 채점 후 정답(초록)·오답(빨강)
+// 표시 + 해설. 인출 학습은 '맞혀야 통과'가 아니라 '풀면 진행'이라, 오답도 그대로 기록된다.
 export function McqBlock({
   blockId,
   conceptId,
@@ -16,7 +17,7 @@ export function McqBlock({
   onAnswer: OnAnswer;
 }) {
   const [picked, setPicked] = useState<number | null>(null);
-  const [locked, setLocked] = useState(false); // 정답 맞추면 잠금
+  const [locked, setLocked] = useState(false); // 첫 선택 후 잠금(변경 불가)
   const [result, setResult] = useState<AttemptResult | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -29,23 +30,27 @@ export function McqBlock({
     try {
       const r = await onAnswer({ blockId, conceptId, userInput: i });
       setResult(r);
-      if (r.correct) setLocked(true);
+      setLocked(true); // 정답/오답 무관 — 첫 선택으로 확정
     } finally {
       setSubmitting(false);
     }
   };
+
+  const correctIdx = result?.reveal?.answerIndex ?? null;
 
   return (
     <div>
       <div className="mb-6 text-[1.1rem] font-semibold text-text-primary">{data.question}</div>
       <div className="flex flex-col gap-3">
         {data.options.map((opt, i) => {
-          const isPicked = picked === i;
-          const state = !isPicked
-            ? "idle"
-            : result?.correct
+          // 채점 후: 정답 보기는 초록, 내가 고른 오답은 빨강, 나머지는 idle.
+          const state = !result
+            ? picked === i
+              ? "picked"
+              : "idle"
+            : correctIdx === i
               ? "correct"
-              : result
+              : picked === i
                 ? "incorrect"
                 : "idle";
           return (
@@ -53,10 +58,12 @@ export function McqBlock({
               key={i}
               type="button"
               onClick={() => pick(i)}
+              disabled={locked || submitting}
               className={clsx(
                 "flex items-center gap-4 rounded-xl border px-5 py-4 text-left text-[0.95rem] transition-all",
                 state === "idle" &&
                   "border-border-primary bg-white text-text-primary hover:border-accent hover:bg-accent/[0.02]",
+                state === "picked" && "border-accent bg-accent/[0.06] text-text-primary",
                 state === "correct" && "border-[#10b981] bg-[#10b981]/10 font-semibold text-[#047857]",
                 state === "incorrect" && "border-[#ef4444] bg-[#ef4444]/10 text-[#b91c1c]",
                 locked && "cursor-default",
@@ -79,8 +86,31 @@ export function McqBlock({
           );
         })}
       </div>
-      {locked && result?.reveal?.explanation && (
-        <div className="mt-4 rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
+
+      {/* 채점 결과 — 정오 상태 한 줄 */}
+      {result && (
+        <div
+          className={clsx(
+            "mt-4 text-[0.9rem] font-semibold",
+            result.correct ? "text-[#047857]" : "text-[#b91c1c]",
+          )}
+        >
+          {result.correct
+            ? "✅ 정답이에요!"
+            : correctIdx !== null
+              ? `❌ 오답이에요. 정답은 ${String.fromCharCode(65 + correctIdx)}번이에요.`
+              : "❌ 오답이에요."}
+        </div>
+      )}
+
+      {/* 해설 — 정답/오답 모두 노출(왜 그런지 배운다) */}
+      {result && data.explanation && (
+        <div className="mt-3 rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
+          💡 {data.explanation}
+        </div>
+      )}
+      {result && !data.explanation && result.reveal?.explanation && (
+        <div className="mt-3 rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
           💡 {result.reveal.explanation}
         </div>
       )}

@@ -181,6 +181,13 @@ class OnboardingResult(BaseModel):
     seeded: int = 0
 
 
+class OnboardingReveal(BaseModel):
+    """직전 기반지식 문항의 정답 공개(가벼운 피드백) — 다음 단계와 함께 내려간다."""
+
+    correct: bool
+    correct_answer: str = ""
+
+
 class OnboardingState(BaseModel):
     """온보딩 진행 상태 — phase에 따라 disposition/probe/question 중 하나가 채워진다."""
 
@@ -193,6 +200,8 @@ class OnboardingState(BaseModel):
     probe: ProbeOut | None = None
     question: QuestionOut | None = None
     result: OnboardingResult | None = None
+    # 직전 기반지식 문항의 정답(표시용) — quiz phase 답변 직후에만 채워진다.
+    last_reveal: OnboardingReveal | None = None
 
 
 class AnswerResult(BaseModel):

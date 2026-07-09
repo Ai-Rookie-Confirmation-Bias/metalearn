@@ -714,6 +714,24 @@ def get_passed_block_ids(
     return {bid for bid in db.scalars(stmt) if bid is not None}
 
 
+def get_attempted_block_ids(
+    db: Session, *, user_id: uuid.UUID, block_ids: list[uuid.UUID]
+) -> set[uuid.UUID]:
+    """유저가 한 번이라도 시도(정오답 무관)한 블록 ID 집합.
+
+    진행 게이트용(진단 재설계 §2.2): 인출은 '맞혀야 통과'가 아니라 '풀면 진행'.
+    오답은 그대로 BKT·오답노트로 흘러가 다음 장 복습으로 재출제된다 — 내용을
+    막지 않고 데이터로 삼는다. (mastery/strength는 정오답을 별도로 반영.)
+    """
+    if not block_ids:
+        return set()
+    stmt = select(Attempt.block_id).where(
+        Attempt.user_id == user_id,
+        Attempt.block_id.in_(block_ids),
+    )
+    return {bid for bid in db.scalars(stmt) if bid is not None}
+
+
 # ── 학습 커서(복귀 자동화, ISSUE-002) ────────────────────────────────────────
 def get_cursor(
     db: Session, *, user_id: uuid.UUID, course_id: uuid.UUID
