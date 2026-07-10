@@ -52,7 +52,10 @@ class Settings(BaseSettings):
     # 청크 최대 문자 수. 청크 ≈ 진단 섹션 단위이기도 하므로 너무 크면 섹션이
     # 과하게 넓어져(파트급) 게이팅이 관대해진다. 4000자 ≈ 중주제 크기.
     EXTRACTION_SECTION_CHAR_BUDGET: int = 4000
-    EXTRACTION_MAX_CONCURRENCY: int = 3  # 섹션 추출 LLM 동시 호출 수
+    # 섹션 추출 LLM 동시 호출 수. Solar 클라 전역 상한(_MAX_CONCURRENT=8)에 맞춰
+    # 8로 — 추출은 ingest의 지배적 비용(청크당 1콜)인데 3만 쓰면 5슬롯이 놀아
+    # 파싱 체감이 느려진다(강사 피드백 "5분 에바"). 429는 Solar 클라 지수백오프가 흡수.
+    EXTRACTION_MAX_CONCURRENCY: int = 8
     # 임베딩 배치 크기 (ISSUE-010): 개념당 1호출 → N개씩 묶어 호출 수 절감.
     EMBED_BATCH_SIZE: int = 64
     # 임베딩 코사인 유사도가 이 값 이상이면 같은 개념으로 병합
