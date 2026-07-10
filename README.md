@@ -1,6 +1,8 @@
 # MetaLearn
 
-하이브리드(클라우드 + 로컬) AI 학습 플랫폼. 온라인일 땐 백엔드가 **Upstage Solar**로 학습 콘텐츠를 생성하고, 오프라인일 땐 브라우저 내 로컬 **EXAONE**으로 동작하는 것을 목표로 한다.
+하이브리드(클라우드 + 로컬) AI 학습 플랫폼. 온라인일 땐 백엔드가 **Upstage Solar**로 학습 콘텐츠를 생성하고, 오프라인일 땐 로컬 **EXAONE**으로 동작하는 것을 목표로 한다.
+
+> **처음 온 사람**: 서비스 정의 → [`docs/SERVICE_OVERVIEW.md`](docs/SERVICE_OVERVIEW.md) · 개발 시작(브랜치 규율·실행법) → [`docs/DEV_GUIDE.md`](docs/DEV_GUIDE.md) · 통합 브랜치 = `feat/yoonhs-integration`
 
 **기본 개념 :** "클라이언트는 컴포넌트를 조립만, 모든 데이터는 JSON 봉투로 온다."
 **핵심 :** 개념 그래프 + 숙련도.
@@ -58,7 +60,7 @@
 | 마이그레이션 | Alembic | 스키마 버전 관리 |
 | AI (Cloud) | Upstage Solar | 메인 생성 + 검증/채점 엔진 (OpenAI 호환 API) |
 | 외부 근거 | 웹서치 / 표준 교재 코퍼스 / 자체 선행 DB | 책에 없는 선행 개념의 검증 근거 |
-| AI (Local) | EXAONE (wllama/WebGPU) | 오프라인/무료 — Phase 2, 스텁 |
+| AI (Local) | EXAONE 4.0 1.2B (llama.cpp, Q4) + K-EXAONE(온라인 생성) | 오프라인 채점·꼬리질문 — **데모 MVP 동작** (`feat/ondevice-exaone-mvp`의 `ondevice/`) |
 
 > **임베딩 차원 주의:** `doc_chunks.embedding`은 Solar 임베딩 출력 차원에 맞춘다. 문서 내 `vector(1536)`은 예시값 — 실제 Solar 임베딩 차원으로 확정 후 마이그레이션(불일치 시 색인 실패).
 > 

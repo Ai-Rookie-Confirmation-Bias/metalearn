@@ -1,3 +1,5 @@
+> ✅ **인계 완료 — 역사 문서.** 내용은 `feat/yoonhs-integration`에 통합됨(2026-07-10). 최신 온보딩은 `docs/DEV_GUIDE.md`.
+
 # 병합 v2 인계 — parsing 신규 4기능을 full-assembly 위에 포팅
 
 > 작성: 2026-07-07 · 갱신: 2026-07-08(실사용 테스트 후속, §5) · 브랜치: `trial/full-assembly-v2` (parsing 측)

@@ -1,3 +1,5 @@
+> ⚠️ dev 시점 계약 정본 — 이후 구현과 경로·필드 차이 있음(예: 구현은 `/api/auth/login/{provider}`, 온보딩 `/api/diagnostic/onboarding/*` 신설). **실제 최신 API는 백엔드 Swagger(`/docs`)가 진실.**
+
 # MetaLearn — API 명세 (🔒 = 인증 필요)
 
 > README.md에서 분리. **API 변경은 이 파일에서 관리한다.**

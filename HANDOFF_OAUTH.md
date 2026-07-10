@@ -1,3 +1,5 @@
+> ✅ **병합 완료(2026-07-10, `c97068f` + 마이그 0017→0020 재연결 `17a4653`).** 아래 자격증명 설정 가이드는 계속 유효 — client id/secret만 넣으면 로그인 활성화(`/api/auth/providers`로 확인).
+
 # OAuth 소셜 로그인 (Google / Naver) — 구현 인계 + 설정 가이드
 
 > 작성: 2026-07-08 · 브랜치: `feat/oauth-login` (베이스 `trial/full-assembly-v2`)

@@ -1,3 +1,5 @@
+> ✅ **결착(2026-07-10)** — parsing 팀원이 `feat/yoonhs-integration`(UUID 정본 계보)을 베이스로 채택하며 ISSUE-001 해소. 잔여는 마이그레이션 스쿼시(0001~0020 → 단일 0001, **동시 진행**)뿐. 이하는 협의 당시의 역사 기록.
+
 # parsing ↔ backend-ai-core 병합 합의 요청 (ISSUE-001 · ISSUE-015)
 
 > 보내는 쪽: `feat/backend-ai-core`(하류, yoonhs) → 받는 쪽: `feat/parsing` 담당

@@ -1,3 +1,5 @@
+> ✅ **인계 완료 — 역사 문서.** 내용은 `feat/yoonhs-integration`에 통합됨(2026-07-10). 최신 온보딩은 `docs/DEV_GUIDE.md`.
+
 # 병합 트라이얼 인계 문서 (parsing 팀원용)
 
 > 작성: 2026-07-07 · 작성 브랜치: `trial/full-assembly` (yoonhs 측, backend-ai-core 하류 담당)

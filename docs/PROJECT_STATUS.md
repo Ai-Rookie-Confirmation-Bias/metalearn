@@ -1,3 +1,5 @@
+> ⚠️ **역사 스냅샷(2026-07-06 작성)** — 본문의 "ISSUE-001 최대 블로커"는 **2026-07-10 결착됨**(팀원이 UUID 통합 계보 채택). 최신 현황은 [`SERVICE_OVERVIEW.md`](./SERVICE_OVERVIEW.md)·[`DEV_GUIDE.md`](./DEV_GUIDE.md) 참조.
+
 # MetaLearn — 서비스 현황 & 평가 (공유용)
 
 > **작성**: 2026-07-06 · **관점**: `feat/backend-ai-core`(하류: 진단 후 학습) 중심, 서비스 전체 조망
