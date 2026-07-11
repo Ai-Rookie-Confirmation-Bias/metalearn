@@ -81,6 +81,76 @@
 
 ---
 
+## 2026-07-11(2) — Claude CLI — 학습 목적(purpose) 엔진 정책화: PurposePolicy(문항 구성·tracked 게이트·복습 cap·SM-2 계수)
+
+### 사용자 요청
+- 목적별 학습 '방식' 차이(시험=암기·문제 다수, 취미=부담 없이 등) 브레인스토밍 → 설계 확정("그대로 진행").
+
+### 추론 / 결정
+- **목적 = 학습 엔진의 강도 프리셋** — 새 모듈 `learning/policy.py`의 `PurposePolicy`(retrieval_directive·tracked_retrieval·review_cap·sm2_interval_factor) 테이블 하나로 표현. 미설정/미지 값 = 현행 동작(하위호환).
+- **게이트 로직은 분기하지 않음** — 취미의 게이트 완화는 인출 블록을 `tracked=False`로 '생성'해서 달성: 기존 `complete_section_by_reading`의 "tracked 0개면 열람 완료" 규칙이 코드 수정 없이 발동. 정책이 전부 데이터(생성물 속성+상수)라 상태머신 리스크 0.
+- 코드 정찰 결과 반영: 오답 재큐는 기존 오답노트 우선 복습 수집이 이미 수행 → 시험은 cap(8)·주기(0.7)만 강화. 게이트는 이미 「풀면 진행」이라 강화 불필요. 난이도는 불변(§2.3 — 목적이 아니라 수준의 함수), STEP3 카피에서 "난이도" 문구 제거.
+- SM-2 계수는 interval에만 적용(ease 불변 — 목적 변경이 학습 이력을 오염하지 않게), 하한 1일.
+
+### 한 일 (정책 테이블: exam 8/0.7/tracked, career 5/1.0, culture 3/1.5, hobby 0/untracked)
+- `learning/policy.py` 신규 — 정책 4종 + `policy_of()` · `generator.py` `GenerationInput.tracked_retrieval` + learn 블록 `tracked = 타입기본 AND 정책` + 밀도·유형 지시문은 스타일 지시문과 합류 · `review/sm2.py` `interval_factor` 파라미터 · `service.py` ①`_prepare_generation_input` 정책 소비 ②`run_chapter_generation` `_REVIEW_CAP=5` 고정 → 정책 cap(0이면 복습 수집 스킵) ③`record_attempt` SM-2 갱신에 계수 · 프론트 STEP3 카피 "난이도와 문제 유형"→"문제 유형과 학습 방식"
+
+### 변경 파일
+- backend: `features/learning/{policy(신규),generator,service}.py`, `features/review/sm2.py` / frontend: `pages/CreateCoursePage.tsx`(카피 1줄)
+
+### 결과 / 검증 (실 mlv2 Docker+DB+LLM, course 50307f29)
+- 순수: 정책 테이블 4종+미지값 폴백, exam 프롬프트에 스타일+밀도 지시문 동시 주입, SM-2 interval 20일 정답 시 기본 50 / 시험 35 / 교양 75일 + 오답 하한 1일 — PASS
+- **hobby 라이브**: purpose=hobby로 챕터 생성 → 인출 블록(cloze3·mcq2·explainBack2) **전부 tracked=f** + 복습 섹션 0
+- **exam 라이브**: purpose=exam으로 다른 챕터 생성 → 인출 **전부 tracked=t**, 절당 인출 4~7문항(밀도 지시 반영 경향)
+- **게이트 실증(HTTP)**: hobby 절 read-complete → **200 completed**(문제 안 풀고 완료), exam 절 → **409**("채점 대상 블록이 있는 절은 열람만으로 완료할 수 없습니다") — tracked 정책만으로 게이트 차등 성립
+- **SM-2 계수 실배선**: mastery interval 20일 세팅 후 exam 상태에서 review 정답 attempt → **interval 35일**(기본이면 50) 기록
+- **복습 cap 실증**: due 개념 10개 시딩 → 수집이 exam 8·culture 3·hobby 0(스킵) 정확, exam 챕터 생성 시 「복습 · 오답 체크」 섹션이 **개념 정확히 8개**·블록 15개(전부 tracked)로 물리 생성. 백엔드 예외 0, tsc 0 에러. 테스트 코스 purpose는 career로 원복
+
+### 열린 이슈
+- [ ] 3단계 시험 트랙 미착수: D-day(enrollments 컬럼) → 모의고사(복습 섹션의 누적 확장) → 기출 연동(STEP2 kind 배선 선행)
+- [ ] yoonhs 워킹트리 미커밋(링크·purpose v1 포함) — 커밋 여부 사용자 결정 대기
+
+### 다음 액션
+1. 브라우저에서 목적별 체감 확인(취미 코스 만들어 절 완료 UX 등) 후 커밋 결정
+2. 시험 트랙(D-day부터) 착수 여부 결정
+
+---
+
+## 2026-07-11 — Claude CLI — 위저드 STEP2 링크 보조자료 참조 + STEP3 학습 목적(purpose) 배선 구현·E2E
+
+### 사용자 요청
+- STEP 2 보조자료(기출·링크·필기)가 "앞서 올린 PDF에 도움되는 링크 넣으면 거기서도 참조"하는지 테스트, 없으면 구현. STEP 3 학습 목적(시험·실무·교양·취미)도 확인, 없으면 구현.
+
+### 추론 / 결정 (테스트 결과 = 현황)
+- **보조 PDF 파일**: 이미 배선돼 있었음 — upload-batch(roles) → `extract_graph=False`(청크·임베딩만) → RAG `_course_doc_ids`가 supplementary 포함.
+- **링크**: 완전 미구현 — 프론트가 수집만 하고 전송 안 함(`filter(m=>m.file)`이 링크 제외), 백엔드 URL 섭취 경로 없음 → **구현**.
+- **purpose**: 유실 — 위저드가 `?purpose=`로 넘기지만 DiagnosisPage가 안 읽고, 온보딩 `_complete`도 `finalize_onboarding`에 안 넘겨 항상 기본 "exam". `enrollment.purpose` 소비처도 전무 → **배선+소비 구현**. 소비는 STEP3 카피("목표에 맞춰 조절") 대비 최소 정직선: 성향 지시문과 동일 패턴의 결정적 스타일 지시문(§2.2 가드 — 난이도·범위·분량 불변, `difficulty_hint=2` 유지).
+- 링크 fetch는 stdlib HTMLParser(신규 의존 0), 실패는 코스 전체가 아닌 해당 링크만 failed(보조자료는 근거 하나 빠질 뿐). yoonhs 브랜치 워킹트리에서 작업(미커밋).
+
+### 한 일
+- **링크**: `documents/linkfetch.py` 신규(httpx fetch+HTML→평문, 헤딩은 마크다운 #으로 보존해 sectioning 절 경계 재활용, script/nav/footer 제거, <80자 본문 거부) · `service.py` `_ingest_link`(fetch→청킹→임베딩, 제목으로 filename 치환, storage_url=URL) + `run_batch_pipeline` url 분기(개별 실패 무시) + `create_batch_stub` url 메타 · `router.py` upload-batch `links` Form(http/https 검증) · 프론트 `uploadDocumentBatch(files,title,links)` + `CreateCoursePage` suppLinks 전송(링크 있으면 배치 경로)
+- **purpose**: `StartRequest.purpose` + 온보딩 start가 화이트리스트(exam|career|culture|hobby) 검증 후 세션 state 보관 → `_complete`가 `finalize_onboarding(purpose=…)` 전달(기존 `enrollment.purpose or purpose` 로직 활용, 컬럼 기본값 NULL이라 정상) · `generator.py` `_PURPOSE_DIRECTIVES` 4종+`purpose_directive_of()` + `GenerationInput.purpose_directive` + build_prompt 주입(성향 지시문과 병렬) · `learning/service._prepare_generation_input`이 enrollment.purpose 소비 · 프론트 DiagnosisPage `useSearchParams`→`startOnboarding(courseId, purpose)`
+
+### 변경 파일
+- backend: `features/documents/{linkfetch(신규),service,router}.py`, `features/diagnostic/{schemas,router,onboarding}.py`, `features/learning/{generator,service}.py`
+- frontend: `features/documents/api/uploadDocument.ts`, `features/diagnostic/api/onboardingApi.ts`, `pages/{CreateCoursePage,DiagnosisPage}.tsx`
+
+### 결과 / 검증 (실 mlv2 Docker+DB+Solar LLM, course 50307f29)
+- 순수 로직: purpose 4종+미지값 중립, build_prompt 성향+목적 동시 주입, html_to_text(스크립트·nav·footer 제거, 제목 추출) 전부 PASS. 프론트 tsc 0 에러.
+- **링크 E2E**: 컴윤 10주차 PDF(primary)+위키 「정보 윤리」 링크 배치 업로드 → ready. 링크 문서: role=supplementary, filename=페이지 제목 치환, **청크 2·임베딩 2**. `search_concept_chunks`("상충되는 윤리적 책임") top-3 중 **위키 링크 청크 2개 포함** — "올린 PDF에 도움되는 링크를 거기서도 참조" 실증.
+- **purpose E2E**: 온보딩 start(purpose=career)→12스텝 완주 → **enrollment.purpose='career'** 영속(diag_status=completed) → 실 `_prepare_generation_input`이 career 지시문 산출, 생성 프롬프트에 「[학습 목적: 실무·커리어]」 주입 확인.
+
+### 열린 이슈
+- [ ] 링크 v1 한계: JS 렌더링(SPA) 페이지는 본문 추출 빈약(<80자 거부로 방어), PDF 링크 미지원, 위키 청크에 언어목록·외부링크 등 보일러플레이트 일부 잔존(RAG 유사도가 걸러주지만 정제 여지)
+- [ ] STEP2 kind(기출/필기 구분)는 여전히 UI 수집만 — 하류 소비처 생기면 배선
+- [ ] yoonhs 브랜치 워킹트리 미커밋 — 커밋 여부 사용자 결정 대기
+
+### 다음 액션
+1. 사용자 브라우저 확인(위저드 STEP2 링크 추가→생성→학습 블록에 링크 근거 반영) 후 커밋 결정
+2. 기존 우선순위 유지 — ISSUE-005 재설명 루프 / ISSUE-017
+
+---
+
 ## 2026-07-10 — Claude CLI — 성향 진단 → 커리큘럼 반영 검증 (배선 + 라이브 A/B E2E, 코드 변경 없음)
 
 ### 사용자 요청
