@@ -30,6 +30,7 @@ from app.features.learning.schemas import (
     PlacementResponse,
     ReadCompleteResponse,
     SectionBlocksResponse,
+    SupplementResponse,
 )
 
 router = APIRouter()
@@ -44,6 +45,27 @@ async def post_attempt(
     """정답 기록(§7). 서버가 채점하고 숙련도·복습 스케줄·절 진행을 갱신한다."""
     try:
         return await service.record_attempt(db, user_id=user_id, req=body)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/blocks/{block_id}/supplement", response_model=SupplementResponse)
+async def post_block_supplement(
+    block_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> SupplementResponse:
+    """오답 블록의 맞춤 보충(재설명) — next_action=supplement의 실체(ISSUE-005).
+
+    최근 시도가 오답일 때만 생성한다(정답/무시도는 422). 채점(POST /attempts)과
+    분리해 reveal은 즉시, 재설명은 뒤따라 도착하는 구조.
+    """
+    try:
+        return await service.generate_block_supplement(
+            db, user_id=user_id, block_id=block_id
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

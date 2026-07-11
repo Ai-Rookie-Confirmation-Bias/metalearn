@@ -690,6 +690,56 @@ def insert_attempt(
     return row
 
 
+# ── 보충(재설명) — 개입 사다리 ②(ISSUE-005) ─────────────────────────────────
+def get_latest_attempt_for_block(
+    db: Session, *, user_id: uuid.UUID, block_id: uuid.UUID
+) -> Attempt | None:
+    """이 블록에 대한 이 학습자의 최근 시도(보충 생성의 오답 입력)."""
+    stmt = (
+        select(Attempt)
+        .where(Attempt.user_id == user_id, Attempt.block_id == block_id)
+        .order_by(Attempt.created_at.desc())
+        .limit(1)
+    )
+    return db.scalars(stmt).first()
+
+
+def attach_attempt_analysis(
+    db: Session, *, attempt_id: uuid.UUID, diagnosis: str, misconception: bool
+) -> None:
+    """보충 생성의 진단 결과를 해당 시도 meta에 남긴다(append-only 원칙 위배 아님 —
+    행 추가가 아니라 같은 시도의 후속 분석을 병합). 다음 국소화·복습 생성의 재료."""
+    row = db.get(Attempt, attempt_id)
+    if row is None:
+        return
+    row.meta = {
+        **(row.meta or {}),
+        "supplement": {"diagnosis": diagnosis, "misconception": misconception},
+    }
+    db.flush()
+
+
+def get_recent_misconception(
+    db: Session, *, user_id: uuid.UUID, concept_id: uuid.UUID
+) -> bool:
+    """직전 시도의 보충 진단에 오개념 신호가 있었는지(localize misconception_signal).
+
+    가장 최근 시도 하나만 본다 — 그 뒤에 새 시도(정답 포함)가 쌓이면 meta가 없어
+    자연히 꺼진다(오래된 오개념 판정이 계속 발화하는 것 방지)."""
+    stmt = (
+        select(Attempt.meta)
+        .where(
+            Attempt.user_id == user_id,
+            Attempt.concept_id == concept_id,
+            Attempt.kind.in_(["learn", "review"]),
+        )
+        .order_by(Attempt.created_at.desc())
+        .limit(1)
+    )
+    meta = db.scalar(stmt) or {}
+    return bool((meta.get("supplement") or {}).get("misconception"))
+
+
 # ── 절 완료 판정 ─────────────────────────────────────────────────────────────
 def get_tracked_block_ids(db: Session, section_id: uuid.UUID) -> list[uuid.UUID]:
     stmt = select(Block.id).where(

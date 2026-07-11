@@ -222,6 +222,23 @@ class AttemptResponse(_CamelModel):
     resume_section_id: str | None = None
 
 
+class SupplementResponse(_CamelModel):
+    """POST /blocks/:id/supplement — 오답 맞춤 보충(재설명). 개입 사다리 ②(ISSUE-005).
+
+    학습자의 실제 오답을 입력으로 '무엇을 놓쳤나'(diagnosis)와 그 오해를 겨냥한
+    재설명을 생성한다. 개인화 콘텐츠라 blocks에 영속하지 않는다(blocks는 유저 무관
+    테이블 — 넣으면 다른 학습자에게 유출). fallback=true면 LLM 실패로 근거 인용만.
+    """
+
+    block_id: str
+    concept_id: str
+    diagnosis: str
+    misconception: bool = False
+    title: str
+    body: str
+    fallback: bool = False
+
+
 class CursorResponse(_CamelModel):
     """GET /courses/:id/cursor — 현재 학습 위치 + 복귀 대기 깊이(살아있는 커리큘럼)."""
 

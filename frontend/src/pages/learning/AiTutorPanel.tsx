@@ -3,6 +3,13 @@ import { clsx } from "clsx";
 import { RobotIcon, PaperPlaneRightIcon } from "@phosphor-icons/react";
 
 import type { AttemptResponse } from "@/features/learning/api/submitAttempt";
+import type { SupplementResponse } from "@/features/learning/api/getSupplement";
+
+// 오답 보충 상태(LearningPage가 소유) — loading 동안 "분석 중" 버블, ready면 진단+재설명 버블.
+export type SupplementState =
+  | { status: "idle" }
+  | { status: "loading" }
+  | { status: "ready"; data: SupplementResponse };
 
 // 서버 채점 신호(cause/feedback)를 튜터의 적응형 코멘트로 변환. 채팅 Q&A는 아직 mock(백엔드 LLM).
 function tutorMessage(signal: AttemptResponse | null | undefined): string {
@@ -24,8 +31,14 @@ function tutorMessage(signal: AttemptResponse | null | undefined): string {
   }
 }
 
-// 우측 패널 — AI 튜터(적응형 코멘트) / 나의 요약 노트 탭.
-export function AiTutorPanel({ signal }: { signal?: AttemptResponse | null }) {
+// 우측 패널 — AI 튜터(적응형 코멘트 + 오답 맞춤 재설명) / 나의 요약 노트 탭.
+export function AiTutorPanel({
+  signal,
+  supplement,
+}: {
+  signal?: AttemptResponse | null;
+  supplement?: SupplementState;
+}) {
   const [tab, setTab] = useState<"ai" | "note">("ai");
   const [note, setNote] = useState("");
   const message = tutorMessage(signal);
@@ -77,6 +90,40 @@ export function AiTutorPanel({ signal }: { signal?: AttemptResponse | null }) {
               </div>
               <span className="px-1 text-[0.7rem] text-text-tertiary">방금 전</span>
             </div>
+
+            {/* 오답 맞춤 재설명(개입 사다리 ②) — 서버가 실제 오답을 분석해 생성 */}
+            {supplement?.status === "loading" && (
+              <div className="flex max-w-[90%] flex-col gap-1 self-start">
+                <div className="animate-pulse rounded-2xl rounded-tl-[4px] border border-border-primary bg-white px-4 py-3.5 text-[0.9rem] leading-normal text-text-tertiary shadow-sm">
+                  방금 답안을 분석해서 맞춤 설명을 만들고 있어요…
+                </div>
+              </div>
+            )}
+            {supplement?.status === "ready" && (
+              <>
+                <div className="flex max-w-[90%] flex-col gap-1 self-start">
+                  <div className="rounded-2xl rounded-tl-[4px] border border-accent/40 bg-accent/5 px-4 py-3.5 text-[0.9rem] leading-normal text-text-primary shadow-sm">
+                    <span className="mb-1 block text-[0.72rem] font-bold text-accent">
+                      {supplement.data.misconception ? "오개념 진단" : "놓친 지점"}
+                    </span>
+                    {supplement.data.diagnosis}
+                  </div>
+                </div>
+                <div className="flex max-w-[90%] flex-col gap-1 self-start">
+                  <div className="rounded-2xl rounded-tl-[4px] border border-border-primary bg-white px-4 py-3.5 text-[0.9rem] leading-relaxed text-text-primary shadow-sm">
+                    <span className="mb-1 block font-bold">
+                      {supplement.data.title}
+                    </span>
+                    {supplement.data.body}
+                  </div>
+                  <span className="px-1 text-[0.7rem] text-text-tertiary">
+                    {supplement.data.fallback
+                      ? "원문 발췌 · 방금 전"
+                      : "내 답안 기반 맞춤 설명 · 방금 전"}
+                  </span>
+                </div>
+              </>
+            )}
           </div>
 
           {/* 입력 */}

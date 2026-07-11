@@ -28,10 +28,18 @@ from app.features.learning import repository as repo
 from app.features.learning.bkt import estimate_p_known, p_l0_from_prereqs
 from app.features.learning.generator import (
     GenerationInput,
+    SupplementInput,
     generate_retrieval_blocks,
     generate_section_blocks,
+    generate_supplement,
+    question_context_from_block,
 )
-from app.features.learning.grading import GRADABLE_TYPES, GradeResult, grade_block
+from app.features.learning.grading import (
+    GRADABLE_TYPES,
+    PASS_SCORE,
+    GradeResult,
+    grade_block,
+)
 from app.features.learning.localization import Cause, PrereqState, localize
 from app.features.learning.mastery import (
     MasteryState,
@@ -56,6 +64,7 @@ from app.features.learning.schemas import (
     ReadCompleteResponse,
     RevealOut,
     SectionBlocksResponse,
+    SupplementResponse,
 )
 from app.features.learning.serializer import filter_by_variant, to_envelope
 from app.features.profile import repository as profile_repo
@@ -648,8 +657,17 @@ async def record_attempt(
     action = decide_after_answer(state=state, is_correct=result.passed)
 
     # [4b] 원인 국소화(ISSUE-010): 선수결손 vs 본문 결손 vs 판단 보류 + blame 선행
+    #      오개념 신호(ISSUE-005): 직전 시도의 보충 진단이 misconception이면 전달 —
+    #      처방이 선행 삽입이 아니라 재설명(reframe) 지속으로 갈린다.
+    misconception_signal = repo.get_recent_misconception(
+        db, user_id=user_id, concept_id=concept_id
+    )
     cause = _localize_cause(
-        db, user_id=user_id, concept_id=concept_id, current_passed=result.passed
+        db,
+        user_id=user_id,
+        concept_id=concept_id,
+        current_passed=result.passed,
+        misconception_signal=misconception_signal,
     )
 
     # [4c] 선행 삽입(ISSUE-002): 틀렸고 원인이 선수결손이면 blame 선행 학습지점을 보장.
@@ -753,4 +771,103 @@ async def record_attempt(
         ),
         prerequisite=prerequisite_target,
         resume_section_id=resume_section_id,
+    )
+
+
+# ── 보충(재설명) — 개입 사다리 ②(ISSUE-005) ─────────────────────────────────
+def _format_user_answer(block_type: str, block_data: dict, user_input: dict | None) -> str:
+    """attempts.user_input({"value": ...}) → 프롬프트용 학습자 답 문자열.
+
+    mcq는 인덱스를 보기 텍스트로 풀어준다(LLM이 "2번"만 보면 진단 불가).
+    """
+    value = (user_input or {}).get("value")
+    if value is None:
+        return "(무응답)"
+    if block_type == "mcq":
+        options = block_data.get("options") or []
+        try:
+            idx = int(value)
+            if 0 <= idx < len(options):
+                return str(options[idx])
+        except (TypeError, ValueError):
+            pass
+    if isinstance(value, list):
+        return " / ".join(str(v) for v in value)
+    return str(value)
+
+
+async def generate_block_supplement(
+    db: Session, *, user_id: uuid.UUID, block_id: uuid.UUID
+) -> SupplementResponse:
+    """POST /blocks/:id/supplement 본체 — 오답 진단 + 맞춤 재설명 생성.
+
+    record_attempt와 분리된 이유: 채점 응답(reveal)은 즉시 줘야 하고, 재설명 LLM
+    콜(수 초)을 오답마다 채점 경로에 얹지 않는다. 프론트가 next_action=supplement를
+    받으면 이 엔드포인트를 뒤따라 호출한다. 진단 결과는 해당 시도 meta에 남겨
+    다음 국소화(misconception_signal)·복습 생성의 재료가 된다.
+    """
+    block = repo.get_block(db, block_id)
+    if block is None:
+        raise LookupError("block not found")
+    if block.type not in GRADABLE_TYPES:
+        raise ValueError(f"보충 대상 블록이 아닙니다: {block.type}")
+
+    attempt = repo.get_latest_attempt_for_block(db, user_id=user_id, block_id=block_id)
+    if attempt is None:
+        raise ValueError("시도 기록이 없습니다 — 먼저 풀어야 보충을 받을 수 있습니다")
+    passed = (
+        (attempt.score or 0.0) >= PASS_SCORE
+        if attempt.score is not None
+        else bool(attempt.correct)
+    )
+    if passed:
+        raise ValueError("정답 처리된 시도입니다 — 보충 대상이 아닙니다")
+
+    concept_id = block.concept_id or attempt.concept_id
+    section = repo.get_section(db, block.section_id) if block.section_id else None
+    chapter = repo.get_chapter(db, section.chapter_id) if section else None
+    course = repo.get_course_of_chapter(db, chapter) if chapter else None
+    if course is None or concept_id is None:
+        raise ValueError("보충 생성 맥락(절/코스/개념)을 확인할 수 없습니다")
+
+    # 근거·성향은 첫 생성과 동일 경로로 수집(블록의 개념 기준 — 복습 블록 대응)
+    holder = type("_S", (), {"concept_id": concept_id})()
+    inp = await _prepare_generation_input(
+        db, section=holder, course=course, user_id=user_id
+    )
+    if inp is None:
+        raise ValueError("개념 정보를 찾을 수 없습니다")
+
+    question, answer = question_context_from_block(block.type, block.data or {})
+    sup = await generate_supplement(
+        get_llm_client(),
+        SupplementInput(
+            base=inp,
+            block_type=block.type,
+            question_text=question,
+            correct_answer=answer,
+            user_answer=_format_user_answer(
+                block.type, block.data or {}, attempt.user_input
+            ),
+            missed_points=list((attempt.feedback or {}).get("missedPoints") or []),
+        ),
+    )
+
+    # 진단을 시도에 남긴다 — 다음 record_attempt의 misconception_signal 소스
+    repo.attach_attempt_analysis(
+        db,
+        attempt_id=attempt.id,
+        diagnosis=sup.diagnosis,
+        misconception=sup.misconception,
+    )
+    db.commit()
+
+    return SupplementResponse(
+        block_id=str(block.id),
+        concept_id=str(concept_id),
+        diagnosis=sup.diagnosis,
+        misconception=sup.misconception,
+        title=sup.title,
+        body=sup.body,
+        fallback=sup.fallback,
     )

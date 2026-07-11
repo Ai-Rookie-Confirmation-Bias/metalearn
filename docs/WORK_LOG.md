@@ -58,7 +58,7 @@
 | ISSUE-002 | P1 | ~~closed~~ | `materials→documents` 등 대규모 변경. **2026-07-02 Claude CLI가 커밋(`33a672d`) + `origin/feat/parsing` 푸시 완료.** |
 | ISSUE-003 | P1 | ~~closed~~ | migration `0009` 미적용 가능성 우려했으나, **2026-07-02 확인: `alembic current`가 이미 `0009 (head)`** — 실제로는 문제 없었음 |
 | ISSUE-004 | P2 | open | `seed` 도메인 스텁 — 씨앗 formalize 미구현 |
-| ISSUE-005 | P2 | open | 학습 중 확인 루프 (서버 채점·오답분석·재설명·재생성). **2026-07-09 진전**: 서버 채점 완성(cloze 빈칸별 정오+빈칸별 LLM 폴백, mcq/reveal), 「풀면 진행」게이트(`get_attempted_block_ids` — 오답도 완료 처리, 재설계 §2.2), 정답 공개(학습 블록 정답+해설, 온보딩 퀴즈 last_reveal) — 실 E2E 검증. **남은 것**: LLM 오답 원인 분석(현재 cause는 BKT/DAG 규칙만), 맞춤 재설명 생성(supplement는 같은 블록 재노출뿐), `decide_intervention_stage`(reframe/hint_ladder) 배선(dead code), AI 튜터 채팅 실동작(mock) |
+| ISSUE-005 | P2 | open | 학습 중 확인 루프 (서버 채점·오답분석·재설명·재생성). **2026-07-09**: 서버 채점 완성(cloze 빈칸별+LLM 폴백, mcq/reveal), 「풀면 진행」게이트, 정답 공개 — 실 E2E. **2026-07-11 핵심 완결**: `POST /blocks/:id/supplement` — LLM 오답 진단(diagnosis+misconception)+맞춤 재설명 1콜(근거·성향·faithfulness 첫 생성과 동일 원칙, 인용 폴백), 진단은 attempts.meta 영속 → 다음 국소화의 misconception_signal로 배선(dead branch 발화 확인, 오개념 시 선행 삽입 억제), 프론트 자동 fetch+AI튜터 패널 표시 — mcq/explainBack 실 LLM E2E 통과. **남은 것**: AI 튜터 채팅 실동작(mock), `decide_intervention_stage`(hint_ladder) 정리 |
 | ISSUE-006 | P3 | open | README `materials` 등 outdated |
 | ISSUE-007 | P1 | ~~closed~~ | `learning/service.py` 커리큘럼 모드 분기가 X 자신의 strength만 보고 결정되던 문제. **2026-07-02 Claude CLI가 수정 + 실제 API로 두 분기 모두 재검증 완료.** |
 | ISSUE-008 | **P1** | ~~closed~~ | **개념 추출 품질 부족** — course_id=3에서 20개만 추출, 6장 전체 누락. **2026-07-02 Claude CLI가 1단계(섹션 분할+출처+dedup) 구현, course_id=9 재추출 E2E로 검증 완료: 20→1,457개(교재 1,001+AI 보충 456), 6장 포함 전 파트 커버.** 후속: ISSUE-009(granularity), ISSUE-011(잔존 중복·앵커) |
@@ -78,6 +78,40 @@
 1. 학습 중 확인 루프 (ISSUE-005) — 서버 채점·「풀면 진행」·정답 공개 완료, **LLM 재설명 루프** 남음(§2.5)
 2. 팀 계약(ii.md, ISSUE-017) — floor/ceiling 의미 축소 합의 + external_refs 후속
 3. `redesign/diagnostic-profiling` → dev 머지 (팀 합의 후)
+
+---
+
+## 2026-07-11 — Claude CLI — 재설명 루프 구현 (ISSUE-005 핵심: 오답 진단 + 맞춤 보충 + misconception 배선)
+
+### 사용자 요청
+- 정본(SERVICE_OVERVIEW) 대비 학습 진행 과정의 부족한 부분 실사 → 개입 사다리 ②(보충)가 껍데기(`next_action=supplement` 라벨만, 재설명 생성 없음)임을 확인 → 재설명 루프 구현.
+
+### 추론 / 결정
+- **엔드포인트 분리**(`POST /blocks/:id/supplement`): 재설명 LLM 콜(수 초)을 채점 경로에 얹지 않는다 — reveal은 즉시, 재설명은 뒤따라 도착. 프론트가 `nextAction=supplement` 수신 시 자동 호출.
+- **1콜 = 진단+재설명**: 학습자의 실제 오답(mcq는 보기 텍스트로 풀어서)·missed_points를 입력으로 "무엇을 오해했나"(diagnosis, misconception 여부)와 그 오해를 겨냥한 재설명을 함께 생성. 근거 수집은 첫 생성과 동일 경로(`_prepare_generation_input` 재활용 — 성향 지시문 포함), faithfulness 게이트 동일 적용(불통과 재생성 1회 → 근거 인용 폴백).
+- **비영속**: blocks는 유저 무관 테이블이라 개인화 재설명을 넣으면 타 유저 유출 → 응답은 ephemeral, 진단만 해당 시도 `attempts.meta.supplement`에 병합 저장.
+- **misconception 배선**: `record_attempt`가 직전 시도 meta의 misconception 플래그를 읽어 `localize()`에 전달 — dead branch였던 misconception cause가 발화 가능. 오개념이면 선행 삽입 억제(cause≠prerequisite → [4c] 스킵), 처방=재설명 지속. 새 시도가 쌓이면 플래그 자연 소멸(최근 1건만 조회).
+- **프롬프트 별도 함수**(`_supplement_prompt`) — `build_prompt` 불변(소민섭 purpose 프롬프팅 작업과 충돌 회피).
+
+### 한 일
+- backend: `generator.py`(SupplementInput/Result·프롬프트·파서·폴백·`generate_supplement`·`question_context_from_block`), `repository.py`(`get_latest_attempt_for_block`·`attach_attempt_analysis`·`get_recent_misconception`), `service.py`(`generate_block_supplement` + record_attempt misconception 배선 + `_format_user_answer`), `schemas.py`(SupplementResponse), `router.py`(POST /blocks/:id/supplement), `localization.py`(misconception reason 문구를 실제 신호원으로 수정)
+- frontend: `api/getSupplement.ts`, `LearningPage.tsx`(오답+supplement/misconception 시 자동 fetch, 절 이동 시 리셋), `AiTutorPanel.tsx`(분석 중 버블 → 진단 배지+재설명 버블 — mock이던 패널에 첫 실 LLM 콘텐츠)
+
+### 결과 / 검증 (실 mlv2 DB + 실제 Solar LLM, head 0020)
+- 단위: 파서 정상/실패/빈값, mcq·cloze 문항 컨텍스트 추출, 폴백 인용, 프롬프트에 오답·성향·missed_points 포함 — 전부 PASS (임시 스크립트, 검증 후 삭제)
+- mcq E2E(WAN 문항, 오답 제출): supplement 응답 = 오답("전송 거리가 넓다→빠를 것") 정면 겨냥 진단 + 원문 접지 재설명, misconception=true, fallback=false
+- explainBack E2E("빠르고 싸다" 오답): missed_points(구문/의미/타이밍)가 재설명에 반영 + dev 성향(비유 선호)대로 비유(고속버스/화물선) 사용 — 성향 지시문이 보충에도 흐름 확인
+- misconception 배선 E2E: 진단이 attempts.meta에 영속 → 2번째 오답에서 `cause.type=misconception` 발화(기존 dead branch) + `prerequisite=null`(선행 삽입 억제) 확인
+- 프론트 `tsc --noEmit` 무오류(컨테이너). 테스트로 더럽힌 상태 원복(attempts 3건 삭제, mastery 2건·section_progress 1건 복구)
+
+### 열린 이슈
+- [ ] ISSUE-005 잔여: AI 튜터 채팅 실동작(입력창 무배선) — 이제 보충 진단·재설명이 대화 컨텍스트 재료로 존재
+- [ ] `decide_intervention_stage`(hint_ladder) 여전히 미호출 — 재설명 루프가 reframe을 대체했으므로 정리 or hint 단계로 흡수 검토
+- [ ] 복습 카드·선행 삽입 "이유 라벨"(정본 §4 변화 가시성) — 백엔드 reason 미노출
+
+### 다음 액션
+1. 이유 라벨(복습 카드·선행 삽입에 reason 텍스트) — 작은 작업, 데모 효용 큼
+2. AI 튜터 채팅 실동작(보충 컨텍스트 물고 들어가는 LLM 채팅)
 
 ---
 

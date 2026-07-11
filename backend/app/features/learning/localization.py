@@ -57,9 +57,10 @@ def localize(
             reason=f"근거 부족(시도 {target_attempts} < {MIN_ATTEMPTS_TO_JUDGE}) — 판단 보류",
         )
 
-    # 오개념: 서술 채점 신호가 있으면 우선(처방이 reframe으로 다름)
+    # 오개념: 보충 진단(ISSUE-005) 신호가 있으면 우선(처방이 선행 삽입이 아니라
+    # 재설명 지속으로 다름 — 개념을 '잘못' 이해한 건 선행 결손과 별개 문제)
     if misconception_signal:
-        return Cause(type="misconception", reason="서술 채점에서 오개념 신호 감지")
+        return Cause(type="misconception", reason="직전 보충 진단에서 오개념 신호 감지")
 
     weak = [p for p in prereqs if p.p_known < PREREQ_WEAK_TH]
     if weak:
