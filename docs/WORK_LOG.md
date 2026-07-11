@@ -81,6 +81,27 @@
 
 ---
 
+## 2026-07-11 — Claude CLI — 통합 반영·스택 전환 (기록 세션, 코드 변경 없음)
+
+### 사용자 요청
+- 오늘 작업(아래 두 세션) 마무리 후 상황 기록. AI 튜터 채팅 실동작은 **홀드**(팀 상황 대기).
+
+### 상황 정리
+- **통합 반영**: `feat/yoonhs-work`의 오늘 2커밋(재설명 루프 `78f81d9` + 이유 라벨 `593606e`)이 `feat/yoonhs-integration`에 **FF 머지·origin 푸시 완료**(사용자 수행). 통합본 = 오늘 작업 포함 최신.
+- **스택 전환**: mlv2 스택을 `~/metalearn-work` 마운트 → **`~/metalearn-placement`(통합본) 마운트**로 전환. DB 볼륨 유지(코스·계정 보존), head 0020 정합, backend 58001·frontend 55173 정상(200). 통합본 코드에 supplement 라우트 포함 확인.
+- **팀 동향(카톡, 2026-07-11)**: 소민섭 — 스텝2(URL 참조 ingest)는 JS 렌더링 사이트 한계 + 효용 논의 끝에 **보류**, 스텝3(학습 목적 purpose: 시험·자격증/실무·커리어/교양·흥미 → 프롬프팅으로 커리큘럼 유형 분기) 착수. purpose는 생성 시점 맞춤이라 우리(학습 루프) 작업과 층위 분리 — 우리 쪽 재설명 프롬프트는 `build_prompt` 밖에 분리해 충돌 예방해둠.
+
+### 오늘 세션 합계 (아래 두 블록 상세)
+1. **재설명 루프**(ISSUE-005 핵심): `POST /blocks/:id/supplement` — 오답 진단+맞춤 재설명, misconception 배선(dead branch 발화), AI튜터 패널 표시
+2. **이유 라벨**(§4 변화 가시성): 복습 카드 `meta.reviewReason` + 선행 챕터 `ChapterNode.reason`(attempts 파생, 마이그레이션 0)
+
+### 다음 액션
+1. (홀드) AI 튜터 채팅 실동작 — 보충 진단·재설명이 컨텍스트 재료로 준비된 상태
+2. ISSUE-017 external_refs / dev 머지(팀 합의) — 스텝2 보류로 external_refs 수집 방식 여전히 미정
+3. 소민섭 purpose 머지 시 `_prepare_generation_input`/`build_prompt` 접합부 확인
+
+---
+
 ## 2026-07-11 — Claude CLI — 이유 라벨 구현 (변화 가시성 §4: 복습 카드 + 선행 챕터)
 
 ### 사용자 요청
