@@ -87,9 +87,13 @@ export function CurriculumPanel({
                       <CheckCircleIcon weight="fill" className="shrink-0 text-[#10b981]" />
                     )}
                   </h4>
-                  {ch.origin === "prereq" && ch.prereqForTitle && (
-                    <p className="mt-0.5 truncate text-[0.72rem] text-text-tertiary">
-                      ↳ {ch.prereqForTitle} 준비
+                  {/* 이유 라벨(서버 우선) — 이 장이 왜 끼워졌는지 */}
+                  {ch.origin === "prereq" && (ch.reason || ch.prereqForTitle) && (
+                    <p
+                      className="mt-0.5 truncate text-[0.72rem] text-text-tertiary"
+                      title={ch.reason ?? undefined}
+                    >
+                      {ch.reason ?? `↳ ${ch.prereqForTitle} 준비`}
                     </p>
                   )}
                 </div>

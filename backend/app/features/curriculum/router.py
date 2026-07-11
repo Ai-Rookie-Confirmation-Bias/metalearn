@@ -114,6 +114,12 @@ def get_course_tree(
     chapters = repo.get_course_chapters(db, course_id)
     sections_by_chapter = repo.get_sections_by_chapters(db, [c.id for c in chapters])
 
+    # 선행 삽입 이유(변화 가시성 §4) — prereq 챕터가 왜 생겼는지 서버가 말한다
+    prereq_ids = [c.id for c in chapters if c.origin == "prereq"]
+    triggers = repo.prereq_triggers_by_chapter(
+        db, user_id=user_id, chapter_ids=prereq_ids
+    )
+
     all_sections = [s for lst in sections_by_chapter.values() for s in lst]
     progress = repo.get_progress_map(
         db, user_id=user_id, section_ids=[s.id for s in all_sections]
@@ -151,6 +157,17 @@ def get_course_tree(
                     locked=locked,
                 )
             )
+        trigger = triggers.get(ch.id) if ch.origin == "prereq" else None
+        reason = (
+            f"'{trigger}' 문제를 틀렸을 때 이 개념이 기반이라고 판단해서, "
+            "먼저 다지도록 앞에 끼워 넣었어요"
+            if trigger
+            else (
+                "본편을 배우기 전에 필요한 선수 개념이라 앞에 끼워 넣었어요"
+                if ch.origin == "prereq"
+                else None
+            )
+        )
         chapter_nodes.append(
             ChapterNode(
                 id=str(ch.id),
@@ -158,6 +175,7 @@ def get_course_tree(
                 order_index=ch.order_index,
                 origin=ch.origin,
                 gen_status=ch.gen_status,
+                reason=reason,
                 sections=section_nodes,
             )
         )

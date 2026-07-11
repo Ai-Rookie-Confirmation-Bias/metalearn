@@ -81,6 +81,35 @@
 
 ---
 
+## 2026-07-11 — Claude CLI — 이유 라벨 구현 (변화 가시성 §4: 복습 카드 + 선행 챕터)
+
+### 사용자 요청
+- 재설명 루프에 이어 다음 액션 1번(이유 라벨) 진행 — "커리큘럼은 말없이 변하지 않는다"(SERVICE_OVERVIEW §4)의 실체.
+
+### 추론 / 결정
+- **마이그레이션 0**: 복습 이유는 생성 시 `blocks.meta.reviewReason`(기존 JSONB) 스탬프, 선행 이유는 `attempts.meta.prereqChapterId`에서 **조회 시 파생 계산**(기획 원칙: 파생값은 계산으로) — 스키마 변경 없음(스쿼시 이슈와 무충돌).
+- 이유 문장은 **서버가 완성해 내려준다**(프론트 파생 조립 금지 — 변화의 근거는 판정한 쪽이 말한다). 프론트 기존 파생 문구는 폴백으로 유지.
+- 복습 이유 3종: 오답노트(연속 오답 횟수 반영) / strength 미달("아직 확실히 익히지 못한") / SM-2 due("N일 전 배운 개념, 잊힐 때가 됐어요" — 정본 §4 문구).
+
+### 한 일
+- backend: `learning/repository.py`(`get_wrong_note_concepts`·`collect_review_concepts`가 (개념, 이유) 반환 + `_sm2_due_reason`), `learning/service.py`(복습 생성 루프에서 meta 스탬프), `learning/schemas.py`(BlockMeta.review_reason)+`serializer.py`(통과), `curriculum/repository.py`(`prereq_triggers_by_chapter` — attempts.meta JSONB 파생), `curriculum/schemas.py`(ChapterNode.reason)+`router.py`(문장 조립)
+- frontend: `getCourseTree.ts`(TreeChapter.reason), `blocks/types.ts`(meta.reviewReason), `registry.tsx`(복습 카드 배지+이유 배너), `LearningPage.tsx`(선행 배너 서버 reason 우선), `CurriculumPanel.tsx`(서브타이틀 서버 reason 우선), `mock.ts`(타입)
+
+### 결과 / 검증 (실 mlv2 DB + 실제 Solar LLM)
+- 복습 수집: 오답노트 "지난 학습에서 틀렸던 개념이에요…" / SM-2 "5일 전 배운 개념, 잊힐 때가 됐어요…" 정확 산출
+- 실 LLM 복습 블록 2개 생성→스탬프→서빙 봉투 `meta.reviewReason` 와이어 확인
+- 트리 API(HTTP): prereq 챕터 `reason="'데이터 통신의 개념과 역사' 문제를 틀렸을 때 이 개념이 기반이라고 판단해서, 먼저 다지도록 앞에 끼워 넣었어요"`, book 챕터는 null
+- 프론트 tsc 무오류. 테스트 상태 전부 원복(스크립트 내 자동 원복 확인)
+
+### 열린 이슈
+- [ ] (관찰) 기존에 이미 생성돼 저장된 복습 블록에는 reviewReason이 없음(신규 생성분부터) — 재생성 시 자연 해소
+
+### 다음 액션
+1. ISSUE-005 잔여: AI 튜터 채팅 실동작(보충 진단·재설명을 컨텍스트로)
+2. ISSUE-017 external_refs / dev 머지(팀 합의)
+
+---
+
 ## 2026-07-11 — Claude CLI — 재설명 루프 구현 (ISSUE-005 핵심: 오답 진단 + 맞춤 보충 + misconception 배선)
 
 ### 사용자 요청

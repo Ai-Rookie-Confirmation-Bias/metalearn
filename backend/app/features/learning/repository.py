@@ -425,10 +425,12 @@ def get_wrong_note_concepts(
     user_id: uuid.UUID,
     course_id: uuid.UUID,
     limit: int = 5,
-) -> list[Concept]:
-    """오답노트 후보 — attempts 파생(별도 테이블 없음).
+) -> list[tuple[Concept, str]]:
+    """오답노트 후보 — attempts 파생(별도 테이블 없음). 반환: (개념, 이유 라벨).
 
     연속 오답 ≥1 또는 strength<0.4(시도 있음). 최근 2연속 정답이면 청산(제외).
+    이유 라벨(변화 가시성, SERVICE_OVERVIEW §4): 커리큘럼은 말없이 변하지 않는다 —
+    이 카드가 '왜' 나왔는지를 서버가 문장으로 내려준다.
     """
     stmt = (
         select(Concept, ConceptMastery)
@@ -438,7 +440,7 @@ def get_wrong_note_concepts(
     candidates: list[tuple[Concept, ConceptMastery]] = [
         (c, m) for c, m in db.execute(stmt)
     ]
-    scored: list[tuple[float, Concept]] = []
+    scored: list[tuple[float, Concept, str]] = []
     for concept, mastery in candidates:
         streak = get_consecutive_wrong(
             db, user_id=user_id, concept_id=concept.id
@@ -446,10 +448,29 @@ def get_wrong_note_concepts(
         total, _ = get_attempt_stats(db, user_id=user_id, concept_id=concept.id)
         if total >= 2 and streak == 0 and mastery.strength >= 0.8:
             continue  # 청산
-        if streak >= 1 or (total > 0 and mastery.strength < 0.4):
-            scored.append((float(streak), concept))
+        if streak >= 1:
+            reason = (
+                f"지난 학습에서 {streak}번 연속 틀렸던 개념이에요 — "
+                "다음 장에 들어가기 전에 다시 짚어요"
+                if streak >= 2
+                else "지난 학습에서 틀렸던 개념이에요 — 잊기 전에 다시 짚어요"
+            )
+            scored.append((float(streak), concept, reason))
+        elif total > 0 and mastery.strength < 0.4:
+            scored.append(
+                (0.0, concept, "아직 확실히 익히지 못한 개념이에요 — 한 번 더 꺼내볼까요")
+            )
     scored.sort(key=lambda x: (-x[0], x[1].name))
-    return [c for _, c in scored[:limit]]
+    return [(c, reason) for _, c, reason in scored[:limit]]
+
+
+def _sm2_due_reason(mastery: ConceptMastery, now: datetime) -> str:
+    """SM-2 도래 개념의 이유 라벨 — '5일 전 배운 개념, 잊힐 때가 됐어요'."""
+    if mastery.last_reviewed_at is None:
+        return "복습 시점이 된 개념이에요 — 기억이 사라지기 전에 다시 꺼내요"
+    days = max(0, (now - mastery.last_reviewed_at).days)
+    when = "오늘" if days == 0 else f"{days}일 전"
+    return f"{when} 배운 개념, 잊힐 때가 됐어요 — 망각 곡선이 복습을 권해요"
 
 
 def collect_review_concepts(
@@ -458,23 +479,20 @@ def collect_review_concepts(
     user_id: uuid.UUID,
     course_id: uuid.UUID,
     limit: int = 5,
-) -> list[Concept]:
-    """다음 장 맨 앞 복습 페이로드 — 오답노트 우선, SM-2 due 보조."""
+) -> list[tuple[Concept, str]]:
+    """다음 장 맨 앞 복습 페이로드 — 오답노트 우선, SM-2 due 보조. (개념, 이유)."""
+    now = datetime.now(timezone.utc)
     wrong = get_wrong_note_concepts(
         db, user_id=user_id, course_id=course_id, limit=limit
     )
-    seen = {c.id for c in wrong}
+    seen = {c.id for c, _ in wrong}
     due_rows = get_due_masteries(
-        db,
-        user_id=user_id,
-        course_id=course_id,
-        now=datetime.now(timezone.utc),
-        limit=limit,
+        db, user_id=user_id, course_id=course_id, now=now, limit=limit
     )
     merged = list(wrong)
-    for _m, concept in due_rows:
+    for m, concept in due_rows:
         if concept.id not in seen:
-            merged.append(concept)
+            merged.append((concept, _sm2_due_reason(m, now)))
             seen.add(concept.id)
         if len(merged) >= limit:
             break

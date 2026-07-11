@@ -160,6 +160,7 @@ export function LearningPage() {
       c.origin === "prereq"
         ? chapters.slice(i + 1).find((x) => x.origin === "book")?.title
         : undefined,
+    reason: c.reason, // 이유 라벨(서버) — 왜 이 장이 끼워졌는지
     sections: c.sections.map((s) => ({ id: s.id, title: s.title, blocks: [] })),
   }));
 
@@ -272,7 +273,10 @@ export function LearningPage() {
                 </span>
                 <div className="text-[0.9rem] leading-relaxed text-[#b45309]">
                   <b>기초를 먼저 다지는 선행 학습이에요.</b>{" "}
-                  {currentPrereqFor ? (
+                  {/* 이유 라벨(서버 우선) — 커리큘럼은 말없이 변하지 않는다 */}
+                  {currentChapter?.reason ? (
+                    currentChapter.reason
+                  ) : currentPrereqFor ? (
                     <>
                       다음 본편 <b>"{currentPrereqFor}"</b>을(를) 배우기 전에 필요한 선수
                       개념이라, 여기서 먼저 익히고 넘어가요.

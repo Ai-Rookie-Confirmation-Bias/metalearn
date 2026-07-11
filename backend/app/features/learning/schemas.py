@@ -45,6 +45,9 @@ class ExternalRefOut(_CamelModel):
 class BlockMeta(_CamelModel):
     difficulty: Difficulty = "mid"
     version: int = 1
+    # 복습 블록의 이유 라벨(변화 가시성, SERVICE_OVERVIEW §4) — 이 카드가 왜
+    # 나왔는지("5일 전 배운 개념, 잊힐 때가 됐어요"). 생성 시 스탬프, 복습 전용.
+    review_reason: str | None = None
 
 
 # ── type별 data 모델 (1차 5종) ───────────────────────────────────────────────

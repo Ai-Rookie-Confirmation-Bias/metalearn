@@ -247,7 +247,7 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
         if review_concepts:
             review_section = repo.get_or_create_review_section(db, chapter_id)
             review_drafts = []
-            for concept in review_concepts:
+            for concept, review_reason in review_concepts:
                 fake_section = type("_S", (), {"concept_id": concept.id})()
                 inp = await _prepare_generation_input(
                     db, section=fake_section, course=course, user_id=user_id
@@ -259,8 +259,16 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
                 except Exception:
                     logger.exception("복습 블록 생성 실패: %s", concept.name)
                     continue
+                # 이유 라벨(변화 가시성): 이 카드가 왜 나왔는지 meta에 스탬프 →
+                # 서빙 봉투 meta.reviewReason으로 프론트가 표시
                 for b in blocks:
-                    review_drafts.append(replace(b, concept_id=concept.id))
+                    review_drafts.append(
+                        replace(
+                            b,
+                            concept_id=concept.id,
+                            meta={**b.meta, "reviewReason": review_reason},
+                        )
+                    )
             if review_drafts:
                 repo.replace_section_blocks(
                     db,
