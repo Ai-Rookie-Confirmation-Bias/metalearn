@@ -19,7 +19,8 @@ type Envelope<T extends string, D> = {
   externalRefs?: ExternalRef[]; // ai_prereq 근거: 외부 신뢰 출처
   verified: boolean; // 근거 대조 통과(true만 서빙됨)
   tracked: boolean; // ②③ 정답 추적 대상 → 게이트·onAnswer 대상
-  meta?: { difficulty?: "low" | "mid" | "high"; version?: number };
+  // reviewReason: 복습 블록의 이유 라벨(변화 가시성) — 이 카드가 왜 나왔는지
+  meta?: { difficulty?: "low" | "mid" | "high"; version?: number; reviewReason?: string | null };
   data: D;
 };
 

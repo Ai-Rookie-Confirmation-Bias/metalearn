@@ -1,4 +1,4 @@
-import { WarningCircleIcon } from "@phosphor-icons/react";
+import { ClockCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/react";
 
 import type { LearningBlock, OnAnswer } from "./types";
 import { BlockShell } from "./BlockShell";
@@ -44,9 +44,22 @@ export function BlockRenderer({ block, onAnswer }: { block: LearningBlock; onAns
   const answerWithKind: OnAnswer = (e) => onAnswer({ ...e, kind: block.kind ?? "learn" });
   const body = renderBody(block, answerWithKind);
   if (body === undefined) return <FallbackBlock type={(block as { type: string }).type} />;
+  // 이유 라벨(변화 가시성): 복습 카드는 왜 나왔는지 서버가 말한다 — 말없이 변하지 않는다
+  const reviewReason = block.meta?.reviewReason;
   return (
-    <BlockShell source={block.source} title={block.data.title}>
-      {body}
-    </BlockShell>
+    <div>
+      {reviewReason && (
+        <div className="mb-2 flex items-center gap-2 rounded-xl bg-[#0ea5e9]/10 px-4 py-2.5 text-[0.82rem] font-medium text-[#0369a1]">
+          <ClockCounterClockwiseIcon weight="fill" className="shrink-0" />
+          <span className="rounded-md bg-[#0ea5e9] px-1.5 py-0.5 text-[0.68rem] font-bold text-white">
+            복습 카드
+          </span>
+          {reviewReason}
+        </div>
+      )}
+      <BlockShell source={block.source} title={block.data.title}>
+        {body}
+      </BlockShell>
+    </div>
   );
 }

@@ -108,5 +108,6 @@ def to_envelope(
         meta=BlockMeta(
             difficulty=meta.get("difficulty", "mid"),
             version=meta.get("version", 1),
+            review_reason=meta.get("reviewReason"),
         ),
     )

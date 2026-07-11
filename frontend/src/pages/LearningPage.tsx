@@ -15,6 +15,10 @@ import { useQueryClient } from "@tanstack/react-query";
 import { BlockRenderer } from "@/features/learning/blocks/registry";
 import type { AnswerEvent, AttemptResult, OnAnswer } from "@/features/learning/blocks/types";
 import type { AttemptResponse } from "@/features/learning/api/submitAttempt";
+import {
+  getSupplement,
+  type SupplementResponse,
+} from "@/features/learning/api/getSupplement";
 import { CurriculumPanel } from "@/pages/learning/CurriculumPanel";
 import { AiTutorPanel } from "@/pages/learning/AiTutorPanel";
 import type { Chapter as PanelChapter } from "@/pages/learning/mock";
@@ -44,6 +48,12 @@ export function LearningPage() {
   const [immersive, setImmersive] = useState(false);
   // 살아있는 커리큘럼 신호(서버 attempt 응답) — 원인 국소화·선행 삽입·복귀 표면화
   const [signal, setSignal] = useState<AttemptResponse | null>(null);
+  // 오답 맞춤 보충(재설명) — nextAction=supplement 시 자동 요청, AI튜터 패널에 표시
+  const [supplement, setSupplement] = useState<
+    | { status: "idle" }
+    | { status: "loading" }
+    | { status: "ready"; data: SupplementResponse }
+  >({ status: "idle" });
 
   // 시작 절 초기화(첫 미완료부터) — 진행도는 저장하지 않고 트리에서 읽는다.
   useEffect(() => {
@@ -69,12 +79,29 @@ export function LearningPage() {
     const r = await submit.mutateAsync(e);
     queryClient.invalidateQueries({ queryKey: ["courseTree"] });
     setSignal(r); // 원인 국소화/선행 삽입/복귀 신호 표면화
+    // 오답 + supplement 신호 → 맞춤 재설명 자동 요청(개입 사다리 ②).
+    // reveal(정답·해설)은 위 응답으로 즉시 뜨고, 재설명은 수 초 뒤 튜터 패널에 도착.
+    // cause=misconception도 포함 — 오개념의 처방은 선행 삽입이 아니라 재설명 지속
+    // (서버도 이 경우 선행 삽입을 억제한다).
+    const wrong =
+      r.correct === false || (typeof r.score === "number" && r.score < 0.6);
+    const wantsSupplement =
+      r.nextAction?.action === "supplement" || r.cause?.type === "misconception";
+    if (wrong && wantsSupplement && e.blockId) {
+      setSupplement({ status: "loading" });
+      getSupplement(e.blockId)
+        .then((s) => setSupplement({ status: "ready", data: s }))
+        .catch(() => setSupplement({ status: "idle" }));
+    } else {
+      setSupplement({ status: "idle" });
+    }
     return r;
   };
 
   // 살아있는 커리큘럼: 서버가 선행 삽입/복귀를 알려주면 해당 절로 이동
   const goToSection = (sectionId: string) => {
     setSignal(null);
+    setSupplement({ status: "idle" });
     setCurrentSectionId(sectionId);
   };
 
@@ -133,6 +160,7 @@ export function LearningPage() {
       c.origin === "prereq"
         ? chapters.slice(i + 1).find((x) => x.origin === "book")?.title
         : undefined,
+    reason: c.reason, // 이유 라벨(서버) — 왜 이 장이 끼워졌는지
     sections: c.sections.map((s) => ({ id: s.id, title: s.title, blocks: [] })),
   }));
 
@@ -245,7 +273,10 @@ export function LearningPage() {
                 </span>
                 <div className="text-[0.9rem] leading-relaxed text-[#b45309]">
                   <b>기초를 먼저 다지는 선행 학습이에요.</b>{" "}
-                  {currentPrereqFor ? (
+                  {/* 이유 라벨(서버 우선) — 커리큘럼은 말없이 변하지 않는다 */}
+                  {currentChapter?.reason ? (
+                    currentChapter.reason
+                  ) : currentPrereqFor ? (
                     <>
                       다음 본편 <b>"{currentPrereqFor}"</b>을(를) 배우기 전에 필요한 선수
                       개념이라, 여기서 먼저 익히고 넘어가요.
@@ -383,7 +414,7 @@ export function LearningPage() {
           </div>
         </main>
 
-        {!immersive && <AiTutorPanel signal={signal} />}
+        {!immersive && <AiTutorPanel signal={signal} supplement={supplement} />}
       </div>
     </div>
   );

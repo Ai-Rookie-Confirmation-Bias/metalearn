@@ -37,6 +37,10 @@ class ChapterNode(_CamelModel):
     order_index: int
     origin: str  # book | prereq
     gen_status: str  # pending | generating | ready | failed
+    # 이유 라벨(변화 가시성, SERVICE_OVERVIEW §4): prereq 챕터가 '왜' 생겼는지 —
+    # "방금 'X'를 틀렸는데 이 개념이 기반이에요". 서버가 문장으로 내려준다
+    # (attempts.meta.prereqChapterId 파생 계산 — 저장 아님). book 챕터는 null.
+    reason: str | None = None
     sections: list[SectionNode] = Field(default_factory=list)
 
 

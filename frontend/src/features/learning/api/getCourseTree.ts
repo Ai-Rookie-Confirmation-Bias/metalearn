@@ -18,6 +18,8 @@ export type TreeChapter = {
   orderIndex: number;
   origin: string; // book | prereq
   genStatus: string; // pending | generating | ready | failed
+  // 이유 라벨(변화 가시성): prereq 챕터가 왜 생겼는지 서버가 문장으로 내려줌
+  reason?: string | null;
   sections: TreeSection[];
 };
 export type CourseTree = {

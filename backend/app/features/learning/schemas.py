@@ -45,6 +45,9 @@ class ExternalRefOut(_CamelModel):
 class BlockMeta(_CamelModel):
     difficulty: Difficulty = "mid"
     version: int = 1
+    # 복습 블록의 이유 라벨(변화 가시성, SERVICE_OVERVIEW §4) — 이 카드가 왜
+    # 나왔는지("5일 전 배운 개념, 잊힐 때가 됐어요"). 생성 시 스탬프, 복습 전용.
+    review_reason: str | None = None
 
 
 # ── type별 data 모델 (1차 5종) ───────────────────────────────────────────────
@@ -220,6 +223,23 @@ class AttemptResponse(_CamelModel):
     prerequisite: PrerequisiteTargetOut | None = None
     # 이 절을 완료해 복귀할 지점(선행 끝냄 → 원래 절). 없으면 null.
     resume_section_id: str | None = None
+
+
+class SupplementResponse(_CamelModel):
+    """POST /blocks/:id/supplement — 오답 맞춤 보충(재설명). 개입 사다리 ②(ISSUE-005).
+
+    학습자의 실제 오답을 입력으로 '무엇을 놓쳤나'(diagnosis)와 그 오해를 겨냥한
+    재설명을 생성한다. 개인화 콘텐츠라 blocks에 영속하지 않는다(blocks는 유저 무관
+    테이블 — 넣으면 다른 학습자에게 유출). fallback=true면 LLM 실패로 근거 인용만.
+    """
+
+    block_id: str
+    concept_id: str
+    diagnosis: str
+    misconception: bool = False
+    title: str
+    body: str
+    fallback: bool = False
 
 
 class CursorResponse(_CamelModel):

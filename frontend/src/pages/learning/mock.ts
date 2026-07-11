@@ -10,6 +10,7 @@ export type Chapter = {
   title: string;
   origin?: "book" | "prereq"; // prereq = 선행학습 장(적응형 삽입)
   prereqForTitle?: string; // 이 선행이 준비시키는 본편 장 제목(prereq일 때)
+  reason?: string | null; // 이유 라벨(서버) — 이 장이 왜 생겼는지(변화 가시성)
   sections: SectionPayload[];
 };
 export type Course = { id: string; title: string; category: string; chapters: Chapter[] };

@@ -162,6 +162,37 @@ def diag_status_by_course(
     return {cid: status for cid, status in db.execute(stmt)}
 
 
+# ── 선행 삽입 이유(변화 가시성, SERVICE_OVERVIEW §4) ─────────────────────────
+def prereq_triggers_by_chapter(
+    db: Session, *, user_id: uuid.UUID, chapter_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, str]:
+    """prereq 챕터별 '무엇을 틀려서 삽입됐나' — 유발 개념명. 저장 아닌 계산값.
+
+    선행 삽입 시 record_attempt가 attempts.meta.prereqChapterId를 남긴다(§2.5C).
+    그 시도의 concept(학습자가 그때 풀던 개념)이 곧 삽입의 이유다. 챕터당 최초
+    유발 시도 1건이면 충분(같은 챕터로 재라우팅돼도 이유는 처음 그대로).
+    """
+    if not chapter_ids:
+        return {}
+    wanted = {str(cid) for cid in chapter_ids}
+    stmt = (
+        select(Attempt.meta["prereqChapterId"].astext, Concept.name)
+        .select_from(Attempt)
+        .join(Concept, Concept.id == Attempt.concept_id)
+        .where(
+            Attempt.user_id == user_id,
+            Attempt.meta["prereqChapterId"].astext.in_(wanted),
+        )
+        .order_by(Attempt.created_at)
+    )
+    out: dict[uuid.UUID, str] = {}
+    for chapter_id_str, concept_name in db.execute(stmt):
+        cid = uuid.UUID(chapter_id_str)
+        if cid not in out:  # 최초 유발 시도 우선
+            out[cid] = concept_name
+    return out
+
+
 # ── 개념별 숙련도 (GET /courses/:id/mastery) ─────────────────────────────────
 def get_concepts_of_course(db: Session, course_id: uuid.UUID) -> list[Concept]:
     stmt = (
