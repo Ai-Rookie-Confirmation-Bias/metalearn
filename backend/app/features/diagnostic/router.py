@@ -33,7 +33,7 @@ async def onboarding_start(
     req: StartRequest, db: Session = Depends(get_db)
 ) -> OnboardingState:
     """온보딩 시작 — 성향 문항(즉답) → 스타일 프로브 → 기반지식 체크."""
-    return await OnboardingService(db).start(req.course_id)
+    return await OnboardingService(db).start(req.course_id, purpose=req.purpose)
 
 
 @router.post("/onboarding/{session_id}/answer", response_model=OnboardingState)

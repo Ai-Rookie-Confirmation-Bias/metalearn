@@ -6,7 +6,7 @@
  * 종료 시 서버가 finalize_onboarding(전 절 todo 시딩 + 프로필 확정)까지 처리한다.
  */
 import { useEffect, useRef, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { clsx } from "clsx";
 import {
   MagnifyingGlassIcon,
@@ -198,6 +198,9 @@ function QuizPanel({
 
 export function DiagnosisPage() {
   const { courseId } = useParams<{ courseId: string }>();
+  // 수업 생성 위저드 STEP 3의 학습 목적 — 온보딩 시작에 실어 enrollment로 확정.
+  const [searchParams] = useSearchParams();
+  const purpose = searchParams.get("purpose");
   const navigate = useNavigate();
 
   const [phase, setPhase] = useState<Phase>("starting");
@@ -234,7 +237,7 @@ export function DiagnosisPage() {
     setErrorMsg(null);
     try {
       await waitForCourseReady(courseId);
-      const s = await startOnboarding(courseId);
+      const s = await startOnboarding(courseId, purpose);
       applyState(s);
     } catch (e) {
       setErrorMsg(apiErrorMessage(e));

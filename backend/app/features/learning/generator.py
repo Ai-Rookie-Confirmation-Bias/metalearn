@@ -82,6 +82,42 @@ class GenerationInput:
     # 성향 지시문(profile.logic.directive_from_axes) — 설명의 '모양'만 바꾸고
     # 내용 범위·분량은 못 건드린다(준거 §2.2 가드). 빈 문자열 = 중립 생성.
     disposition_directive: str = ""
+    # 학습 목적 지시문(purpose_directive_of) — 위저드 STEP 3의 목적(왜 배우나)을
+    # 예시·강조점 스타일로만 반영. 성향과 같은 가드: 내용 범위·난이도 불변.
+    purpose_directive: str = ""
+    # 목적 정책(policy.PurposePolicy.tracked_retrieval) — False면 인출 블록을
+    # 채점 대상에서 제외(tracked=False). 절은 read-complete로 완료 가능해진다.
+    tracked_retrieval: bool = True
+
+
+# 학습 목적(enrollment.purpose) → 생성 지시문. 성향 지시문과 같은 원칙:
+# 결정적 변환 + '모양'만 조정(§2.2 가드). 난이도·커버리지·문항 수는 불변.
+_PURPOSE_DIRECTIVES: dict[str, str] = {
+    "exam": (
+        "- [학습 목적: 시험·자격증] 시험에 나올 법한 지점을 또렷이 하라 — 헷갈리기 "
+        "쉬운 유사 개념과의 구분, 정확한 용어·정의를 강조하고, 인출 문제는 실제 "
+        "시험에서 물을 법한 형태로 만들어라."
+    ),
+    "career": (
+        "- [학습 목적: 실무·커리어] 이 개념이 실제 업무·프로젝트에서 언제 어떻게 "
+        "쓰이는지 실무 상황 예시를 들어 설명하고, 인출 문제도 실무 장면을 가정한 "
+        "적용형으로 만들어라."
+    ),
+    "culture": (
+        "- [학습 목적: 교양·흥미] 큰 그림과 지적 재미를 살려라 — 전문 용어는 "
+        "풀어 쓰고, 이 개념이 세상·일상과 어떻게 닿아 있는지 흥미로운 연결을 "
+        "보여줘라."
+    ),
+    "hobby": (
+        "- [학습 목적: 취미] 부담 없이 읽히는 친근한 톤으로 쓰고, 재미있는 예시와 "
+        "직접 해볼 만한 것 위주로 설명하라."
+    ),
+}
+
+
+def purpose_directive_of(purpose: str | None) -> str:
+    """enrollment.purpose → 프롬프트 지시문. 미설정/미지의 값이면 중립(빈 문자열)."""
+    return _PURPOSE_DIRECTIVES.get(purpose or "", "")
 
 
 @dataclass(frozen=True)
@@ -111,7 +147,10 @@ def build_prompt(inp: GenerationInput) -> str:
         for r in inp.external_refs:
             evidence_lines.append(f"- (ref {r.id}) {r.title or ''} — {(r.snippet or '')[:1000]}")
     evidence = "\n".join(evidence_lines) if evidence_lines else "(근거 없음)"
-    disposition = f"\n{inp.disposition_directive}\n" if inp.disposition_directive else ""
+    directives = "\n".join(
+        d for d in (inp.disposition_directive, inp.purpose_directive) if d
+    )
+    disposition = f"\n{directives}\n" if directives else ""
 
     return f"""당신은 학습 콘텐츠 생성기다. 아래 근거 발췌만 사용해 한 절(section)의
 학습 블록을 만든다. 근거에 없는 사실은 지어내지 마라.
@@ -373,7 +412,8 @@ async def generate_section_blocks(
             BlockDraft(
                 type=btype,
                 source=source,
-                tracked=tracked,
+                # 목적 정책: 취미 등은 인출을 게이트에서 제외(퀴즈=보너스).
+                tracked=tracked and inp.tracked_retrieval,
                 verified=True,
                 data=data,
                 meta={"difficulty": difficulty, "version": 1, "order": order},

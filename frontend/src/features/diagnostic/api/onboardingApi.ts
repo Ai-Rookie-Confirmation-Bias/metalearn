@@ -5,10 +5,13 @@ import type { OnboardingState } from "@/features/diagnostic/types";
 
 const _TIMEOUT = 240_000;
 
-export async function startOnboarding(courseId: string): Promise<OnboardingState> {
+export async function startOnboarding(
+  courseId: string,
+  purpose?: string | null,
+): Promise<OnboardingState> {
   const { data } = await apiClient.post<OnboardingState>(
     "/api/diagnostic/onboarding/start",
-    { course_id: courseId },
+    { course_id: courseId, purpose: purpose ?? null },
     { timeout: _TIMEOUT },
   );
   return data;
