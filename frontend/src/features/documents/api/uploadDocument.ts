@@ -59,17 +59,20 @@ export interface BatchFile {
 /**
  * 다중 PDF 업로드 — 여러 PDF를 순서대로 하나의 코스로 통합(1:N).
  * files 배열 순서 = 학습 순서(primary 척추). supplementary는 RAG 근거로만.
+ * links = 보조 링크 URL — 서버가 fetch해 청크·임베딩만 남긴다(RAG 근거).
  * 서버가 문서들을 순서대로 ingest하고 트리를 한 번에 만든 뒤 ready가 된다.
  */
 export async function uploadDocumentBatch(
   files: BatchFile[],
   title?: string,
+  links: string[] = [],
 ): Promise<CourseDetail> {
   const form = new FormData();
   for (const f of files) {
     form.append("files", f.file);
     form.append("roles", f.role);
   }
+  for (const url of links) form.append("links", url);
   if (title) form.append("title", title);
 
   const { data: accepted } = await apiClient.post<UploadAccepted>(

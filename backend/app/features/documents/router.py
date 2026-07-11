@@ -101,14 +101,16 @@ async def upload_batch(
     background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     roles: list[str] = Form(default=[]),
+    links: list[str] = Form(default=[]),
     title: str | None = Form(default=None),
     db: Session = Depends(get_db),
 ) -> dict:
-    """다중 PDF 업로드 — 순서대로 하나의 코스로 통합.
+    """다중 PDF(+보조 링크) 업로드 — 순서대로 하나의 코스로 통합.
 
     files 순서 = 학습 순서(프론트가 파일명 정렬/드래그로 확정해 전송).
     roles[i]는 files[i]와 병렬: 'primary'(교재 척추) | 'supplementary'(RAG 근거).
-    primary들이 순서 유지한 채 앞으로, supplementary는 뒤로 모아 ingest.
+    links = 보조 링크 URL 목록 — 서버가 fetch해 청크·임베딩만 남긴다(항상
+    supplementary, 트리 제외). primary 순서 유지, supplementary(파일→링크)는 뒤로.
     """
     if not files:
         raise HTTPException(status_code=400, detail="파일이 없습니다.")
@@ -128,15 +130,27 @@ async def upload_batch(
             "bytes": data,
         })
 
+    link_items: list[dict] = []
+    for url in links:
+        url = url.strip()
+        if not url:
+            continue
+        if not url.lower().startswith(("http://", "https://")):
+            raise HTTPException(status_code=422, detail=f"http(s) 링크만 지원합니다: {url[:80]}")
+        link_items.append({"filename": url[:512], "role": "supplementary", "url": url})
+
     primaries = [it for it in items if it["role"] == "primary"]
     supps = [it for it in items if it["role"] == "supplementary"]
     if not primaries:
         raise HTTPException(status_code=400, detail="주교재(primary) 최소 1개가 필요합니다.")
-    ordered = primaries + supps
+    ordered = primaries + supps + link_items
 
     service = DocumentService(db)
     anchor_id, course_id, specs = service.create_batch_stub(
-        files=[{"filename": it["filename"], "role": it["role"]} for it in ordered],
+        files=[
+            {"filename": it["filename"], "role": it["role"], "url": it.get("url")}
+            for it in ordered
+        ],
         title=title,
     )
     docs = [
@@ -144,7 +158,8 @@ async def upload_batch(
             "document_id": specs[i]["document_id"],
             "role": specs[i]["role"],
             "filename": ordered[i]["filename"],
-            "file_bytes": ordered[i]["bytes"],
+            "file_bytes": ordered[i].get("bytes"),
+            "url": ordered[i].get("url"),
         }
         for i in range(len(ordered))
     ]

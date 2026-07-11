@@ -253,10 +253,12 @@ export function CreateCoursePage() {
     setUploadError(null);
     try {
       const suppFiles = supps.filter((m) => m.file);
+      // 링크 보조자료(파일 없음) — 서버가 fetch해 RAG 근거로 편입한다.
+      const suppLinks = supps.filter((m) => m.kind === "link" && !m.file).map((m) => m.name);
       // 코스 이름: 사용자 입력 우선, 비우면 첫 주교재 파일명으로 폴백.
       const title = courseName.trim() || stripExt(primaryFiles[0].name);
       const course =
-        primaryFiles.length === 1 && suppFiles.length === 0
+        primaryFiles.length === 1 && suppFiles.length === 0 && suppLinks.length === 0
           ? await uploadDocument(primaryFiles[0].file!, title)
           : await uploadDocumentBatch(
               [
@@ -264,6 +266,7 @@ export function CreateCoursePage() {
                 ...suppFiles.map((m) => ({ file: m.file!, role: "supplementary" as const })),
               ],
               title,
+              suppLinks,
             );
       // 업로드 완료 → 바로 수준 진단으로 (목표는 진단 완료 시 씨앗 조립 purpose로 전달)
       navigate(`/diagnosis/${course.id}${purpose ? `?purpose=${purpose}` : ""}`);
@@ -374,7 +377,7 @@ export function CreateCoursePage() {
                 왜 배우세요?
               </h2>
               <p className="mb-8 text-[0.95rem] text-text-secondary">
-                목표에 맞춰 난이도와 문제 유형을 조절해요.
+                목표에 맞춰 문제 유형과 학습 방식을 조절해요.
               </p>
               <div className="grid grid-cols-2 gap-3 max-[480px]:grid-cols-1">
                 {PURPOSES.map((o) => (
