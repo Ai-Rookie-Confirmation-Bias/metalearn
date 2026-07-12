@@ -130,6 +130,33 @@ export function LearningPage() {
       .catch(() => prefetchedRef.current.delete(nextChapter.id));
   }, [currentChapter, chapters, queryClient]);
 
+  // 자동 생성: 현재 챕터가 pending이면 버튼 없이 즉시 트리거(챕터당 1회, API 멱등).
+  // 사용자는 '생성하기'를 누를 필요가 없다 — 들어오면 만들어지기 시작한다.
+  useEffect(() => {
+    if (!currentChapter || currentChapter.genStatus !== "pending") return;
+    if (prefetchedRef.current.has(currentChapter.id)) return;
+    prefetchedRef.current.add(currentChapter.id);
+    generateChapter(currentChapter.id)
+      .then(() => queryClient.invalidateQueries({ queryKey: ["courseTree"] }))
+      .catch(() => prefetchedRef.current.delete(currentChapter.id));
+  }, [currentChapter, queryClient]);
+
+  // 자동 새로고침: 생성이 도는 동안(pending/generating + 블록 없음) 5초 간격
+  // 폴링 — ready로 바뀌고 블록이 생기면 화면이 스스로 갱신된다(수동 새로고침 불필요).
+  const waitingGeneration =
+    blocks.length === 0 &&
+    !blocksLoading &&
+    (currentChapter?.genStatus === "pending" ||
+      currentChapter?.genStatus === "generating");
+  useEffect(() => {
+    if (!waitingGeneration) return;
+    const timer = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: ["courseTree"] });
+      queryClient.invalidateQueries({ queryKey: ["sectionBlocks", currentSectionId] });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [waitingGeneration, currentSectionId, queryClient]);
+
   // 완료/잠금 = 서버 진실(section_progress → tree.progressStatus)의 미러. 클라 계산 아님.
   const completedIds = useMemo(
     () =>
@@ -193,8 +220,6 @@ export function LearningPage() {
     if (!currentChapter) return;
     await generate.mutateAsync(currentChapter.id);
   };
-  const refetchBlocks = () =>
-    queryClient.invalidateQueries({ queryKey: ["sectionBlocks", currentSectionId] });
 
   if (treeLoading || !tree) {
     return (
@@ -322,33 +347,34 @@ export function LearningPage() {
             {blocksLoading ? (
               <div className="py-16 text-center text-text-tertiary">불러오는 중…</div>
             ) : blocks.length === 0 ? (
-              // 아직 생성 안 된 절(gen_status pending) — JIT 생성 트리거
-              <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-border-primary bg-bg-secondary/40 p-12 text-center">
-                <SparkleIcon className="text-3xl text-primary" weight="fill" />
-                <p className="font-semibold text-text-secondary">
-                  이 절의 학습 콘텐츠가 아직 생성되지 않았어요.
-                </p>
-                {generate.isPending ? (
-                  <div className="text-[0.9rem] text-text-tertiary">
-                    생성 중입니다… 잠시 후 아래 새로고침을 눌러주세요.
-                  </div>
-                ) : (
+              // 아직 생성 안 된 절 — 자동으로 생성 트리거·폴링되므로 버튼 없이
+              // 진행 안내만 보여준다. 실패했을 때만 '다시 시도'를 노출한다.
+              currentChapter?.genStatus === "failed" ? (
+                <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-red-200 bg-red-50/40 p-12 text-center">
+                  <SparkleIcon className="text-3xl text-red-400" weight="fill" />
+                  <p className="font-semibold text-text-secondary">
+                    콘텐츠 생성에 실패했어요. 다시 시도해주세요.
+                  </p>
                   <button
                     type="button"
                     onClick={onGenerate}
-                    className="rounded-xl bg-primary px-5 py-[0.6rem] text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover"
+                    disabled={generate.isPending}
+                    className="rounded-xl bg-primary px-5 py-[0.6rem] text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover disabled:opacity-50"
                   >
-                    이 절 학습 생성하기
+                    {generate.isPending ? "다시 생성 중…" : "다시 생성하기"}
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={refetchBlocks}
-                  className="text-[0.85rem] font-medium text-text-tertiary underline"
-                >
-                  새로고침
-                </button>
-              </div>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center gap-4 rounded-2xl border-2 border-dashed border-border-primary bg-bg-secondary/40 p-12 text-center">
+                  <span className="h-8 w-8 animate-spin rounded-full border-2 border-primary/30 border-t-primary" />
+                  <p className="font-semibold text-text-secondary">
+                    AI가 이 챕터의 학습 콘텐츠를 만들고 있어요
+                  </p>
+                  <p className="text-[0.9rem] text-text-tertiary">
+                    보통 1~2분 걸려요. 완성되면 자동으로 열려요 — 기다리기만 하면 돼요.
+                  </p>
+                </div>
+              )
             ) : (
               blocks.map((block) => (
                 <BlockRenderer
