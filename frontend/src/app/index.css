@@ -23,6 +23,10 @@
 body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  /* 한국어 가독성: 단어 중간에서 줄이 꺾이지 않게(keep-all).
+     긴 URL·영문 토큰은 overflow-wrap이 카드 밖으로 삐져나가는 걸 막는다. */
+  word-break: keep-all;
+  overflow-wrap: break-word;
 }
 
 /* 유틸리티로 표현 불가한 전역 잔재 (UXUI_ANT/css/reset.css 이관) */

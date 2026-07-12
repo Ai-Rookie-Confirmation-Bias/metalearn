@@ -1,3 +1,5 @@
+import { Prose } from "@/shared/ui/Prose";
+
 import type { AnalogyBlockData } from "./types";
 
 // ① 비유 블록 — 읽기만, 추적 없음(tracked=false, onAnswer 없음).
@@ -9,8 +11,8 @@ export function AnalogyBlock({ data }: { data: AnalogyBlockData }) {
       <span className="mb-2.5 inline-block rounded-full bg-[#8b5cf6]/10 px-2.5 py-1 text-xs font-bold text-[#8b5cf6]">
         {data.label}
       </span>
-      <blockquote className="text-[1.05rem] italic leading-[1.7] text-text-secondary">
-        {data.text}
+      <blockquote className="text-[1.05rem] italic leading-[1.8] text-text-secondary">
+        <Prose text={data.text} />
       </blockquote>
     </div>
   );

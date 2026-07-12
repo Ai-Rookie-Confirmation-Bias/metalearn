@@ -65,7 +65,9 @@ export function ExplainBackBlock({
           <div className="mb-1 font-bold">
             {passed ? "✅" : "🟡"} AI 채점: {Math.round((result?.score ?? 0) * 100)}점
           </div>
-          {result?.feedback?.comment && <p>{result.feedback.comment}</p>}
+          {result?.feedback?.comment && (
+            <p className="whitespace-pre-wrap break-keep">{result.feedback.comment}</p>
+          )}
           {result?.feedback?.missedPoints && result.feedback.missedPoints.length > 0 && (
             <ul className="mt-2 list-disc pl-5 text-text-secondary">
               {result.feedback.missedPoints.map((p, i) => (
