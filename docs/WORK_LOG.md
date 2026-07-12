@@ -71,13 +71,49 @@
 | ISSUE-015 | **P1** | ~~closed~~ | 진단 재설계 — 온보딩(성향+기반지식)으로 배치고사 대체. **2026-07-09 Claude CLI가 실 DB(mlv2-db)+LLM E2E 완주(course 1d59ab4b): disposition4→probe→quiz→done, 프로필 영속화, 전 절 todo 40섹션·잠금 0, 갭 2 + 선수 에지 역주입 2(에지+외부근거 각 1), 복습 인출 생성 경로(cloze+mcq) 검증.** 배치고사는 lab 동결. |
 | ISSUE-018 | **P1** | ~~closed~~ | **책장 진단 상태 오판** — `getCourses.ts`가 `totalSections>0` → `diag_status=completed` 프록시. ingest 후 섹션 생기면 온보딩 전 「완료」 오판. **2026-07-09 Claude CLI 해결: `GET /api/courses`에 `diagStatus`(enrollments.diag_status) 노출 + 프론트가 프록시 대신 소비. 실증: 섹션 10개인 미온보딩 코스가 `not_started`로 정확 분류.** |
 | ISSUE-016 | **P1** | ~~closed~~ | **문항 신뢰성 부족** (2026-07-05 사용자 관점 E2E에서 발견, course 24/session 21). ① [심각] mcq 수학 오류 — "y=x³-3x²+1 (2,-3) 접선 기울기" 정답 0이 보기에 없고 "-1"이 정답 마킹. 제대로 계산한 학생이 틀리고 BKT가 오염 ② [심각] 해설에 LLM 자기교정 독백("다시 계산… 문제 오류 가능성…") + 프롬프트 내부 참조("원문 1에서…") 그대로 노출 ③ [중간] 서술 채점 인정 범위 좁음 — 교재 문구("산란")만 정답, 물리적으로 타당한 "분산" 오답 처리 ④ [중간] 표지 지문 유래 노이즈 개념(무지개·물방울) 출제. **원인 분석**: ①②③은 생성 단계 결함(원문 접지는 정상 작동 — 정제 무관), ④만 정제 보수성의 하류 증상(공격적 제거는 본문 손실 위험 → 진단 대상 선정에서 거르는 방안 병행 검토). **대응(착수)**: 해설 정리(프롬프트 규칙+후처리) + 생성 후 문항 검증 패스(mcq 정답 존재·유일·계산 확인, 불합격 재생성). **2026-07-05 구현 완료(`d9f78f3`)**: 원문 근거 주입(출처 청크 발췌 1,500자, 배치는 태그 참조) + 해설 후처리(독백 컷·내부참조 치환·350자) + 검증 패스(검수 LLM my_answer 산출→코드가 대조, 불합격 단건 재생성+1회 재검증). E2E(session 26) 오답 mcq 2건 적발·재생성, 최종 4/4 정확 — ①② 해결로 close. **잔여**: ③ 서술 채점 인정 범위 ④ 노이즈 개념 출제(진단 대상 선정 필터) — 별도 후속 |
-| ISSUE-017 | **P1** | open | **씨앗 산출물 계약(docs/ii.md) 대응** — 커리큘럼 팀원이 인수인계 계약 제시(2026-07-05). 이미 일치: 에지 방향(from=학습대상→to=선행), 임베딩 halfvec 4096, depth 방향(기초=큰 값), 절↔대표개념 1:1, mastery=BKT p_known. **신규 작업 4**: ① `concepts.key` 영문 슬러그 생성(코스 내 유니크) ② **`external_refs`** — ai_prereq 개념마다 외부 근거 1행+snippet 필수(없으면 절이 조용히 빔) — 수집 방식 미정(웹 검색 vs LLM 설명 임시) — **최대 과제** ③ chapters/sections 행 생성이 씨앗 소관(파트→chapters, 대표 개념→sections.concept_id, order 10/20/30 간격, gen_status는 pending 유지) ④ enrollments(floor/ceiling/diag_status/purpose)+concept_mastery 초기 시드(locked/todo/mastered) — ISSUE-015 배치고사 출력 스펙으로 확정. **역제안 2**: 키워드 매칭 대신 `concepts.source_chunk_id` FK 조회(개념명↔원문 문자열 불일치 문제 회피), UUID 전환 시점 합의. **DoD**: 커리큘럼 트리 조회→챕터 generate→전 절 blocks 서빙(verified=true)→attempts 채점, 4종 통과 시 인수인계 완료 |
+| ISSUE-017 | **P1** | 구현·검증 | **씨앗 산출물 계약(docs/ii.md) 대응** — 커리큘럼 팀원이 인수인계 계약 제시(2026-07-05). 이미 일치: 에지 방향(from=학습대상→to=선행), 임베딩 halfvec 4096, depth 방향(기초=큰 값), 절↔대표개념 1:1, mastery=BKT p_known. **신규 작업 4**: ① `concepts.key` 영문 슬러그 생성(코스 내 유니크) ② **`external_refs`** ✅ **구현·E2E검증(2026-07-13, 세션20)** — 수집=`seed/refs.py`(한국어 위키 REST + 실패 개념 LLM 폴백, source_kind로 출처 강도 표기, 멱등; 커밋 `582407d`, 07-07). 소비=ai_prereq 절 생성이 근거게이트+faithfulness를 external_ref snippet 기준으로 통과(`generator._verify`/`check_faithfulness`, `service._prepare_generation_input`). **실DB 검증**: ai_prereq 54개 전부 근거 보유(54/54, web 10·llm 44), 'OSI 계층 모델' 절을 실 Solar로 생성 → 사실블록 5개(concept×2·cloze·mcq·explainBack) **전부 verified + external_ref_ids 보유**, analogy 근거면제. **남은 품질**: web 히트율 19%(동음이의·429로 대부분 LLM 폴백=약한 출처) — 검색원 보강 여지(위키 외 소스/재시도) ③ chapters/sections 행 생성이 씨앗 소관(파트→chapters, 대표 개념→sections.concept_id, order 10/20/30 간격, gen_status는 pending 유지) ④ enrollments(floor/ceiling/diag_status/purpose)+concept_mastery 초기 시드(locked/todo/mastered) — ISSUE-015 배치고사 출력 스펙으로 확정. **역제안 2**: 키워드 매칭 대신 `concepts.source_chunk_id` FK 조회(개념명↔원문 문자열 불일치 문제 회피), UUID 전환 시점 합의. **DoD**: 커리큘럼 트리 조회→챕터 generate→전 절 blocks 서빙(verified=true)→attempts 채점, 4종 통과 시 인수인계 완료 |
 
 ### 다음 액션 (팀 합의 대기 없음 — 우선순위 제안)
 
 1. 학습 중 확인 루프 (ISSUE-005) — 서버 채점·「풀면 진행」·정답 공개 완료, **LLM 재설명 루프** 남음(§2.5)
 2. 팀 계약(ii.md, ISSUE-017) — floor/ceiling 의미 축소 합의 + external_refs 후속
 3. `redesign/diagnostic-profiling` → dev 머지 (팀 합의 후)
+
+---
+
+## 2026-07-13 (세션20) — Claude CLI — ISSUE-017 ② external_refs 소비 경로 E2E 검증 (코드 변경 없음, 검증·정합)
+
+### 사용자 요청
+- 저번 세션 이어서 진행. 작업 브랜치 `feat/yoonhs-work` 확인 → 다음 액션 중 **external_refs(ISSUE-017 ②)** 스레드 선택.
+
+### 추론 / 결정 (왜 이렇게 했나)
+- 착수 전 조사에서 **코드-이슈표 불일치** 발견: 이슈표·07-11 다음액션은 "external_refs 수집 방식 미정(웹 vs LLM)"으로 open이었으나, 실제로는 `seed/refs.py`(위키 REST + LLM 폴백)가 커밋 `582407d`(07-07, assembly-v2 UUID 포팅)에 **이미 구현**돼 있었고 CLAUDE_CONTEXT도 완료로 기재. → 남은 일은 신규 구현이 아니라 **E2E 검증 후 정합**으로 판단.
+- 실DB 조사에서 진짜 갭 발견: 수집은 100% 됐으나(ai_prereq 54/54) **ai_prereq 개념이 어떤 절에도 연결된 적이 없어**(전 절 45개가 book, `[선행]` 챕터 2개도 book 개념 통신·데이터 기반) `ai_prereq → external_refs → verified 블록` **소비 경로가 한 번도 안 돌았음**. 메모리 규칙(실검증 없이 closed 금지)상 이 경로를 실제로 태워야 함.
+- 공유 dev DB를 오염시키지 않도록, 프로덕션 함수(`_prepare_generation_input` → `generate_section_blocks`)를 **읽기 전용(rollback)** 스크립트로 실 Solar·실 external_ref 데이터에 직접 태워 검증.
+
+### 한 일
+- 실DB 카운트 확인: courses 4 / ai_prereq 54 / book 377 / external_refs 54(web 10·llm 44) — **ai_prereq 54개 전부 근거 보유(커버리지 100%)**.
+- 소비 배선 정독: `service._prepare_generation_input`(concept.source==ai_prereq → `get_concept_external_refs` 로딩), `generator._verify`(ai_prereq는 external_ref_ids 필수), `check_faithfulness`(external_ref snippet 기준 대조), `serializer`(🤖 인용 배지).
+- E2E 검증 스크립트로 'OSI 계층 모델'(ai_prereq, web ref) 절을 실제 생성 경로에 태움(컨테이너 내 실행 후 스크립트 제거, DB 미변경).
+
+### 변경 파일
+- `docs/WORK_LOG.md` (본 블록 + ISSUE-017 ② 상태 open→구현·검증) — **제품 코드 변경 없음**.
+
+### 결과
+- ISSUE-017 ② = 수집·소비 **양방향 실증 완료**. 이슈표 정합(open→구현·검증). "수집 방식 미정"은 stale였음을 확인·해소.
+
+### 검증 (실행한 명령·결과)
+- 실DB(psql): ai_prereq 54/54 external_refs 보유(web 10/llm 44) ✅
+- 실 Solar E2E(읽기전용, mlv2-backend-1): 'OSI 계층 모델' 절 → external_ref 1건 로딩 → 블록 6개 생성 → **사실블록 5개(concept×2·cloze·mcq·explainBack) 전부 `verified=True` + `external_ref_ids` 보유**, analogy 1개 근거면제 통과. 근거게이트+faithfulness 모두 external_ref snippet 기준 통과 → **PASS** ✅
+
+### 열린 이슈 (남은 것)
+- [ ] external_refs 품질: web 히트율 19%(10/54) — 위키 동음이의·429로 대부분 LLM 폴백(약한 출처). 검색원 보강(위키 외 소스·재시도·개념명 정규화) 여지.
+- [ ] 소비 경로의 **자연 발화** 검증: 실 학습 플로우에서 localization이 ai_prereq 개념을 blame → `insert_prerequisite_chapter`로 절 생성되는 케이스는 아직 미발생(현 DB의 `[선행]` 챕터는 book 개념). 그래프 엣지가 ai_prereq를 선수로 가리키는 코스에서 재확인 필요.
+
+### 다음 액션
+1. (선택) external_refs 검색원 보강 — 위키 미스 개념의 web 출처 확보율 개선.
+2. ISSUE-017 전체 DoD(트리→generate→서빙→채점 4종)와 dev 머지 — 팀 합의 항목.
+3. 저번 세션 홀드 항목(AI 튜터 채팅 실동작) 팀 상황 해제 시 착수.
 
 ---
 
