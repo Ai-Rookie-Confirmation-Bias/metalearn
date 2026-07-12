@@ -20,7 +20,7 @@ import json
 import logging
 import re
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from pydantic import ValidationError
 
@@ -28,7 +28,7 @@ from app.core.enums import ContentSource
 from app.core.llm.base import LLMClient
 
 logger = logging.getLogger(__name__)
-from app.core.verify_grade import can_mark_verified
+from app.core.verify_grade import can_mark_verified, normalize_text
 from app.features.learning.schemas import (
     AnalogyData,
     ClozeData,
@@ -136,6 +136,19 @@ class BlockDraft:
     kind: str = "learn"  # learn | review
 
 
+# 출제 원칙(IWF — Item-Writing Flaws 방지). 실측된 결함 5종을 겨냥한다:
+# 정답 비유일·자기참조(문장 안 정답 노출)·힌트의 정답 유출·임의 명사 빈칸·
+# 문항-루브릭 불일치. 프롬프트 규칙(1단계)이 불량률을 낮추고, 생성 후
+# verify_cloze_drafts(2단계, 검수 LLM 풀이)가 남은 불량을 걸러낸다.
+_ITEM_RULES = """
+[출제 원칙 — 위반한 문항은 검수에서 폐기된다]
+- 빈칸(cloze)의 정답은 유일해야 한다. 문맥상 다른 단어를 넣어도 말이 되는 빈칸은 만들지 마라.
+- 문제 문장 안에 정답 단어가 그대로 등장하면 안 된다. hint에도 정답 단어나 그 동어반복을 쓰지 마라.
+- 빈칸은 핵심 용어(개념명·정식 용어)만 뚫어라. 임의의 일반 명사·수식어를 뚫지 말고, 같은 답을 두 번 묻지 마라.
+- 빈칸에 정답을 채웠을 때 조사·어미까지 자연스러운 완전한 문장이 되어야 한다.
+- 서술형(explainBack)은 한 문항에 한 과제만 묻는다. rubric의 모든 항목은 prompt가 실제로 물은 것이어야 하고, 근거 발췌에 명시된 내용만 담아라. '3가지 관점을 설명하라' 같은 임의 개수 강제 금지."""
+
+
 def build_prompt(inp: GenerationInput) -> str:
     """블록 생성 프롬프트. 근거 발췌를 데이터로 격리하고 JSON만 요구한다."""
     difficulty_word = {1: "기초", 2: "표준", 3: "심화"}.get(inp.difficulty_hint, "표준")
@@ -160,12 +173,15 @@ def build_prompt(inp: GenerationInput) -> str:
 1) 먼저 개념을 원문 근거로 **충분히 설명**한다(concept 블록). 원문을 요약·재구성해
    [정의 → 왜 필요한가/맥락 → 동작 원리 → 구체 예시] 순으로 풀어라. body는 최소
    4~6문장으로 충실하게 쓰고, 내용이 많으면 concept 블록을 2개로 나눠도 된다.
+   **가독성: body는 한 덩어리로 쓰지 말고 2~3문장마다 빈 줄(\\n\\n)로 문단을
+   나눠라.** 핵심 용어는 **볼드**로 표시해도 된다.
 2) 필요하면 analogy(비유)로 직관을 돕는다.
 3) 그런 다음 인출 문제(cloze·mcq·explainBack)를 충분히 배치해 방금 배운 것을
    학습자가 직접 꺼내게 한다(인출학습은 유지·강화한다).
 **핵심 규칙: 모든 인출 문제의 정답 근거는 위 설명(concept/analogy) 안에 반드시
 들어 있어야 한다. 설명하지 않은 것을 묻지 마라 — 학습자가 방금 읽은 설명만으로
 풀 수 있어야 한다.** 블록 순서는 반드시 '설명 먼저 → 인출 나중'.
+{_ITEM_RULES}
 
 CONCEPT_NAME: {inp.concept_name}
 CONCEPT_DESC: {inp.concept_description or "(없음)"}
@@ -203,6 +219,11 @@ def parse_llm_blocks(raw: str) -> list[dict]:
     return blocks if isinstance(blocks, list) else []
 
 
+# LLM이 mcq 선지 텍스트에 자체 라벨("A. ", "1) " 등)을 붙이는 경우가 있어
+# UI 라벨과 겹쳐 "A) A. …"로 보인다 → 선지 앞 라벨을 스트립한다.
+_OPTION_LABEL_RE = re.compile(r"^\s*(?:[A-Da-d]|[1-4])[.)]\s+")
+
+
 def _coerce_block(item: dict) -> tuple[str, dict, str] | None:
     """블록 dict 1개 → (type, 검증된 data, difficulty). 규격 미달이면 None(폐기)."""
     if not isinstance(item, dict):
@@ -219,7 +240,12 @@ def _coerce_block(item: dict) -> tuple[str, dict, str] | None:
     difficulty = item.get("difficulty")
     if difficulty not in _ALLOWED_DIFFICULTY:
         difficulty = "mid"
-    return btype, data.model_dump(by_alias=True, exclude_none=True), difficulty
+    dumped = data.model_dump(by_alias=True, exclude_none=True)
+    if btype == "mcq" and isinstance(dumped.get("options"), list):
+        dumped["options"] = [
+            _OPTION_LABEL_RE.sub("", str(o)) for o in dumped["options"]
+        ]
+    return btype, dumped, difficulty
 
 
 def _verify(
@@ -347,6 +373,151 @@ async def check_faithfulness(
     return m.group(1).lower() == "true"
 
 
+# ── [게이트3] cloze 풀이 검증 — Generate-then-Validate ──────────────────
+# 검수 LLM이 '학습자의 상황'을 재현한다: 정답을 모른 채 설명 텍스트만 보고
+# 빈칸을 직접 푼다 → 코드가 출제 정답(blanks)과 정규화 대조. 검수가 못 풀거나
+# 다른 답을 내면 학습자도 못 푸는 문항이다(정답 비유일·자기참조·비문 방지).
+# 진단 mcq 검증(ISSUE-016 my_answer 대조)과 같은 철학의 cloze 확장.
+def _cloze_verify_prompt(items: list[dict], context: str) -> str:
+    lines = []
+    for i, it in enumerate(items):
+        lines.append(f"[문항 {i}] {it['text']}")
+    joined = "\n".join(lines)
+    return f"""너는 학습 문항 검수자다. 아래 [설명]만 읽은 학습자가 각 빈칸 문제를 푼다고 하자.
+1) 각 {{{{blank}}}}에 들어갈 답을 순서대로 적어라.
+2) 그 빈칸에 넣어도 문맥상 말이 되는 **다른 단어를 적극적으로 찾아** alternatives에
+   나열하라(동의어 말고, 의미가 다른데도 문장이 성립하는 단어). 좋은 문항은 정답이
+   유일하다 — 대안이 하나라도 있으면 그 문항은 결함이다.
+
+[설명]
+{context[:4000]}
+
+[빈칸 문제들]
+{joined}
+
+출력 JSON: {{"items": [{{"id": 0, "answers": ["빈칸별 답"], "alternatives": ["말이 되는 다른 답(없으면 빈 배열)"], "ambiguous": false}}]}}"""
+
+
+def _answers_match(expected: str, got: str) -> bool:
+    """출제 정답 vs 검수 답 — 정규화(+공백 무시) 후 동등/포함이면 일치.
+
+    채점(grade_exact)보다 관대하다: 검수 답의 표기 차이("접근과 사용" vs
+    "접근과사용")로 멀쩡한 문항을 버리지 않기 위해서다.
+    """
+    e = normalize_text(expected).replace(" ", "")
+    g = normalize_text(got).replace(" ", "")
+    return bool(e) and bool(g) and (e == g or e in g or g in e)
+
+
+async def verify_cloze_drafts(
+    llm: LLMClient, *, items: list[dict], context: str
+) -> list[bool]:
+    """cloze 문항 목록을 배치 1콜로 풀이 검증. items: [{"text","blanks"}].
+
+    반환: 문항별 통과 여부. LLM 호출/파싱 실패는 관대 통과(net-additive —
+    검증이 죽었다고 생성 전체를 버리지 않는다, faithfulness와 동일 정책).
+    """
+    if not items:
+        return []
+    try:
+        raw = await llm.generate(_cloze_verify_prompt(items, context), json_mode=True)
+        payload = json.loads(raw[raw.find("{") : raw.rfind("}") + 1])
+        solved = {
+            int(row["id"]): row
+            for row in payload.get("items") or []
+            if isinstance(row, dict) and isinstance(row.get("id"), int)
+        }
+    except Exception:  # noqa: BLE001 — 검증 실패는 관대 통과
+        logger.warning("cloze 풀이검증 호출 실패 — 전원 통과 폴백")
+        return [True] * len(items)
+
+    results: list[bool] = []
+    for i, it in enumerate(items):
+        row = solved.get(i)
+        if row is None:
+            results.append(True)  # 검수 누락 문항은 관대 통과
+            continue
+        if row.get("ambiguous"):
+            results.append(False)  # 검수자가 복수 정답 가능 판정
+            continue
+        blanks = it["blanks"]
+        # 대안 답 중 출제 정답과 '다른' 것이 실재하면 정답 비유일 → 폐기.
+        # (동의어·표기 차이는 _answers_match가 흡수 — 과폐기 방지)
+        alts = [str(a) for a in (row.get("alternatives") or []) if str(a).strip()]
+        if any(all(not _answers_match(exp, alt) for exp in blanks) for alt in alts):
+            results.append(False)
+            continue
+        got = [str(a) for a in (row.get("answers") or [])]
+        ok = len(got) >= len(blanks) and all(
+            _answers_match(exp, got[j]) for j, exp in enumerate(blanks)
+        )
+        results.append(ok)
+    return results
+
+
+def _norm_tight(s: str) -> str:
+    return normalize_text(s).replace(" ", "")
+
+
+def check_cloze_deterministic(data: dict) -> dict | None:
+    """LLM 없이 잡히는 결정적 결함 검사.
+
+    - 자기참조(빈칸 정답이 문제 본문에 그대로 등장): 검수 LLM은 '잘 풀리는
+      문제'로 오판해 통과시키므로 코드가 잡는다 → None(폐기).
+    - 힌트에 정답 노출: 문항은 살리고 힌트만 소거해 반환.
+    """
+    text = str(data.get("text") or "")
+    blanks = [str(b) for b in (data.get("blanks") or []) if str(b).strip()]
+    if not blanks:
+        return None
+    body = _norm_tight(text.replace("{{blank}}", " "))
+    if any(_norm_tight(b) and _norm_tight(b) in body for b in blanks):
+        return None  # 자기참조 — 문장 안에 정답이 이미 있다
+    hint = _norm_tight(str(data.get("hint") or ""))
+    if hint and any(_norm_tight(b) in hint for b in blanks):
+        return {**data, "hint": ""}  # 힌트가 정답을 말해줌 → 힌트만 제거
+    return data
+
+
+async def _drop_unsolvable_cloze(
+    llm: LLMClient, drafts: list[BlockDraft], *, context: str, concept_name: str
+) -> list[BlockDraft]:
+    """드래프트 중 cloze의 결함을 걸러낸 목록을 반환.
+
+    [3a] 결정적 검사(자기참조 폐기·힌트 정답 소거) → [3b] 검수 LLM 풀이 검증.
+    """
+    kept: list[BlockDraft] = []
+    det_dropped = 0
+    for d in drafts:
+        if d.type != "cloze":
+            kept.append(d)
+            continue
+        fixed = check_cloze_deterministic(d.data)
+        if fixed is None:
+            det_dropped += 1
+            continue
+        kept.append(d if fixed is d.data else replace(d, data=fixed))
+    if det_dropped:
+        logger.info(
+            "cloze 자기참조 폐기 %d건: concept=%s", det_dropped, concept_name
+        )
+
+    cloze_pos = [i for i, d in enumerate(kept) if d.type == "cloze"]
+    if not cloze_pos:
+        return kept
+    items = [
+        {"text": kept[i].data.get("text", ""), "blanks": list(kept[i].data.get("blanks") or [])}
+        for i in cloze_pos
+    ]
+    oks = await verify_cloze_drafts(llm, items=items, context=context)
+    dropped = {pos for pos, ok in zip(cloze_pos, oks) if not ok}
+    if dropped:
+        logger.info(
+            "cloze 풀이검증 불통과 폐기 %d건: concept=%s", len(dropped), concept_name
+        )
+    return [d for i, d in enumerate(kept) if i not in dropped]
+
+
 async def generate_section_blocks(
     llm: LLMClient, inp: GenerationInput
 ) -> list[BlockDraft]:
@@ -422,7 +593,17 @@ async def generate_section_blocks(
             )
         )
         order += 1
-    return drafts
+
+    # [게이트3] cloze 풀이 검증 — 학습자가 볼 설명(concept/analogy)만 컨텍스트로.
+    # "설명만 읽고 풀 수 있는가"를 검수 LLM이 재현한다(없으면 근거 발췌 폴백).
+    explanation = "\n\n".join(
+        str(d.data.get("body") or d.data.get("text") or "")
+        for d in drafts
+        if d.type in ("concept", "analogy")
+    ).strip()
+    return await _drop_unsolvable_cloze(
+        llm, drafts, context=explanation or evidence, concept_name=inp.concept_name
+    )
 
 
 # ── 맞춤 보충(재설명) 생성 — 개입 사다리 ②(ISSUE-005) ───────────────────────
@@ -589,7 +770,8 @@ def _retrieval_prompt(inp: GenerationInput) -> str:
     disposition = f"\n{inp.disposition_directive}\n" if inp.disposition_directive else ""
     return f"""당신은 복습용 인출 문제 생성기다. 아래 근거만 사용해 **인출 문제만** 만든다.
 설명(concept/analogy) 블록은 만들지 마라 — 학습자는 이미 배운 개념을 다시 꺼내는 연습이다.
-{disposition}
+{disposition}{_ITEM_RULES}
+
 CONCEPT_NAME: {inp.concept_name}
 CONCEPT_DESC: {inp.concept_description or "(없음)"}
 
@@ -651,4 +833,7 @@ async def generate_retrieval_blocks(
                 kind="review",
             )
         )
-    return drafts
+    # [게이트3] 복습 cloze도 풀이 검증 — 복습엔 설명 블록이 없으므로 근거 발췌 기준.
+    return await _drop_unsolvable_cloze(
+        llm, drafts, context=evidence, concept_name=inp.concept_name
+    )
