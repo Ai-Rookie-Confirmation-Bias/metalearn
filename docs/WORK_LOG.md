@@ -81,6 +81,43 @@
 
 ---
 
+## 2026-07-13 (세션21) — Claude CLI — feat/purpose-policy 통합 머지 + 백업 푸시 + 라이브 스모크
+
+### 사용자 요청
+- `feat/purpose-policy`(소민섭) 변경 확인 → **우리 `feat/yoonhs-work`로 전부 머지**(E2E는 미실시). 이어 리뷰 피드백 반영: ① 로컬만 ahead인 work 브랜치 **백업 푸시** ② 기능 덩어리(purpose+링크+채점개선)라 **integration 머지 + 스택 리로드 + 스모크** 풀 진행.
+
+### 추론 / 결정
+- purpose-policy는 우리와 같은 지점(`2ecd6bd`)에서 분기 + 우리 작업(재설명·이유라벨·ingest)을 이미 자기 브랜치로 머지 → **가산적**. work로 머지 시 코드 전부 자동 병합, 충돌은 `docs/WORK_LOG.md` 1개(이슈표·세션블록). 그쪽 ISSUE-016(③해결) + 내 ISSUE-017(external_refs), 세션블록은 양쪽 보존으로 결정론적 해소.
+- integration은 `2ecd6bd` → work(`8983939`)의 조상이라 **FF**. 머지 범위에 **새 alembic 마이그레이션 없음**(purpose는 기존 `enrollments.purpose` 소비) → 스택은 컨테이너 재시작만으로 반영(마운트=`~/metalearn-placement/backend`).
+
+### 한 일
+- `feat/yoonhs-work` ← `origin/feat/purpose-policy` 머지(`8983939`), WORK_LOG 충돌 결정론 해소(스크립트).
+- 백업 푸시: `origin/feat/yoonhs-work` `2ecd6bd..8983939`(FF, 0/0 동기화).
+- integration FF: `feat/yoonhs-integration` → `8983939`, `origin` 푸시(0/0).
+- 스택 리로드: `mlv2-backend-1`·`mlv2-frontend-1` 재시작 → 클린 기동(Application startup complete, import 에러 0), backend/frontend HTTP 200.
+- 라이브 스모크 3종(실 Solar·실 스택).
+
+### 변경 파일
+- 코드: purpose-policy 편입분(`learning/policy.py` 신규, `documents/linkfetch.py` 신규, `learning/{generator,service,grading}.py`, `diagnostic/*`, 프론트 `Prose.tsx` 등 25파일) — 전부 그쪽 커밋, 우리 쪽 신규 편집 없음.
+- `docs/WORK_LOG.md`(본 블록 + 충돌 해소).
+
+### 결과
+- 통합본 = purpose 정책 + STEP2 링크 RAG + 서답형 채점 관용도(ISSUE-016③) + 우리 external_refs·재설명·이유라벨, 라이브 무회귀 확인.
+
+### 검증 (라이브 스모크, mlv2 통합 스택)
+- **서답형 채점 관용도(ISSUE-016③)**: 프로토콜 3요소 cloze에 영문표기 `[Syntax,Semantics,Timing]`(정답 `구문(Syntax)/의미(Semantics)/타이밍(Timing)`) → `correct:true`, `blankResults:[T,T,T]` — 표기차 인정 ✅
+- **재설명 루프 회귀(ISSUE-005)**: cloze 오답(`바나나`) → `correct:false` → `POST /blocks/:id/supplement` → 오답 진단+`misconception:true`+맞춤 재설명(`fallback:false`, 실 LLM) ✅
+- **purpose 분기**: 정책 4갈래 라이브 분기(exam tracked/cap8/sm2 0.7 · hobby tracked=False/cap0), 실 exam enrollment→생성입력에 시험 지시문+tracked=True, hobby로 뒤집으면 tracked=False(읽기전용 롤백) ✅
+- 기동: backend 클린(startup complete, 에러 0)·HTTP 200 / frontend 200. 정적: 백엔드 AST 문법 0에러.
+- 스모크 부수효과: dev 유저(00..01) attempts 2건 기록(cloze 정/오답) — dev DB 잔여, 무해.
+
+### 다음 액션
+1. external_refs 검색원 보강(위키 히트율 19%) — 세션20 잔여.
+2. purpose 분기의 **생성 산출물** 관찰(exam vs hobby 실제 블록 밀도·tracked 차이) — 정책→생성 결과까지 육안 확인은 미실시.
+3. dev 머지(팀 합의) — integration 최신은 `8983939`.
+
+---
+
 ## 2026-07-13 (세션20) — Claude CLI — ISSUE-017 ② external_refs 소비 경로 E2E 검증 (코드 변경 없음, 검증·정합)
 
 ### 사용자 요청
