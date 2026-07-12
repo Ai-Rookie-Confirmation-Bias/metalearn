@@ -70,7 +70,7 @@
 | ISSUE-014 | **P1** | ~~closed~~ | **정제 v1 (2026-07-04 설계 확정)** — 파서 출력 elements를 정제해 새 운영 원본으로. ① `documents.refined_elements` JSONB + `profile` 컬럼(migration 0011) — elements 저장으로 재파싱 없이 재정제 가능 ② 1층 규칙 정제: header/footer/footnote(파서 라벨 + **반복성 교차검증**), 목차·저작권 패턴 — **전부 removed 마킹, 물리 삭제 금지**(오판 시 도장만 떼면 복구) ③ 2층 LLM 스캔 문서당 1회(입력: 헤딩 목록 + 앞 ~40요소 원문): 본문 시작점·파트 경계·프로파일(`linked`/`enumerative`/`mixed`) 판정 — **위치 번호만 반환, 본문 재생성 금지**. 가드레일: 본문 시작점이 수상하면(문서 앞 일정 비율 초과) 판정 기각하고 안 지움. 스캔 결과 JSON도 저장(감사용) ④ 청킹이 refined 사용: removed 스킵 + **파트 경계 병합 금지**(→ ISSUE-013 클로즈). **v1 제외(명시)**: 프로파일 활용(추출 분기·진단 전파·커리큘럼 — 라벨 신뢰도 실측 후 v2), 오탈자 교정, 수식(ISSUE-012 별도), 파트 단위 프로파일. E2E 기준: 정처기+미적분 재업로드 — 서문 유래 청크 소멸 / 프로파일 enumerative·linked / 개념 수 비열화. **2026-07-04 같은 날 구현+E2E 완료(course 19·20): ① 정처기 서문 유래 개념 0(기존 course 12는 4개) ② 프로파일 enumerative/linked 정확 판정 ③ 개념 수 정처기 801→1,011·미적분 110→111(열화 없음, 교재 출처는 597→778로 증가). 잔여: 미적분 표지 캡션 노이즈 2개("무지개") — 보수적 보존의 의도된 비용, v2 후보** |
 | ISSUE-015 | **P1** | ~~closed~~ | 진단 재설계 — 온보딩(성향+기반지식)으로 배치고사 대체. **2026-07-09 Claude CLI가 실 DB(mlv2-db)+LLM E2E 완주(course 1d59ab4b): disposition4→probe→quiz→done, 프로필 영속화, 전 절 todo 40섹션·잠금 0, 갭 2 + 선수 에지 역주입 2(에지+외부근거 각 1), 복습 인출 생성 경로(cloze+mcq) 검증.** 배치고사는 lab 동결. |
 | ISSUE-018 | **P1** | ~~closed~~ | **책장 진단 상태 오판** — `getCourses.ts`가 `totalSections>0` → `diag_status=completed` 프록시. ingest 후 섹션 생기면 온보딩 전 「완료」 오판. **2026-07-09 Claude CLI 해결: `GET /api/courses`에 `diagStatus`(enrollments.diag_status) 노출 + 프론트가 프록시 대신 소비. 실증: 섹션 10개인 미온보딩 코스가 `not_started`로 정확 분류.** |
-| ISSUE-016 | **P1** | ~~closed~~ | **문항 신뢰성 부족** (2026-07-05 사용자 관점 E2E에서 발견, course 24/session 21). ① [심각] mcq 수학 오류 — "y=x³-3x²+1 (2,-3) 접선 기울기" 정답 0이 보기에 없고 "-1"이 정답 마킹. 제대로 계산한 학생이 틀리고 BKT가 오염 ② [심각] 해설에 LLM 자기교정 독백("다시 계산… 문제 오류 가능성…") + 프롬프트 내부 참조("원문 1에서…") 그대로 노출 ③ [중간] 서술 채점 인정 범위 좁음 — 교재 문구("산란")만 정답, 물리적으로 타당한 "분산" 오답 처리 ④ [중간] 표지 지문 유래 노이즈 개념(무지개·물방울) 출제. **원인 분석**: ①②③은 생성 단계 결함(원문 접지는 정상 작동 — 정제 무관), ④만 정제 보수성의 하류 증상(공격적 제거는 본문 손실 위험 → 진단 대상 선정에서 거르는 방안 병행 검토). **대응(착수)**: 해설 정리(프롬프트 규칙+후처리) + 생성 후 문항 검증 패스(mcq 정답 존재·유일·계산 확인, 불합격 재생성). **2026-07-05 구현 완료(`d9f78f3`)**: 원문 근거 주입(출처 청크 발췌 1,500자, 배치는 태그 참조) + 해설 후처리(독백 컷·내부참조 치환·350자) + 검증 패스(검수 LLM my_answer 산출→코드가 대조, 불합격 단건 재생성+1회 재검증). E2E(session 26) 오답 mcq 2건 적발·재생성, 최종 4/4 정확 — ①② 해결로 close. **잔여**: ③ 서술 채점 인정 범위 ④ 노이즈 개념 출제(진단 대상 선정 필터) — 별도 후속 |
+| ISSUE-016 | **P1** | ~~closed~~ | **문항 신뢰성 부족** (2026-07-05 사용자 관점 E2E에서 발견, course 24/session 21). ① [심각] mcq 수학 오류 — "y=x³-3x²+1 (2,-3) 접선 기울기" 정답 0이 보기에 없고 "-1"이 정답 마킹. 제대로 계산한 학생이 틀리고 BKT가 오염 ② [심각] 해설에 LLM 자기교정 독백("다시 계산… 문제 오류 가능성…") + 프롬프트 내부 참조("원문 1에서…") 그대로 노출 ③ [중간] 서술 채점 인정 범위 좁음 — 교재 문구("산란")만 정답, 물리적으로 타당한 "분산" 오답 처리 ④ [중간] 표지 지문 유래 노이즈 개념(무지개·물방울) 출제. **원인 분석**: ①②③은 생성 단계 결함(원문 접지는 정상 작동 — 정제 무관), ④만 정제 보수성의 하류 증상(공격적 제거는 본문 손실 위험 → 진단 대상 선정에서 거르는 방안 병행 검토). **대응(착수)**: 해설 정리(프롬프트 규칙+후처리) + 생성 후 문항 검증 패스(mcq 정답 존재·유일·계산 확인, 불합격 재생성). **2026-07-05 구현 완료(`d9f78f3`)**: 원문 근거 주입(출처 청크 발췌 1,500자, 배치는 태그 참조) + 해설 후처리(독백 컷·내부참조 치환·350자) + 검증 패스(검수 LLM my_answer 산출→코드가 대조, 불합격 단건 재생성+1회 재검증). E2E(session 26) 오답 mcq 2건 적발·재생성, 최종 4/4 정확 — ①② 해결로 close. **잔여**: ~~③ 서술 채점 인정 범위~~(**2026-07-13 해결** — 채점 기준을 "정답과 동의어인가"→"이 문항의 답으로 인정 가능한가"(A 의미동등 / B 문맥상 타당한 대안)로 확장, 학습 cloze·진단 심판 양쪽, 실 API E2E 확인) ④ 노이즈 개념 출제(진단 대상 선정 필터) — 별도 후속 |
 | ISSUE-017 | **P1** | 구현·검증 | **씨앗 산출물 계약(docs/ii.md) 대응** — 커리큘럼 팀원이 인수인계 계약 제시(2026-07-05). 이미 일치: 에지 방향(from=학습대상→to=선행), 임베딩 halfvec 4096, depth 방향(기초=큰 값), 절↔대표개념 1:1, mastery=BKT p_known. **신규 작업 4**: ① `concepts.key` 영문 슬러그 생성(코스 내 유니크) ② **`external_refs`** ✅ **구현·E2E검증(2026-07-13, 세션20)** — 수집=`seed/refs.py`(한국어 위키 REST + 실패 개념 LLM 폴백, source_kind로 출처 강도 표기, 멱등; 커밋 `582407d`, 07-07). 소비=ai_prereq 절 생성이 근거게이트+faithfulness를 external_ref snippet 기준으로 통과(`generator._verify`/`check_faithfulness`, `service._prepare_generation_input`). **실DB 검증**: ai_prereq 54개 전부 근거 보유(54/54, web 10·llm 44), 'OSI 계층 모델' 절을 실 Solar로 생성 → 사실블록 5개(concept×2·cloze·mcq·explainBack) **전부 verified + external_ref_ids 보유**, analogy 근거면제. **남은 품질**: web 히트율 19%(동음이의·429로 대부분 LLM 폴백=약한 출처) — 검색원 보강 여지(위키 외 소스/재시도) ③ chapters/sections 행 생성이 씨앗 소관(파트→chapters, 대표 개념→sections.concept_id, order 10/20/30 간격, gen_status는 pending 유지) ④ enrollments(floor/ceiling/diag_status/purpose)+concept_mastery 초기 시드(locked/todo/mastered) — ISSUE-015 배치고사 출력 스펙으로 확정. **역제안 2**: 키워드 매칭 대신 `concepts.source_chunk_id` FK 조회(개념명↔원문 문자열 불일치 문제 회피), UUID 전환 시점 합의. **DoD**: 커리큘럼 트리 조회→챕터 generate→전 절 blocks 서빙(verified=true)→attempts 채점, 4종 통과 시 인수인계 완료 |
 
 ### 다음 액션 (팀 합의 대기 없음 — 우선순위 제안)
@@ -115,6 +115,194 @@
 2. ISSUE-017 전체 DoD(트리→generate→서빙→채점 4종)와 dev 머지 — 팀 합의 항목.
 3. 저번 세션 홀드 항목(AI 튜터 채팅 실동작) 팀 상황 해제 시 착수.
 
+---
+
+## 2026-07-13 — Claude CLI — 서답형 채점 인정 범위 확장: 동의어·이중 정답이 오답 처리되던 문제
+
+### 사용자 요청
+- 서답형에서 "의미는 같고 말만 다른 답"과 "이중 정답(문맥상 똑같이 성립하는 다른 답)"이 그냥 틀렸다고 나옴 — 최선의 수정 방법을 판단해서 고칠 것.
+
+### 추론 / 결정
+- 원인: 채점 LLM의 판정 기준이 **"학습자 답이 (유일한) 출제 정답과 의미상 같은가"** 뿐 — 동의어는 심판 재량에 따라 탈락하고, 타당한 대안 답(이중 정답)은 기준 자체에 없어 무조건 오답. 생성 게이트(2026-07-12(2))가 이중 정답 문항을 줄이긴 하지만 구조적 잔여("허가받지 않은 ___")가 실재 → **잔여 문항 결함의 비용을 학습자가 지지 않도록 채점 기준을 "이 빈칸/문항의 답으로 인정 가능한가"로 확장**이 옳다고 판단(BKT 오염 방지 관점에서도 동일 — 타당한 답을 낸 학습자는 아는 것).
+- 인정 2원칙: A) 정답과 의미 동등(표기·어순·동의어·수식 표기) B) 정답과 달라도 문맥상 사실적으로 옳고 자연스럽게 성립. 오답 가드: 공허답('것'·'방법') 명시 배제. 경계 사례는 학습자에게 유리하게(1차 실측에서 '사용'이 보수 판정으로 탈락 → 이 규칙 추가 후 통과).
+- 학습(cloze LLM 폴백)과 진단(자유서술 심판)이 같은 결함 구조라 둘 다 수정. explainBack 루브릭에도 "교재 문구 그대로일 필요 없음(동의어·자기말·타당한 다른 예시 인정)" 명시.
+
+### 변경 파일
+- `backend/app/features/learning/grading.py` — `grade_cloze_llm_blanks` 프롬프트·시스템(A/B 기준+공허답 가드+경계 관대), `_rubric_prompt`(의미 충족이면 O)
+- `backend/app/features/diagnostic/service.py` — `_judge_prompt`·`_JUDGE_SYSTEM` 동일 확장
+
+### 검증 (실 mlv2 Docker + 실 Solar)
+- 직접 함수 9케이스 전부 PASS: 이중정답(접근/열람·접근/사용) 인정, 패러프레이즈·수식 표기차이 인정, 다른 개념·공허답('것')은 여전히 오답, 진단 심판 3케이스(자기말 풀어쓰기 O / 대안 답 O / 핵심 불일치 X)
+- **실 API E2E**(`POST /api/attempts`, 실제 결함 블록 4d53d0f0 "허가받지 않은 ___"→'접근'): '사용' true / '열람' true / '백신 설치' false — 전 경로 확인
+- 부수 발견: **uvicorn `--reload`가 Windows 바인드 마운트 변경을 감지 못함** — 코드 수정 후 API가 구버전으로 응답(직접 함수와 판정 불일치로 발각), `docker restart mlv2-backend-1` 후 정상. 백엔드 수정 시 재시작 필요
+
+### 열린 이슈
+- [ ] uvicorn --reload 미작동(Windows 바인드 마운트) — `--reload-dir` 폴링 옵션 또는 "수정 후 backend 재시작" 운영 수칙 필요
+- [ ] LLM 심판 판정의 비결정성(경계 사례 흔들림)은 프롬프트로 완화했으나 잔존 — 필요 시 생성 단계에서 acceptable_answers를 blanks에 영속하는 방안
+- 워킹트리에 `profile/__init__.py` 빈 줄 1개 diff 잔존(이전 끊긴 세션 흔적, 무의미) — 커밋 시 제외/정리 판단 필요
+
+---
+
+## 2026-07-12(3) — Claude CLI — 사용자 관점 풀 여정 E2E: 빈 챕터 무한실패 버그 수정 + mcq 이중라벨 수정
+
+### 사용자 요청
+- "사용자 입장으로 테스트해보고 검증해줘" — 신규 코스로 위저드(PDF+링크+시험목적)→온보딩→학습→풀이·오답·재설명까지 전 여정.
+
+### 여정 결과 (course f38ebba1, 사용자 화면 그대로 평가)
+- 위저드→ready→온보딩(성향4+프로브+퀴즈6, 문항·정답공개 확인)→프로필 "비유로 이해하는 맥락형 실전가"·갭3·시딩21 ✓
+- 학습: 자동생성→서빙. 설명 문단 4개(가독성 반영)·은행금고 비유·mcq 구분훈련형(시험 목적 반영)·**정답 유출 검사 깨끗**(blanks/answerIndex/rubric 전부 스트립) ✓
+- 풀이: 정답→해설 / 오답→정답공개+`nextAction=supplement`→AI튜터 진단("사람을 자연적 위협으로 오해")+맞춤 재설명 / 서술 1.0점+코멘트 / 오답 포함 전부 시도→completed(풀면 진행) ✓
+
+### 발견·수정한 버그 2건
+- **[P1·수정] 빈 챕터 무한 실패**: 씨앗 트리가 절 0개 챕터를 만들면(이번 코스 11챕터 중 6개!) `run_chapter_generation`이 total=0→**조용히 FAILED**(예외·로그 없음, gather return_exceptions까지 겹쳐 원인 은폐) → 사용자는 「다시 생성→또 실패」 무한 막힘. **수정**: 생성 대상 절 0 + 복습 0이면 ready 통과(만들 게 없는 건 실패가 아님) — 재현·수정·검증(빈 챕터 즉시 ready)
+- **[UX·수정] mcq 선지 이중 라벨**: LLM이 선지 텍스트에 자체 라벨 포함("A. 내부 직원…")→UI 라벨과 겹쳐 "A) A. …" 표시 → `_coerce_block`에서 선지 앞 라벨 정규식 스트립, 단위 검증
+
+### 열린 이슈 (신규 발견)
+- [ ] **씨앗 트리 비결정성**: 같은 PDF인데 실행마다 챕터 구조가 다름 — 이번 코스는 "✓" 접두사 챕터·"기밀성" 챕터 중복 2개·빈 챕터 6/11 (이전 동일 PDF 코스는 정상 4챕터). 추출·파트 판정 LLM 비결정성 — 빈 챕터 억제/병합·제목 정규화(✓ 등 마커 제거) 필요
+- [ ] 진단(온보딩) 문항엔 새 품질 게이트 미적용(learning만) — "변환하는 ___의 한 방법"→'기술' 같은 애매 문항 잔존, diagnostic 생성에도 확장 후보
+- [ ] explainBack "2가지 관점" 임의 개수 강제 잔존(경미)
+
+---
+
+## 2026-07-12(2) — Claude CLI — 서답형 품질 개선: 출제원칙(IWF) + Generate-then-Validate cloze 풀이검증 + 결정적 결함 검사
+
+### 사용자 요청
+- 서답형(빈칸·서술) 문제가 이상함 — 직접 보고 원인·해결방안 제시(타 에듀테크 LLM 출제 방식 조사 포함) → 1+2단계 그대로 진행.
+
+### 진단 (실 DB 문항 실물 분석)
+결함 5종 실증: ① **정답 비유일**("허가받지 않은 ___"→'접근'만 정답인데 사용·열람도 성립, "___를 고려"→'전문적 지식'은 사실상 못 맞힘) ② **자기참조**(문장 안에 정답 그대로: "정보통신망 이용 범죄는 ___을 통해"→정답 '정보통신망') ③ **힌트가 정답 노출** ④ 임의 명사 빈칸·같은 답 2빈칸·비문 ⑤ explainBack **문항-루브릭 불일치**(안 물은 것 채점)+한 문항 과적재. 원인: 생성 프롬프트에 출제 원칙 전무 + 검증 게이트가 사실성(faithfulness)만 봄 — **"풀리는 문제인가"는 아무도 안 봄**(진단 mcq만 ISSUE-016 풀이검증 있음).
+
+### 업계 조사
+Generate-then-Validate(과생성→검증 필터, 5개 건지려면 15개 생성이 실측 정상), IWF(Item-Writing Flaws) 루브릭 자동검증(SAQUET/GPT-4), cloze는 단서(cueing) 금지·통사 적합이 표준. 결론: 프롬프트 규칙(불량률↓) + 검수 LLM 직접 풀이(잔여 불량 차단) 2중 구조가 업계 정석.
+
+### 한 일 (`learning/generator.py`)
+- **[1단계] `_ITEM_RULES`** 출제 원칙 5조를 build_prompt·_retrieval_prompt에 주입(정답 유일·자기참조 금지·힌트 정답 금지·핵심 용어만·1문항 1과제/루브릭 정합)
+- **[2단계] `verify_cloze_drafts`** — 검수 LLM이 '학습자 상황' 재현: 정답 모른 채 설명(concept/analogy) 텍스트만 보고 빈칸 풀이 + **alternatives 적극 나열**(의미 다른 대안 발견 시 결함) → 코드가 `_answers_match`(정규화+공백무시, 채점보다 관대)로 대조, ambiguous/실질 대안/불일치 → 폐기. 절당 배치 1콜, LLM 실패는 관대 통과(faithfulness 동일 정책). learn·review 두 경로 공용(`_drop_unsolvable_cloze`)
+- **[3a] `check_cloze_deterministic`** — E2E에서 검수 LLM이 놓친 자기참조("…{{blank}}은 …인데, 금융 정보가 **변조**될 경우"→정답 '변조'가 본문에 등장 — 검수는 '잘 풀림'으로 오판) 발견 → **코드 결정적 검사**로 차단: 자기참조=폐기, 힌트 정답 노출=힌트만 소거(문항 보존)
+
+### 결과 / 검증 (스텁 LLM 단위 + 실 Solar E2E 3회)
+- 단위: 일치=통과/검수오답=폐기/복수답=폐기/실질대안=폐기/표기차이=통과/LLM실패=관대통과/자기참조=폐기/힌트노출=소거 — 전 분기 PASS(실물 결함 사례 그대로 사용)
+- E2E: 재생성 문항에서 자기참조·힌트 정답 노출 소멸(힌트 소거 발화 확인), 정의→용어형 양질 문항 위주로 생성
+- **잔여 한계(정직 기록)**: 원문 표현 그대로의 애매 빈칸("허가받지 않은 ___"→'접근')은 검수 LLM도 같은 원문을 보고 같은 답을 확신해 통과 — 유일성 검증의 구조적 한계. 후속 후보: 무맥락 풀이(설명 없이 풀게 해 답 확산도 측정), explainBack 루브릭 앵커링(3단계 보류분)
+
+---
+
+## 2026-07-12 — Claude CLI — 커리큘럼 자동 생성(버튼 제거)+자동 갱신 / 몰입뷰어 계보 규명 / 텍스트 가독성(문단·keep-all) / DB 완전 초기화
+
+### 사용자 요청
+- ① 학습 진입 시 「생성하기」 버튼 없이 자동 생성 + 완료 시 자동 새로고침 ② 몰입뷰어가 "아는 모습과 많이 달라짐" — dev와 비교 ③ 컨테이너 정리 후 재기동 → 라이브러리 데이터 완전 삭제.
+
+### 추론 / 결정
+- **몰입뷰어 계보 규명**: dev엔 학습 화면이 사실상 없음(LearningPage 11줄 스텁 + TutorPanel 23줄 프로토타입, '몰입' 0건). 사용자가 아는 화면 = `feat/front-learning`(프론트 팀원 디자인 원형, mock 171줄 — 몰입뷰어 버튼은 "자리만") → full-assembly-v2(실 API) → `b7e2706`(몰입 토글 실동작) → yoonhs 최신(재설명 버블·이유 라벨)로 누적 진화한 것. **코드 회귀·훼손 없음** — 디자인 뼈대(3컬럼·헤더·게이트 문구)는 원형 유지, 낯선 요소는 전부 후속 기능. 그중 가장 이질적이던 "생성 버튼+수동 새로고침"을 ①로 제거.
+- **자동 생성 설계**: 기존 프리페치(ref, 챕터당 1회, 멱등 API)와 같은 패턴으로 현재 챕터 pending 시 자동 트리거 + `waitingGeneration`(pending/generating & 블록 0) 동안 5초 폴링으로 courseTree·sectionBlocks invalidate — ready 되면 화면 스스로 갱신. UI는 스피너+"완성되면 자동으로 열려요", **failed일 때만** 「다시 생성하기」 노출.
+- DB 초기화는 볼륨 삭제(`down -v`) + 빈 DB 마이그레이션 0020 재적용. 컨테이너/볼륨 구분을 사용자에게 설명 후 완전삭제 선택받음.
+
+### 한 일 / 변경 파일
+- `frontend/src/pages/LearningPage.tsx`: pending 자동 트리거 useEffect + 5초 폴링 useEffect + 생성 대기 UI 교체(버튼·수동 새로고침 제거, failed 재시도만 유지, dead code `refetchBlocks` 삭제)
+- **텍스트 가독성**(사용자: "줄바꿈이 안 돼 보기 힘듦") 3층 대응: ① 전역 CSS `word-break: keep-all + overflow-wrap`(한국어 단어 중간 꺾임 방지, `app/index.css`) ② `shared/ui/Prose.tsx` 신규 — \n\n 문단·\n 줄바꿈·**볼드**·\`코드\` 렌더, ConceptBlock(기존 인라인 파서 대체)/AnalogyBlock에 적용 + McqBlock 해설·ExplainBack 피드백·AiTutorPanel 재설명 버블에 `whitespace-pre-wrap break-keep` ③ `generator.build_prompt`에 "body는 2~3문장마다 빈 줄로 문단 구분" 지시 — 신규 생성분부터 문단 생성
+- 인프라: mlv2·구스택 잔재 컨테이너 전부 제거, `mlv2_pgdata` 볼륨 삭제 → 재기동 + `alembic upgrade head`(0020) — courses 0·users 0 확인
+
+### 결과 / 검증 (실 mlv2, 새 코스 8d722d67 — 컴윤10 업로드+온보딩 exam 완주)
+- 프론트 훅 계약 시퀀스 전체 실검증: pending 진입 → 자동 트리거(연속 2회 멱등 OK) → 5초 폴링 4회 만에 `generating→ready` → 절 블록 8개 자동 서빙 — **버튼·수동 새로고침 없이 완주**. tsc 0
+- 순서대로 학습하면 기존 다음-챕터 프리페치가 항상 앞서 생성하므로 대기 화면 자체를 거의 안 봄
+- 가독성: 새 프롬프트로 챕터 실생성 → concept body가 **문단 4개(\n\n)** 로 생성됨 확인, tsc 0 — Prose가 <p> 간격으로 렌더(기존 무개행 콘텐츠는 문단 1개로 무해)
+
+### 열린 이슈
+- [ ] 몰입뷰어 "낯섦"의 잔여 = 신기능 UI(이유 배지/배너·AI튜터 재설명 버블·선행 배너) — 사용자가 특정 요소를 지목하면 개별 조정
+- [ ] 자동생성분 미커밋(feat/purpose-policy 워킹트리)
+
+---
+
+## 2026-07-11(3) — Claude CLI — feat/purpose-policy 통합 브랜치 (내 링크·purpose + yoonhs 재설명·이유라벨 머지) + 통합 라이브 검증
+
+### 사용자 요청
+- yoonhs 새 작업과 내 미커밋 작업을 합쳐 새 브랜치로 커밋·푸시 → 통합 결과 오류 검증.
+
+### 한 일
+- `feat/purpose-policy` 분기(구명 wizard-links-purpose에서 개명): 내 작업 3커밋(링크 `5b5e3e1`·purpose 정책 `0b74f5d`·docs `df30a24`) + `origin/feat/yoonhs-integration`(재설명 루프·이유 라벨·ingest 3→8) 머지 `ab292fc`, 원격 푸시.
+- 충돌 2건 해소: `learning/service.py` import(양쪽 유지 — `purpose_directive_of` + `generate_supplement`/grading 확장), `WORK_LOG.md`(세션 양쪽 전부 보존).
+
+### 결과 / 검증 (통합 코드 실 라이브, course 50307f29)
+- **접점1 — 복습 수집**: 내 cap(exam=8) + 팀원 (개념,이유) 튜플 반환이 한 호출에서 동시 발화 — 8개 수집, 각각 이유 문장("복습 시점이 된 개념이에요…") 부착
+- **접점2 — 챕터 생성**: exam으로 실생성 → 복습 섹션 개념 8·블록 15 **전부 meta.reviewReason 스탬프** + 본편 인출 전부 tracked=t
+- **접점3 — 재설명 루프**: mcq 오답 제출 → `nextAction=supplement` → `POST /blocks/:id/supplement` 실 LLM 진단("위조를 …로 오해") + misconception=True + 맞춤 재설명 수신
+- 머지 후 hobby 절 read-complete 200 재확인, tsc 0, 통합 import(main.app) OK
+- 로그 ERROR 8건은 통합과 무관 — 사용자가 `.fbx`(3D 파일)를 주교재로 업로드 시도 → Upstage 파서 415 거부(정상 방어). 부수 관찰: 확장자 사전검사 없음(octet-stream 통과) + 배치 실패 시 보조 문서가 processing 잔존 — 개선 후보로 기록
+- 상태 원복(purpose=career)
+
+### 열린 이슈
+- [ ] 업로드 확장자/매직바이트 사전검사(fbx 등 비PDF 차단) + 배치 실패 시 잔여 문서 상태 정리
+- [ ] 재설명(_supplement_prompt)에 purpose 지시문 미적용 — 성향만 반영 중(후속 후보)
+
+---
+
+## 2026-07-11(2) — Claude CLI — 학습 목적(purpose) 엔진 정책화: PurposePolicy(문항 구성·tracked 게이트·복습 cap·SM-2 계수)
+
+### 사용자 요청
+- 목적별 학습 '방식' 차이(시험=암기·문제 다수, 취미=부담 없이 등) 브레인스토밍 → 설계 확정("그대로 진행").
+
+### 추론 / 결정
+- **목적 = 학습 엔진의 강도 프리셋** — 새 모듈 `learning/policy.py`의 `PurposePolicy`(retrieval_directive·tracked_retrieval·review_cap·sm2_interval_factor) 테이블 하나로 표현. 미설정/미지 값 = 현행 동작(하위호환).
+- **게이트 로직은 분기하지 않음** — 취미의 게이트 완화는 인출 블록을 `tracked=False`로 '생성'해서 달성: 기존 `complete_section_by_reading`의 "tracked 0개면 열람 완료" 규칙이 코드 수정 없이 발동. 정책이 전부 데이터(생성물 속성+상수)라 상태머신 리스크 0.
+- 코드 정찰 결과 반영: 오답 재큐는 기존 오답노트 우선 복습 수집이 이미 수행 → 시험은 cap(8)·주기(0.7)만 강화. 게이트는 이미 「풀면 진행」이라 강화 불필요. 난이도는 불변(§2.3 — 목적이 아니라 수준의 함수), STEP3 카피에서 "난이도" 문구 제거.
+- SM-2 계수는 interval에만 적용(ease 불변 — 목적 변경이 학습 이력을 오염하지 않게), 하한 1일.
+
+### 한 일 (정책 테이블: exam 8/0.7/tracked, career 5/1.0, culture 3/1.5, hobby 0/untracked)
+- `learning/policy.py` 신규 — 정책 4종 + `policy_of()` · `generator.py` `GenerationInput.tracked_retrieval` + learn 블록 `tracked = 타입기본 AND 정책` + 밀도·유형 지시문은 스타일 지시문과 합류 · `review/sm2.py` `interval_factor` 파라미터 · `service.py` ①`_prepare_generation_input` 정책 소비 ②`run_chapter_generation` `_REVIEW_CAP=5` 고정 → 정책 cap(0이면 복습 수집 스킵) ③`record_attempt` SM-2 갱신에 계수 · 프론트 STEP3 카피 "난이도와 문제 유형"→"문제 유형과 학습 방식"
+
+### 변경 파일
+- backend: `features/learning/{policy(신규),generator,service}.py`, `features/review/sm2.py` / frontend: `pages/CreateCoursePage.tsx`(카피 1줄)
+
+### 결과 / 검증 (실 mlv2 Docker+DB+LLM, course 50307f29)
+- 순수: 정책 테이블 4종+미지값 폴백, exam 프롬프트에 스타일+밀도 지시문 동시 주입, SM-2 interval 20일 정답 시 기본 50 / 시험 35 / 교양 75일 + 오답 하한 1일 — PASS
+- **hobby 라이브**: purpose=hobby로 챕터 생성 → 인출 블록(cloze3·mcq2·explainBack2) **전부 tracked=f** + 복습 섹션 0
+- **exam 라이브**: purpose=exam으로 다른 챕터 생성 → 인출 **전부 tracked=t**, 절당 인출 4~7문항(밀도 지시 반영 경향)
+- **게이트 실증(HTTP)**: hobby 절 read-complete → **200 completed**(문제 안 풀고 완료), exam 절 → **409**("채점 대상 블록이 있는 절은 열람만으로 완료할 수 없습니다") — tracked 정책만으로 게이트 차등 성립
+- **SM-2 계수 실배선**: mastery interval 20일 세팅 후 exam 상태에서 review 정답 attempt → **interval 35일**(기본이면 50) 기록
+- **복습 cap 실증**: due 개념 10개 시딩 → 수집이 exam 8·culture 3·hobby 0(스킵) 정확, exam 챕터 생성 시 「복습 · 오답 체크」 섹션이 **개념 정확히 8개**·블록 15개(전부 tracked)로 물리 생성. 백엔드 예외 0, tsc 0 에러. 테스트 코스 purpose는 career로 원복
+
+### 열린 이슈
+- [ ] 3단계 시험 트랙 미착수: D-day(enrollments 컬럼) → 모의고사(복습 섹션의 누적 확장) → 기출 연동(STEP2 kind 배선 선행)
+- [ ] yoonhs 워킹트리 미커밋(링크·purpose v1 포함) — 커밋 여부 사용자 결정 대기
+
+### 다음 액션
+1. 브라우저에서 목적별 체감 확인(취미 코스 만들어 절 완료 UX 등) 후 커밋 결정
+2. 시험 트랙(D-day부터) 착수 여부 결정
+
+---
+
+## 2026-07-11 — Claude CLI — 위저드 STEP2 링크 보조자료 참조 + STEP3 학습 목적(purpose) 배선 구현·E2E
+
+### 사용자 요청
+- STEP 2 보조자료(기출·링크·필기)가 "앞서 올린 PDF에 도움되는 링크 넣으면 거기서도 참조"하는지 테스트, 없으면 구현. STEP 3 학습 목적(시험·실무·교양·취미)도 확인, 없으면 구현.
+
+### 추론 / 결정 (테스트 결과 = 현황)
+- **보조 PDF 파일**: 이미 배선돼 있었음 — upload-batch(roles) → `extract_graph=False`(청크·임베딩만) → RAG `_course_doc_ids`가 supplementary 포함.
+- **링크**: 완전 미구현 — 프론트가 수집만 하고 전송 안 함(`filter(m=>m.file)`이 링크 제외), 백엔드 URL 섭취 경로 없음 → **구현**.
+- **purpose**: 유실 — 위저드가 `?purpose=`로 넘기지만 DiagnosisPage가 안 읽고, 온보딩 `_complete`도 `finalize_onboarding`에 안 넘겨 항상 기본 "exam". `enrollment.purpose` 소비처도 전무 → **배선+소비 구현**. 소비는 STEP3 카피("목표에 맞춰 조절") 대비 최소 정직선: 성향 지시문과 동일 패턴의 결정적 스타일 지시문(§2.2 가드 — 난이도·범위·분량 불변, `difficulty_hint=2` 유지).
+- 링크 fetch는 stdlib HTMLParser(신규 의존 0), 실패는 코스 전체가 아닌 해당 링크만 failed(보조자료는 근거 하나 빠질 뿐). yoonhs 브랜치 워킹트리에서 작업(미커밋).
+
+### 한 일
+- **링크**: `documents/linkfetch.py` 신규(httpx fetch+HTML→평문, 헤딩은 마크다운 #으로 보존해 sectioning 절 경계 재활용, script/nav/footer 제거, <80자 본문 거부) · `service.py` `_ingest_link`(fetch→청킹→임베딩, 제목으로 filename 치환, storage_url=URL) + `run_batch_pipeline` url 분기(개별 실패 무시) + `create_batch_stub` url 메타 · `router.py` upload-batch `links` Form(http/https 검증) · 프론트 `uploadDocumentBatch(files,title,links)` + `CreateCoursePage` suppLinks 전송(링크 있으면 배치 경로)
+- **purpose**: `StartRequest.purpose` + 온보딩 start가 화이트리스트(exam|career|culture|hobby) 검증 후 세션 state 보관 → `_complete`가 `finalize_onboarding(purpose=…)` 전달(기존 `enrollment.purpose or purpose` 로직 활용, 컬럼 기본값 NULL이라 정상) · `generator.py` `_PURPOSE_DIRECTIVES` 4종+`purpose_directive_of()` + `GenerationInput.purpose_directive` + build_prompt 주입(성향 지시문과 병렬) · `learning/service._prepare_generation_input`이 enrollment.purpose 소비 · 프론트 DiagnosisPage `useSearchParams`→`startOnboarding(courseId, purpose)`
+
+### 변경 파일
+- backend: `features/documents/{linkfetch(신규),service,router}.py`, `features/diagnostic/{schemas,router,onboarding}.py`, `features/learning/{generator,service}.py`
+- frontend: `features/documents/api/uploadDocument.ts`, `features/diagnostic/api/onboardingApi.ts`, `pages/{CreateCoursePage,DiagnosisPage}.tsx`
+
+### 결과 / 검증 (실 mlv2 Docker+DB+Solar LLM, course 50307f29)
+- 순수 로직: purpose 4종+미지값 중립, build_prompt 성향+목적 동시 주입, html_to_text(스크립트·nav·footer 제거, 제목 추출) 전부 PASS. 프론트 tsc 0 에러.
+- **링크 E2E**: 컴윤 10주차 PDF(primary)+위키 「정보 윤리」 링크 배치 업로드 → ready. 링크 문서: role=supplementary, filename=페이지 제목 치환, **청크 2·임베딩 2**. `search_concept_chunks`("상충되는 윤리적 책임") top-3 중 **위키 링크 청크 2개 포함** — "올린 PDF에 도움되는 링크를 거기서도 참조" 실증.
+- **purpose E2E**: 온보딩 start(purpose=career)→12스텝 완주 → **enrollment.purpose='career'** 영속(diag_status=completed) → 실 `_prepare_generation_input`이 career 지시문 산출, 생성 프롬프트에 「[학습 목적: 실무·커리어]」 주입 확인.
+
+### 열린 이슈
+- [ ] 링크 v1 한계: JS 렌더링(SPA) 페이지는 본문 추출 빈약(<80자 거부로 방어), PDF 링크 미지원, 위키 청크에 언어목록·외부링크 등 보일러플레이트 일부 잔존(RAG 유사도가 걸러주지만 정제 여지)
+- [ ] STEP2 kind(기출/필기 구분)는 여전히 UI 수집만 — 하류 소비처 생기면 배선
+- [ ] yoonhs 브랜치 워킹트리 미커밋 — 커밋 여부 사용자 결정 대기
+
+### 다음 액션
+1. 사용자 브라우저 확인(위저드 STEP2 링크 추가→생성→학습 블록에 링크 근거 반영) 후 커밋 결정
+2. 기존 우선순위 유지 — ISSUE-005 재설명 루프 / ISSUE-017
 ---
 
 ## 2026-07-11 — Claude CLI — 통합 반영·스택 전환 (기록 세션, 코드 변경 없음)

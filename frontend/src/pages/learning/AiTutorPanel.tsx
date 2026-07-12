@@ -102,7 +102,7 @@ export function AiTutorPanel({
             {supplement?.status === "ready" && (
               <>
                 <div className="flex max-w-[90%] flex-col gap-1 self-start">
-                  <div className="rounded-2xl rounded-tl-[4px] border border-accent/40 bg-accent/5 px-4 py-3.5 text-[0.9rem] leading-normal text-text-primary shadow-sm">
+                  <div className="whitespace-pre-wrap break-keep rounded-2xl rounded-tl-[4px] border border-accent/40 bg-accent/5 px-4 py-3.5 text-[0.9rem] leading-relaxed text-text-primary shadow-sm">
                     <span className="mb-1 block text-[0.72rem] font-bold text-accent">
                       {supplement.data.misconception ? "오개념 진단" : "놓친 지점"}
                     </span>
@@ -110,7 +110,7 @@ export function AiTutorPanel({
                   </div>
                 </div>
                 <div className="flex max-w-[90%] flex-col gap-1 self-start">
-                  <div className="rounded-2xl rounded-tl-[4px] border border-border-primary bg-white px-4 py-3.5 text-[0.9rem] leading-relaxed text-text-primary shadow-sm">
+                  <div className="whitespace-pre-wrap break-keep rounded-2xl rounded-tl-[4px] border border-border-primary bg-white px-4 py-3.5 text-[0.9rem] leading-relaxed text-text-primary shadow-sm">
                     <span className="mb-1 block font-bold">
                       {supplement.data.title}
                     </span>

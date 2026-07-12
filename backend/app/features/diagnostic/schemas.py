@@ -78,6 +78,9 @@ class JudgeVerdict(BaseModel):
 # ── 요청 ──────────────────────────────────────────────────────────────
 class StartRequest(BaseModel):
     course_id: uuid.UUID
+    # 수업 생성 위저드 STEP 3의 학습 목적(exam|career|culture|hobby) — 온보딩
+    # 종료 시 enrollment.purpose로 확정, JIT 생성이 스타일 지시문으로 소비.
+    purpose: str | None = None
 
 
 class AnswerRequest(BaseModel):

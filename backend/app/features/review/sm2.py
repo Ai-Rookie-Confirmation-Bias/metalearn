@@ -40,10 +40,14 @@ def update_review_schedule(
     correct: bool | None = None,
     score: float | None = None,
     now: datetime | None = None,
+    interval_factor: float = 1.0,
 ) -> ReviewSchedule:
     """한 번의 복습/학습 시도 후 SM-2 스케줄 갱신.
 
     학습(learn) 통과 시에도 동일 함수로 next_due_at을 잡을 수 있다(§9).
+    interval_factor: 학습 목적 정책(learning.policy)의 주기 계수 —
+      <1이면 더 자주(시험), >1이면 느슨하게(교양). ease에는 손대지 않아
+      목적을 바꿔도 학습 이력(ease 궤적)은 오염되지 않는다.
     """
     now = now or datetime.now(timezone.utc)
     if score is not None:
@@ -65,6 +69,7 @@ def update_review_schedule(
         else:
             new_interval = max(1, round(interval_days * new_ease))
 
+    new_interval = max(1, round(new_interval * interval_factor))
     next_due = now + timedelta(days=new_interval)
     return ReviewSchedule(ease=round(new_ease, 3), interval_days=new_interval, next_due_at=next_due)
 

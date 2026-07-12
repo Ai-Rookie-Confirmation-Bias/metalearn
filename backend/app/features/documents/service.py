@@ -188,6 +188,9 @@ class DocumentService:
                 seq=i,
                 role=meta.get("role", "primary"),
             )
+            # 링크 보조자료: 원본 위치 = URL (파일 스토리지 없음)
+            if meta.get("url"):
+                doc.storage_url = meta["url"]
             specs.append({"document_id": doc.id, "role": doc.role})
         self.diag_repo.ensure_enrollment(user_id=user.id, course_id=course.id)
         self.db.commit()
@@ -246,6 +249,39 @@ class DocumentService:
                 course_id, extractions, chunk_ids=[row.id for row in chunk_rows]
             )
 
+    async def _ingest_link(self, *, document, url: str) -> None:
+        """링크 보조자료 1건: fetch→텍스트→청킹→임베딩. 항상 RAG 근거 전용.
+
+        PDF 경로(Document Parse·정제·그래프 추출)를 타지 않는다 — 링크는
+        supplementary 고정이라 청크·임베딩만 있으면 _course_doc_ids가 집어간다.
+        실패해도 코스 전체를 죽이지 않는다(호출측에서 개별 failed 마킹).
+        """
+        from app.features.documents.linkfetch import fetch_link_text
+
+        document.status = "parsing"
+        self.db.commit()
+        text, title = await fetch_link_text(url)
+        document.raw_text = text
+        if title:
+            # 표시용 이름을 URL 대신 페이지 제목으로 (원본 위치는 storage_url에)
+            document.filename = title[:512]
+        self.db.commit()
+
+        document.status = "chunking"
+        self.db.commit()
+        chunks = sectioning.chunk_sections(
+            sectioning.split_sections(text),
+            settings.EXTRACTION_SECTION_CHAR_BUDGET,
+        )
+        if not chunks:
+            raise ValueError("링크 본문에서 청크를 만들지 못했습니다.")
+        self.repo.add_chunks(
+            document_id=document.id,
+            chunks=chunks,
+            embeddings=await self._embed_chunks(chunks),
+        )
+        self.db.commit()
+
     async def run_pipeline(
         self, *, document_id: uuid.UUID, course_id: uuid.UUID, file_bytes: bytes, filename: str
     ) -> None:
@@ -294,11 +330,23 @@ class DocumentService:
                 document = self.db.get(Document, spec["document_id"])
                 if document is None:
                     continue
-                await self._ingest_document(
-                    document=document, course_id=course_id,
-                    file_bytes=spec["file_bytes"], filename=spec["filename"],
-                    extract_graph=(spec.get("role") == "primary"),
-                )
+                if spec.get("url"):
+                    # 링크 보조자료 — 실패해도 코스는 계속(근거 하나 빠질 뿐).
+                    try:
+                        await self._ingest_link(document=document, url=spec["url"])
+                    except Exception as exc:  # noqa: BLE001
+                        self.db.rollback()
+                        document.status = "failed"
+                        document.error = str(exc)[:2000]
+                        self.db.commit()
+                        _log.warning("링크 섭취 실패(무시하고 진행): %s — %s", spec["url"], exc)
+                        continue
+                else:
+                    await self._ingest_document(
+                        document=document, course_id=course_id,
+                        file_bytes=spec["file_bytes"], filename=spec["filename"],
+                        extract_graph=(spec.get("role") == "primary"),
+                    )
                 # 개별 문서는 ingest 완료로 마킹(앵커는 아래 트리 후 ready).
                 if document.id != anchor.id:
                     document.status = "ready"

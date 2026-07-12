@@ -103,14 +103,14 @@ export function McqBlock({
         </div>
       )}
 
-      {/* 해설 — 정답/오답 모두 노출(왜 그런지 배운다) */}
+      {/* 해설 — 정답/오답 모두 노출(왜 그런지 배운다). 줄바꿈 보존(텍스트 벽 방지) */}
       {result && data.explanation && (
-        <div className="mt-3 rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
+        <div className="mt-3 whitespace-pre-wrap break-keep rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
           💡 {data.explanation}
         </div>
       )}
       {result && !data.explanation && result.reveal?.explanation && (
-        <div className="mt-3 rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
+        <div className="mt-3 whitespace-pre-wrap break-keep rounded-xl bg-bg-secondary p-4 text-[0.9rem] leading-relaxed text-text-secondary">
           💡 {result.reveal.explanation}
         </div>
       )}

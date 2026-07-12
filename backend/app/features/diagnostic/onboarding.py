@@ -130,10 +130,15 @@ class OnboardingService:
         self.placement = PlacementService(db)  # 대표 선정·선수 사슬 재활용
 
     # ── 시작 ─────────────────────────────────────────────────
-    async def start(self, course_id: uuid.UUID) -> OnboardingState:
+    async def start(
+        self, course_id: uuid.UUID, purpose: str | None = None
+    ) -> OnboardingState:
         course = self.db.get(Course, course_id)
         if course is None:
             raise HTTPException(status_code=404, detail="코스를 찾을 수 없습니다.")
+        # 위저드 STEP 3의 학습 목적 — 세션에 실어 종료 시 enrollment로 확정.
+        if purpose not in ("exam", "career", "culture", "hobby"):
+            purpose = None
 
         # 기반 체크 진입점 = 교재 '첫 파트' 대표들 — 입구에서 밑바탕을 파본다.
         # (배치고사는 마지막 파트=천장에서 시작했다. 방향이 뒤집힌 지점.)
@@ -150,6 +155,7 @@ class OnboardingService:
             kind="onboarding",
             state={
                 "user_id": str(course.user_id),
+                "purpose": purpose,
                 "phase": "disposition",
                 "disp_idx": 0,
                 "disp_answers": [],
@@ -540,6 +546,7 @@ class OnboardingService:
                 "injected": [str(c.id) for c in injected],
             },
             diag_q_count=len(state.get("asked", [])),
+            purpose=state.get("purpose") or "exam",
         )
 
         gap_outs: list[FoundationGapOut] = []

@@ -32,6 +32,7 @@ from app.features.learning.generator import (
     generate_retrieval_blocks,
     generate_section_blocks,
     generate_supplement,
+    purpose_directive_of,
     question_context_from_block,
 )
 from app.features.learning.grading import (
@@ -41,6 +42,7 @@ from app.features.learning.grading import (
     grade_block,
 )
 from app.features.learning.localization import Cause, PrereqState, localize
+from app.features.learning.policy import policy_of
 from app.features.learning.mastery import (
     MasteryState,
     apply_boolean_attempt,
@@ -70,8 +72,6 @@ from app.features.learning.serializer import filter_by_variant, to_envelope
 from app.features.profile import repository as profile_repo
 from app.features.profile.logic import directive_from_axes
 from app.features.review.sm2 import update_review_schedule
-
-_REVIEW_CAP = 5
 
 logger = logging.getLogger(__name__)
 
@@ -208,6 +208,14 @@ async def _prepare_generation_input(
     # §2.3: 첫 생성 맞춤은 성향만 — strength 기반 난이도는 복습/보충으로 이관.
     axes = profile_repo.get_axes(db, user_id)
     disposition_directive = directive_from_axes(axes)
+    # 위저드 STEP 3의 학습 목적 — 스타일(예시·강조점) + 정책(문항 밀도·유형,
+    # tracked). 난이도·내용 범위는 불변(§2.3).
+    enrollment = repo.get_enrollment(db, user_id=user_id, course_id=course.id)
+    purpose = enrollment.purpose if enrollment else None
+    policy = policy_of(purpose)
+    purpose_directive = "\n".join(
+        d for d in (purpose_directive_of(purpose), policy.retrieval_directive) if d
+    )
 
     return GenerationInput(
         concept_name=concept.name,
@@ -217,6 +225,8 @@ async def _prepare_generation_input(
         external_refs=ext_refs,
         difficulty_hint=2,
         disposition_directive=disposition_directive,
+        purpose_directive=purpose_directive,
+        tracked_retrieval=policy.tracked_retrieval,
     )
 
 
@@ -240,9 +250,16 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
         llm = get_llm_client()
         total = 0
 
-        # [0] 복습 섹션 — SM-2 due + 오답노트(브리프 §3-5, 챕터 경계 주입)
-        review_concepts = repo.collect_review_concepts(
-            db, user_id=user_id, course_id=course.id, limit=_REVIEW_CAP
+        # [0] 복습 섹션 — SM-2 due + 오답노트(브리프 §3-5, 챕터 경계 주입).
+        # 개념 수 상한은 목적 정책: 시험은 넉넉히(8), 취미는 아예 안 넣음(0).
+        enrollment = repo.get_enrollment(db, user_id=user_id, course_id=course.id)
+        review_cap = policy_of(enrollment.purpose if enrollment else None).review_cap
+        review_concepts = (
+            repo.collect_review_concepts(
+                db, user_id=user_id, course_id=course.id, limit=review_cap
+            )
+            if review_cap > 0
+            else []
         )
         if review_concepts:
             review_section = repo.get_or_create_review_section(db, chapter_id)
@@ -288,6 +305,14 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
             )
             if inp is not None:
                 plans.append((section, inp))
+
+        # 빈 챕터(생성할 절 자체가 없음 — 씨앗 트리가 절 0개 챕터를 만드는 경우):
+        # FAILED로 두면 사용자가 「다시 생성 → 또 실패」 무한 막힘. 만들 게 없는 건
+        # 실패가 아니므로 ready로 통과시킨다(절이 없어 사이드바에서 자연히 스킵됨).
+        if not plans and not review_concepts:
+            logger.info("빈 챕터 — 생성 대상 절 0개, ready 처리: %s", chapter_id)
+            repo.set_gen_status(db, chapter_id, GenStatus.READY)
+            return
 
         # [생성] 순수 계층만 병렬 실행 — 한 절이 실패해도 나머지는 계속(부분 성공 허용)
         results = await asyncio.gather(
@@ -648,13 +673,25 @@ async def record_attempt(
     mastery.explanation_score = state.explanation_score
     mastery.status = state.status
 
-    # [3] 복습 스케줄(SM-2): review는 항상, learn은 통과 시(초기 스케줄 §9)
+    # [3] 복습 스케줄(SM-2): review는 항상, learn은 통과 시(초기 스케줄 §9).
+    # 주기 계수는 목적 정책 — 시험은 더 자주(0.7), 교양은 느슨하게(1.5).
     if req.kind == "review" or result.passed:
+        attempt_concept = repo.get_concept(db, concept_id)
+        attempt_enrollment = (
+            repo.get_enrollment(
+                db, user_id=user_id, course_id=attempt_concept.course_id
+            )
+            if attempt_concept is not None
+            else None
+        )
         schedule = update_review_schedule(
             ease=mastery.ease,
             interval_days=mastery.interval_days,
             correct=result.correct,
             score=result.score,
+            interval_factor=policy_of(
+                attempt_enrollment.purpose if attempt_enrollment else None
+            ).sm2_interval_factor,
         )
         mastery.ease = schedule.ease
         mastery.interval_days = schedule.interval_days
