@@ -306,6 +306,14 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
             if inp is not None:
                 plans.append((section, inp))
 
+        # 빈 챕터(생성할 절 자체가 없음 — 씨앗 트리가 절 0개 챕터를 만드는 경우):
+        # FAILED로 두면 사용자가 「다시 생성 → 또 실패」 무한 막힘. 만들 게 없는 건
+        # 실패가 아니므로 ready로 통과시킨다(절이 없어 사이드바에서 자연히 스킵됨).
+        if not plans and not review_concepts:
+            logger.info("빈 챕터 — 생성 대상 절 0개, ready 처리: %s", chapter_id)
+            repo.set_gen_status(db, chapter_id, GenStatus.READY)
+            return
+
         # [생성] 순수 계층만 병렬 실행 — 한 절이 실패해도 나머지는 계속(부분 성공 허용)
         results = await asyncio.gather(
             *(generate_section_blocks(llm, inp) for _, inp in plans),
