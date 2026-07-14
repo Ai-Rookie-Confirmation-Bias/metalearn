@@ -1,17 +1,19 @@
 # 트라이얼(병합 검증) override — 포트 5432/8000/5173은 metalearn-integration 스택이
-# 점유 중이므로 db는 퍼블리시 없이, backend는 58001, frontend는 55173으로 띄운다.
+# 점유 중이므로 db는 퍼블리시 없이, backend는 48001, frontend는 55173으로 띄운다.
 # 사용: docker compose -f docker-compose.yml -f docker-compose.trial.yml up -d
+# 주의: backend 포트는 49152 미만으로 유지 — Windows(Hyper-V)가 49152+ 대역을
+# 뭉텅이 예약(excludedportrange)해 브라우저→localhost 연결이 거부되는 사고 실측(58001).
 services:
   db:
     ports: !reset []
   backend:
-    ports: !override ["58001:8000"]
+    ports: !override ["48001:8000"]
     environment:
       # 트라이얼 프론트(55173)에서의 브라우저 직접 호출 허용 (기본 5173도 유지)
       CORS_ORIGINS: '["http://localhost:5173","http://localhost:55173"]'
   frontend:
     ports: !override ["55173:5173"]
     environment:
-      # 브라우저 → 트라이얼 백엔드(58001) 직접 호출 (shared/api/client.ts에서 소비)
-      - VITE_API_BASE_URL=http://localhost:58001
+      # 브라우저 → 트라이얼 백엔드(48001) 직접 호출 (shared/api/client.ts에서 소비)
+      - VITE_API_BASE_URL=http://localhost:48001
       - CHOKIDAR_USEPOLLING=true
