@@ -26,6 +26,7 @@ from app.features.learning.models import (
     Enrollment,
     LearningCursor,
     SectionProgress,
+    StudyNote,
 )
 from app.features.materials.models import DocChunk, Document
 from app.features.seed.models import Concept, ConceptEdge, Course, ExternalRef
@@ -60,6 +61,29 @@ def get_chapter_sections(db: Session, chapter_id: uuid.UUID) -> list[Section]:
         .order_by(Section.order_index)
     )
     return list(db.scalars(stmt))
+
+
+# ── 요약 노트 (mig 0021) ─────────────────────────────────────────────────────
+def get_study_note(
+    db: Session, *, user_id: uuid.UUID, section_id: uuid.UUID
+) -> StudyNote | None:
+    return db.get(StudyNote, (user_id, section_id))
+
+
+def upsert_study_note(
+    db: Session, *, user_id: uuid.UUID, section_id: uuid.UUID, content: str
+) -> StudyNote:
+    """노트 upsert(커밋은 호출자). updated_at은 저장 시점으로 갱신."""
+    note = db.get(StudyNote, (user_id, section_id))
+    if note is None:
+        note = StudyNote(user_id=user_id, section_id=section_id, content=content)
+        db.add(note)
+    else:
+        note.content = content
+    note.updated_at = func.now()
+    db.flush()
+    db.refresh(note)
+    return note
 
 
 def get_course_of_chapter(db: Session, chapter: Chapter) -> Course | None:

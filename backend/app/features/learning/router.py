@@ -28,6 +28,8 @@ from app.features.learning.schemas import (
     CursorResponse,
     GenerateTriggerResponse,
     PlacementResponse,
+    NoteResponse,
+    NoteSaveRequest,
     ReadCompleteResponse,
     SectionBlocksResponse,
     SupplementResponse,
@@ -72,6 +74,44 @@ async def post_block_supplement(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/sections/{section_id}/note", response_model=NoteResponse)
+def get_section_note(
+    section_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> NoteResponse:
+    """나의 요약 노트 조회 — 없으면 빈 노트(404 아님, 탭 열 때마다 호출)."""
+    note = repo.get_study_note(db, user_id=user_id, section_id=section_id)
+    if note is None:
+        return NoteResponse(section_id=str(section_id))
+    return NoteResponse(
+        section_id=str(section_id),
+        content=note.content,
+        updated_at=note.updated_at.isoformat() if note.updated_at else None,
+    )
+
+
+@router.put("/sections/{section_id}/note", response_model=NoteResponse)
+def put_section_note(
+    section_id: uuid.UUID,
+    body: NoteSaveRequest,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> NoteResponse:
+    """나의 요약 노트 저장(upsert) — 자기설명 메모의 영속화(원리 ② 흔적)."""
+    if repo.get_section(db, section_id) is None:
+        raise HTTPException(status_code=404, detail="section not found")
+    note = repo.upsert_study_note(
+        db, user_id=user_id, section_id=section_id, content=body.content
+    )
+    db.commit()
+    return NoteResponse(
+        section_id=str(section_id),
+        content=note.content,
+        updated_at=note.updated_at.isoformat() if note.updated_at else None,
+    )
 
 
 @router.post("/tutor/chat", response_model=TutorChatResponse)

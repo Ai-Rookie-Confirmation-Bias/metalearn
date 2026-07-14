@@ -207,6 +207,28 @@ class LearningCursor(Base):
     )
 
 
+class StudyNote(Base):
+    """나의 요약 노트 — 절 단위 자기설명 메모(튜터 패널 노트 탭, mig 0021).
+
+    (user, section) 1:1 upsert. section FK CASCADE라 코스 삭제 시 함께 정리.
+    """
+
+    __tablename__ = "study_notes"
+
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    section_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("sections.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class SectionProgress(Base):
     __tablename__ = "section_progress"
 

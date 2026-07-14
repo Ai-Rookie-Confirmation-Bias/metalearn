@@ -355,6 +355,20 @@ class TutorChatResponse(_CamelModel):
     reply: str
 
 
+class NoteSaveRequest(_CamelModel):
+    """PUT /sections/:id/note — 요약 노트 저장(upsert). 빈 문자열 = 비우기."""
+
+    content: str = Field(max_length=20000)
+
+
+class NoteResponse(_CamelModel):
+    """GET/PUT /sections/:id/note 응답. 노트 없으면 content=""·updatedAt=null."""
+
+    section_id: str
+    content: str = ""
+    updated_at: str | None = None
+
+
 class CursorResponse(_CamelModel):
     """GET /courses/:id/cursor — 현재 학습 위치 + 복귀 대기 깊이(살아있는 커리큘럼)."""
 

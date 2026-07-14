@@ -612,6 +612,99 @@ async def _drop_unsolvable_cloze(
 
 _EXPLANATION_TYPES = ("concept", "analogy", "table", "diagram")
 
+# 페어 재생성 상한 — 조각 수만큼 콜이 늘지 않게(생성 1콜 + faithfulness/cloze 검증 콜)
+_PAIR_REGEN_LIMIT = 3
+
+
+def _pair_problem_prompt(inp: GenerationInput, piece_body: str) -> str:
+    """조각 하나를 겨냥한 확인 문제 1개 재생성 프롬프트(폐기분 보충 전용)."""
+    return f"""당신은 학습 문항 생성기다. 아래 [설명 조각]을 방금 읽은 학습자가
+그 조각만 읽고 풀 수 있는 **확인 문제 1개**를 만들어라. 빈칸의 정답이 유일하기
+어려운 내용이면 cloze 대신 mcq를 만들어라. 설명에 없는 것을 묻지 마라.
+{_ITEM_RULES}
+
+CONCEPT_NAME: {inp.concept_name}
+
+[설명 조각 — 이 내용만 사실로 사용]
+{piece_body[:2000]}
+
+BLOCKS_JSON 형식으로만 응답한다. JSON 하나, blocks 배열에 블록 정확히 1개:
+{{"blocks": [
+  {{"type": "cloze", "difficulty": "mid", "data": {{"text": "... {{{{blank}}}} ...", "blanks": ["정답"], "hint": "..."}}}}
+]}}
+(mcq로 만들 경우 원소: {{"type": "mcq", "difficulty": "mid", "data": {{"question": "...", "options": ["...", "...", "...", "..."], "answerIndex": 0, "explanation": "..."}}}})"""
+
+
+async def _regen_pair_problem(
+    llm: LLMClient,
+    inp: GenerationInput,
+    *,
+    piece_body: str,
+    k: int,
+    chunk_ids: list[uuid.UUID],
+    ref_ids: list[uuid.UUID],
+    evidence: str,
+) -> BlockDraft | None:
+    """폐기된 페어 확인 문제 재생성 1회 — 첫 생성과 동일 게이트 전부 통과 시에만.
+
+    (규격 코어스 → 근거 게이트 → faithfulness → cloze 결정적 검사·풀이 검증)
+    실패하면 None — 조각은 문제 없이 나간다(품질 우선, 억지로 채우지 않음).
+    """
+    try:
+        raw = await llm.generate(_pair_problem_prompt(inp, piece_body), json_mode=True)
+    except Exception:  # noqa: BLE001 — 보충 실패는 조용히 포기
+        logger.warning("페어 재생성 콜 실패: concept=%s 조각=%d", inp.concept_name, k)
+        return None
+    items = parse_llm_blocks(raw)
+    if not items:
+        return None
+    coerced = _coerce_block(items[0])
+    if coerced is None:
+        return None
+    btype, data, difficulty = coerced
+    if btype not in ("cloze", "mcq"):
+        return None
+    verified, source, use_chunks, use_refs = _verify(
+        btype=btype,
+        data=data,
+        concept_source=inp.concept_source,
+        chunk_ids=chunk_ids,
+        ref_ids=ref_ids,
+    )
+    if not verified:
+        return None
+    if not await check_faithfulness(llm, btype=btype, data=data, evidence=evidence):
+        return None
+    if btype == "cloze":
+        fixed = check_cloze_deterministic(data)
+        if fixed is None:
+            return None
+        data = fixed
+        oks = await verify_cloze_drafts(
+            llm,
+            items=[{"text": data.get("text", ""), "blanks": list(data.get("blanks") or [])}],
+            context=piece_body,
+        )
+        if not (oks and oks[0]):
+            return None
+    _, tracked = _TYPE_SPECS[btype]
+    return BlockDraft(
+        type=btype,
+        source=source,
+        tracked=tracked and inp.tracked_retrieval,
+        verified=True,
+        data=data,
+        meta={
+            "difficulty": difficulty,
+            "version": 1,
+            "order": 0,  # order_interleaved가 재스탬프
+            "afterConcept": k,
+            "pairRegen": True,  # 관찰용: 재생성으로 채워진 문제 표식
+        },
+        source_chunk_ids=use_chunks,
+        external_ref_ids=use_refs,
+    )
+
 
 def order_interleaved(drafts: list[BlockDraft]) -> list[BlockDraft]:
     """조각+확인문제 페어 순서를 결정적으로 강제한다(순수 함수).
@@ -761,6 +854,38 @@ async def generate_section_blocks(
     kept = await _drop_unsolvable_cloze(
         llm, drafts, context=explanation or evidence, concept_name=inp.concept_name
     )
+
+    # 페어 재생성 — 태그로 요청됐던 확인 문제가 게이트에서 전멸한 조각은 1회 보충.
+    # (모델이 애초에 안 만든 조각은 대상 아님 — 폐기 복구만, 콜 상한 _PAIR_REGEN_LIMIT)
+    requested = {c[6] for c in candidates if c[0] in ("cloze", "mcq") and c[6]}
+    concepts = [d for d in kept if d.type == "concept"]
+    surviving = {
+        d.meta.get("afterConcept") for d in kept if d.type in ("cloze", "mcq")
+    }
+    missing = sorted(k for k in requested - surviving if k <= len(concepts))
+    if missing:
+        regen = await asyncio.gather(
+            *(
+                _regen_pair_problem(
+                    llm,
+                    inp,
+                    piece_body=str(concepts[k - 1].data.get("body") or ""),
+                    k=k,
+                    chunk_ids=chunk_ids,
+                    ref_ids=ref_ids,
+                    evidence=evidence,
+                )
+                for k in missing[:_PAIR_REGEN_LIMIT]
+            )
+        )
+        added = [d for d in regen if d is not None]
+        if added:
+            logger.info(
+                "페어 확인문제 재생성 %d/%d건 보충: concept=%s",
+                len(added), len(missing), inp.concept_name,
+            )
+        kept = kept + added
+
     # 페어 배치 강제(결정적) — 프롬프트만으론 순서를 안 지킨다(실측: concept 5연속).
     return order_interleaved(kept)
 

@@ -4,6 +4,7 @@ import { RobotIcon, PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react";
 
 import type { AttemptResponse } from "@/features/learning/api/submitAttempt";
 import type { SupplementResponse } from "@/features/learning/api/getSupplement";
+import { getSectionNote, saveSectionNote } from "@/features/learning/api/sectionNote";
 import { postTutorChat, type TutorChatTurn } from "@/features/learning/api/tutorChat";
 
 // 오답 보충 상태(LearningPage가 소유) — loading 동안 "분석 중" 버블, ready면 진단+재설명 버블.
@@ -46,8 +47,42 @@ export function AiTutorPanel({
   onClose?: () => void;
 }) {
   const [tab, setTab] = useState<"ai" | "note">("ai");
-  const [note, setNote] = useState("");
   const message = tutorMessage(signal);
+
+  // 나의 요약 노트 — 절 단위 서버 저장(자기설명 흔적). 절 변경 시 로드.
+  const [note, setNote] = useState("");
+  const [noteState, setNoteState] = useState<"idle" | "saving" | "saved" | "error">("idle");
+  const [noteSavedAt, setNoteSavedAt] = useState<string | null>(null);
+  useEffect(() => {
+    setNote("");
+    setNoteState("idle");
+    setNoteSavedAt(null);
+    if (!sectionId) return;
+    let alive = true;
+    getSectionNote(sectionId)
+      .then((n) => {
+        if (alive) {
+          setNote(n.content);
+          setNoteSavedAt(n.updatedAt);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [sectionId]);
+
+  const saveNote = async () => {
+    if (!sectionId || noteState === "saving") return;
+    setNoteState("saving");
+    try {
+      const n = await saveSectionNote(sectionId, note);
+      setNoteState("saved");
+      setNoteSavedAt(n.updatedAt);
+    } catch {
+      setNoteState("error");
+    }
+  };
 
   // 채팅 Q&A — 서버 무저장, 절 단위 컨텍스트라 절이 바뀌면 리셋.
   const [chat, setChat] = useState<TutorChatTurn[]>([]);
@@ -230,17 +265,30 @@ export function AiTutorPanel({
       ) : (
         <>
           <div className="flex items-center justify-between border-b border-border-primary bg-bg-secondary px-6 py-4">
-            <span className="text-[0.8rem] font-medium text-text-tertiary">마지막 저장: 방금</span>
+            <span className="text-[0.8rem] font-medium text-text-tertiary">
+              {noteState === "saving"
+                ? "저장 중…"
+                : noteState === "error"
+                  ? "저장 실패 — 다시 시도해주세요"
+                  : noteSavedAt
+                    ? `마지막 저장: ${new Date(noteSavedAt).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit" })}`
+                    : "아직 저장된 노트가 없어요"}
+            </span>
             <button
               type="button"
-              className="rounded-md bg-accent/10 px-3 py-1.5 text-[0.8rem] font-semibold text-accent"
+              onClick={saveNote}
+              disabled={!sectionId || noteState === "saving"}
+              className="rounded-md bg-accent/10 px-3 py-1.5 text-[0.8rem] font-semibold text-accent transition-colors hover:bg-accent/20 disabled:opacity-50"
             >
-              저장하기
+              {noteState === "saved" ? "저장됨 ✓" : "저장하기"}
             </button>
           </div>
           <textarea
             value={note}
-            onChange={(e) => setNote(e.target.value)}
+            onChange={(e) => {
+              setNote(e.target.value);
+              if (noteState === "saved" || noteState === "error") setNoteState("idle");
+            }}
             placeholder="학습한 내용을 나만의 언어로 요약해 보세요!"
             className="flex-1 resize-none p-6 text-[0.95rem] leading-relaxed text-text-primary outline-none placeholder:text-text-tertiary"
           />
