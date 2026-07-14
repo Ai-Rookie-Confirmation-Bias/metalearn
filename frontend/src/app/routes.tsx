@@ -32,7 +32,9 @@ export const router = createBrowserRouter([
   // OAuth 콜백 — 제공자→백엔드→여기(#token=...). 토큰 저장 후 /library로.
   { path: "/auth/callback", element: <AuthCallbackPage /> },
   // 학습 화면 — 자체 헤더를 가진 전체화면 3컬럼 (셸 밖)
+  // :courseId로 열면 그 코스, 없으면 첫 코스 폴백(하위호환·북마크 대응)
   { path: "/learning", element: <LearningPage /> },
+  { path: "/learning/:courseId", element: <LearningPage /> },
   {
     // 로그인 후 셸: 좌측 사이드바 + 본문
     element: <AppLayout />,

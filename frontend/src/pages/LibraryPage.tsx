@@ -80,7 +80,7 @@ function ContinueBanner({ course }: { course: CourseSummary }) {
       </div>
 
       <Link
-        to="/learning"
+        to={`/learning/${course.id}`}
         className="inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-7 py-3.5 text-[0.95rem] font-bold text-accent shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
       >
         <PlayIcon weight="fill" />
@@ -164,9 +164,9 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
           </div>
         )}
 
-        {/* 진단 전이면 /diagnosis/:courseId, 진단 후엔 학습 화면으로 */}
+        {/* 진단 전이면 /diagnosis/:courseId, 진단 후엔 그 코스의 학습 화면으로 */}
         <Link
-          to={started ? "/learning" : `/diagnosis/${course.id}`}
+          to={started ? `/learning/${course.id}` : `/diagnosis/${course.id}`}
           className="mt-auto inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
         >
           {cta}

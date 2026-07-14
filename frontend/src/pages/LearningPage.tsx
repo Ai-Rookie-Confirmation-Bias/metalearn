@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { clsx } from "clsx";
 import {
   ArrowLeftIcon,
@@ -34,9 +34,11 @@ import { useReadComplete } from "@/features/learning/queries/useReadComplete";
 //   트리 = GET /courses/:id · 절 블록 = GET /sections/:id(지연) · 채점 = POST /attempts(라운드트립).
 export function LearningPage() {
   const queryClient = useQueryClient();
+  const { courseId: courseIdParam } = useParams<{ courseId: string }>();
   const { data: courses } = useCourses();
-  const courseId = courses?.[0]?.id;
-  const category = courses?.[0]?.category ?? "";
+  // URL의 :courseId 우선 — 책장에서 클릭한 코스로 진입. 없으면 첫 코스(하위호환).
+  const courseId = courseIdParam ?? courses?.[0]?.id;
+  const category = courses?.find((c) => c.id === courseId)?.category ?? "";
   const { data: tree, isLoading: treeLoading } = useCourseTree(courseId);
 
   const chapters = useMemo(() => tree?.chapters ?? [], [tree]);
@@ -54,6 +56,13 @@ export function LearningPage() {
     | { status: "loading" }
     | { status: "ready"; data: SupplementResponse }
   >({ status: "idle" });
+
+  // 코스 전환 시(같은 라우트 요소라 remount 없음) 이전 코스의 절 선택·신호 리셋
+  useEffect(() => {
+    setCurrentSectionId(null);
+    setSignal(null);
+    setSupplement({ status: "idle" });
+  }, [courseId]);
 
   // 시작 절 초기화(첫 미완료부터) — 진행도는 저장하지 않고 트리에서 읽는다.
   useEffect(() => {

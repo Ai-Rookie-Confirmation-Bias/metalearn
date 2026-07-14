@@ -43,7 +43,7 @@
 | 1 | **방향 재회의** — 성향 진단 / 수준 반영 타이밍(실시간 vs 복습) / 커리큘럼 축소 유지 / 진단-커리큘럼 분리 | ⏸ 회의 대기 |
 | 2 | 위키 429 → external_refs LLM 폴백 과다(web 17/llm 69) — refs.py rate-limit 개선 | 미착수 |
 | 3 | 문서 병렬 ingest(속도) — 지금 순차, Solar 8슬롯 중 3만 사용 | 미착수 |
-| 4 | LearningPage가 courses[0]만 봄 — 클릭한 코스로 라우팅(`/learning/:courseId`) | 미착수 |
+| 4 | LearningPage가 courses[0]만 봄 — 클릭한 코스로 라우팅(`/learning/:courseId`) | ✅ 해결(2026-07-14: 라우트 추가 + 책장 링크 코스별 + 코스 전환 시 절 선택 리셋) |
 | 5 | 진단 미완료 코스 트리 400 (ceiling 없음) — 논점 4와 연결 | 미착수 |
 | 6 | Document 스키마 변경(course_id/seq/role)은 parsing 팀 영역 → 병합 시 조율 | 협의 |
 
