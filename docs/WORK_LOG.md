@@ -81,6 +81,37 @@
 
 ---
 
+## 2026-07-14 (세션23) — Claude CLI — Layer 1: diagram(Mermaid) 블록 + LLM 응답 붕괴 버그 발굴·수리
+
+### 사용자 요청
+- Layer 1(Mermaid) 구현 승인 — 렌더 검증 게이트 설계 확정 후 착수. 절대 원칙 유지(프론트=조립만).
+- 구현 후 검증 + **스택 구동**(사용자 직접 확인 예정).
+
+### 추론 / 결정 (설계 핵심)
+- **LLM에게 Mermaid 코드를 직접 쓰게 하지 않는다** — 그래프 JSON(nodes/edges)만 받고 서버가 결정적으로 조립(`diagram.assemble_mermaid`) → 문법 오류가 구조적으로 불가능, `click`·`%%{init}%%` 인젝션도 조립기가 안 만들므로 원천 차단. v1은 flowchart 단일(TD/LR).
+- 그래프 정합성 게이트는 `DiagramData` 검증기: 치명(dangling 참조·id 중복·id 패턴)=폐기, 사소(자기 루프·고립 노드)=제거 후 통과 — table 행 패딩과 같은 관대 철학.
+- faithfulness는 **엣지 문장화**("A → B (라벨)")로 기존 `check_faithfulness` 재사용 — 다이어그램 환각은 노드가 아니라 화살표(없는 관계 주장)에서 나온다.
+- 프론트는 2차 방어선(mermaid.parse) + 렌더 실패 시 nodes/edges **구조화 폴백 리스트**(빈 화면 금지). mermaid.js는 dynamic import(번들 lazy), `securityLevel:"strict"`.
+
+### 한 일
+- 백엔드: `DiagramData/DiagramNode/DiagramEdge`(schemas), **`diagram.py` 신설**(조립+문장화), generator 등록(_TYPE_SPECS/_FAITHFULNESS_TYPES/_block_claim_text/프롬프트/cloze 컨텍스트), mock diagram 응답.
+- 프론트: `DiagramBlock.tsx` 신설(lazy mermaid + parse 2차 방어 + 폴백), types/registry 등록, **mermaid@11.16.0 추가**(pnpm, 컨테이너 스토어 이슈는 `--store-dir`로 해결).
+- **[중요] 기존 잠복 버그 발굴·수리**: solar-pro3(json_mode)가 블록 객체 사이 닫는 `}`를 간헐 누락 → 여러 블록의 키가 한 객체로 합쳐지고 JSON은 유효(중복 키 허용)라 **표준 파싱이 마지막 블록만 남김**(6블록→1블록 조용한 증발, 에러 0). 실측 재현율 ~절반. 수리: `parse_llm_blocks`에 ① 중복 키 분리 hook(`_dup_key_splitting_hook` — 키 반복 지점마다 조각 분리) ② 블록 모양({type,data}) 재귀 수집(blocks 배열 밖 유출 방어) ③ data 기준 중복 제거 ④ 3블록 미만이면 재생성+최선 시도 유지. **Layer 0 이전부터 있던 버그로 추정 — 기존 코스의 빈약한 절들 원인일 가능성.**
+
+### 검증
+- 게이트 단위: dangling/중복 id/자기 루프만·1열 표 폐기, 고립 노드·자기 루프 관대 제거, 라벨 이스케이프, LLM이 넣은 mermaid 키 무시(항상 서버 조립본) ✅
+- 파서 회귀: 실패 raw 실물에서 **7블록 전부 복원**(concept/table/diagram/analogy/cloze/mcq/explainBack), 정상 응답 회귀 무손상 ✅
+- faithfulness 부정 테스트: 지어낸 화살표("물리→응용 암호화 전달") → supported:false 폐기 ✅
+- **실 Solar 3/3 샘플 안정**: 매회 6블록 + OSI 캡슐화 5계층 flowchart(TD, 라벨 엣지) 정확 생성 ✅ (수리 전: 절반이 1블록 붕괴)
+- 프론트 tsc 0, 스택 재기동 클린(backend/frontend 200). 주의: 이전 asyncio.run 2회 테스트 스크립트는 solar 커넥션 풀이 닫힌 루프에 물려 오탐 — 단일 루프에서 테스트할 것.
+
+### 다음 액션
+1. 실 코스에서 신규 챕터 generate → table/diagram/구조화 concept 육안 확인(기존 저장 블록엔 소급 안 됨).
+2. Layer 2 조사: Document Parse figure 좌표 → 원문 이미지 크롭 재사용.
+3. 기존 코스 중 "1블록 절" 실태 파악(파서 버그 소급 영향) — 재생성 대상 선별.
+
+---
+
 ## 2026-07-14 (세션22) — Claude CLI — 학습 콘텐츠 시각 구조화 Layer 0: concept 구조화 박스 + 비교표(table) 블록
 
 ### 사용자 요청

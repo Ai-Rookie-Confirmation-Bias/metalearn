@@ -29,10 +29,12 @@ from app.core.llm.base import LLMClient
 
 logger = logging.getLogger(__name__)
 from app.core.verify_grade import can_mark_verified, normalize_text
+from app.features.learning.diagram import assemble_mermaid, edge_sentences
 from app.features.learning.schemas import (
     AnalogyData,
     ClozeData,
     ConceptData,
+    DiagramData,
     ExplainBackData,
     McqData,
     ReviewGateData,
@@ -44,6 +46,7 @@ _TYPE_SPECS: dict[str, tuple[type, bool]] = {
     "concept": (ConceptData, False),
     "analogy": (AnalogyData, False),
     "table": (TableData, False),
+    "diagram": (DiagramData, False),
     "cloze": (ClozeData, True),
     "mcq": (McqData, True),
     "explainBack": (ExplainBackData, True),
@@ -186,6 +189,10 @@ def build_prompt(inp: GenerationInput) -> str:
    **나열·비교가 문단보다 명확한 내용(종류·계층·단계별 특징 등)이 근거에 있으면
    table(비교표) 블록을 만들어라** — 열 2~4개, 행 2~6개, 셀은 짧은 구·단어로.
    근거에 비교 대상이 없으면 만들지 마라.
+   **절차·흐름·구조 관계(단계 진행, 계층 통과, 포함·의존 관계)가 근거에 있으면
+   diagram(도식) 블록을 만들어라** — 노드 2~8개(id는 N1, N2… 형식, label은
+   40자 이내), 화살표(edges)는 **근거에 명시된 관계만**. 근거에 흐름·구조가
+   없으면 만들지 마라. Mermaid 코드는 쓰지 마라 — 노드와 화살표 JSON만.
 3) 그런 다음 인출 문제(cloze·mcq·explainBack)를 충분히 배치해 방금 배운 것을
    학습자가 직접 꺼내게 한다(인출학습은 유지·강화한다).
 **핵심 규칙: 모든 인출 문제의 정답 근거는 위 설명(concept/analogy) 안에 반드시
@@ -200,11 +207,13 @@ DIFFICULTY: {difficulty_word}
 [근거 발췌 — 이 내용만 사실로 사용]
 {evidence}
 
-BLOCKS_JSON 형식으로만 응답한다. 마크다운/설명 없이 JSON 하나
+BLOCKS_JSON 형식으로만 응답한다. 마크다운/설명 없이 JSON 하나.
+**모든 블록을 최상위 "blocks" 배열 하나에 넣어라 — 다른 키를 만들지 마라.**
 (concept는 1~2개로 충분히 설명, 그 뒤 인출 문제들):
 {{"blocks": [
   {{"type": "concept", "difficulty": "mid", "data": {{"title": "...", "body": "...", "whyItMatters": "...", "example": "...", "misconception": "..."}}}},
   {{"type": "table", "difficulty": "mid", "data": {{"title": "...", "columns": ["구분", "..."], "rows": [["...", "..."]], "caption": "..."}}}},
+  {{"type": "diagram", "difficulty": "mid", "data": {{"title": "...", "direction": "TD", "nodes": [{{"id": "N1", "label": "..."}}, {{"id": "N2", "label": "..."}}], "edges": [{{"source": "N1", "target": "N2", "label": "..."}}], "caption": "..."}}}},
   {{"type": "analogy", "difficulty": "easy", "data": {{"label": "비유", "text": "..."}}}},
   {{"type": "cloze", "difficulty": "mid", "data": {{"text": "... {{{{blank}}}} ...", "blanks": ["정답"], "hint": "..."}}}},
   {{"type": "mcq", "difficulty": "mid", "data": {{"question": "...", "options": ["...", "...", "...", "..."], "answerIndex": 0, "explanation": "..."}}}},
@@ -212,8 +221,50 @@ BLOCKS_JSON 형식으로만 응답한다. 마크다운/설명 없이 JSON 하나
 ]}}"""
 
 
+def _dup_key_splitting_hook(pairs: list[tuple[str, object]]) -> dict:
+    """json.loads object_pairs_hook — 중복 키를 조각으로 분리 보존.
+
+    실측(2026-07-14, solar-pro3 + json_mode): 블록 객체 사이의 닫는 `}`를
+    간헐적으로 누락한다 → 여러 블록의 type/data 키가 한 객체에 합쳐지고,
+    JSON은 유효하므로(중복 키 허용) 표준 파싱은 **마지막 키만 남겨** 블록들이
+    조용히 증발했다(6블록 → 1블록). 키가 반복되는 지점마다 새 조각을 시작해
+    전부 보존하고, _collect_block_dicts가 조각에서 블록을 회수한다.
+    """
+    keys = [k for k, _ in pairs]
+    if len(set(keys)) == len(keys):
+        return dict(pairs)
+    segments: list[dict] = []
+    cur: dict = {}
+    for k, v in pairs:
+        if k in cur:
+            segments.append(cur)
+            cur = {}
+        cur[k] = v
+    segments.append(cur)
+    return {"__segments__": segments}
+
+
+def _collect_block_dicts(value: object) -> list[dict]:
+    """JSON 트리 어디에 있든 블록 모양({type, data}) dict를 문서 순서로 수집.
+
+    실측(2026-07-14, solar-pro3 + json_mode): 블록을 `blocks` 배열 밖(다른 키
+    아래)에 흘리는 응답이 간헐 발생 — 키 이름에 의존하지 않고 모양으로 회수한다.
+    """
+    out: list[dict] = []
+    if isinstance(value, dict):
+        if isinstance(value.get("type"), str) and isinstance(value.get("data"), dict):
+            out.append(value)
+        else:
+            for v in value.values():
+                out.extend(_collect_block_dicts(v))
+    elif isinstance(value, list):
+        for v in value:
+            out.extend(_collect_block_dicts(v))
+    return out
+
+
 def parse_llm_blocks(raw: str) -> list[dict]:
-    """LLM 응답 → 블록 dict 리스트. 코드펜스/잡담 방어."""
+    """LLM 응답 → 블록 dict 리스트. 코드펜스/잡담/구조 이탈 방어."""
     text = raw.strip()
     fence = re.search(r"```(?:json)?\s*(.+?)```", text, re.DOTALL)
     if fence:
@@ -223,11 +274,21 @@ def parse_llm_blocks(raw: str) -> list[dict]:
     if start == -1 or end == -1:
         return []
     try:
-        payload = json.loads(text[start : end + 1])
+        payload = json.loads(
+            text[start : end + 1], object_pairs_hook=_dup_key_splitting_hook
+        )
     except json.JSONDecodeError:
         return []
-    blocks = payload.get("blocks")
-    return blocks if isinstance(blocks, list) else []
+    # 블록 모양 재귀 수집(blocks 배열 안팎 불문) + 중복 제거(초안/재기술 방어)
+    seen: set[str] = set()
+    blocks: list[dict] = []
+    for b in _collect_block_dicts(payload):
+        key = json.dumps(b.get("data"), ensure_ascii=False, sort_keys=True)
+        if key in seen:
+            continue
+        seen.add(key)
+        blocks.append(b)
+    return blocks
 
 
 # LLM이 mcq 선지 텍스트에 자체 라벨("A. ", "1) " 등)을 붙이는 경우가 있어
@@ -256,6 +317,10 @@ def _coerce_block(item: dict) -> tuple[str, dict, str] | None:
         dumped["options"] = [
             _OPTION_LABEL_RE.sub("", str(o)) for o in dumped["options"]
         ]
+    if btype == "diagram":
+        # Mermaid는 검증 통과한 그래프에서 서버가 조립(결정적). LLM이 mermaid
+        # 키를 뱉어도 모델에 없는 필드라 dump에서 이미 소거됨 → 항상 우리 조립본.
+        dumped["mermaid"] = assemble_mermaid(dumped)
     return btype, dumped, difficulty
 
 
@@ -321,7 +386,7 @@ def _fallback_blocks(inp: GenerationInput) -> list[dict]:
 
 # ── faithfulness 검증(§2.5A [3], 블록 단위 1콜) ──────────────────────────────
 # analogy는 면제(라벨 강제), reviewGate는 복습용 → 사실 블록만 대조.
-_FAITHFULNESS_TYPES = {"concept", "table", "cloze", "mcq", "explainBack"}
+_FAITHFULNESS_TYPES = {"concept", "table", "diagram", "cloze", "mcq", "explainBack"}
 
 
 def _evidence_text(inp: GenerationInput) -> str:
@@ -347,6 +412,10 @@ def _block_claim_text(btype: str, data: dict) -> str:
             " | ".join(str(c) for c in r) for r in (data.get("rows") or [])
         )
         return f"{data.get('title', '')}\n{cols}\n{rows}\n{data.get('caption', '')}"
+    if btype == "diagram":
+        # 화살표(관계 주장)를 문장화해 대조 — 근거에 없는 관계면 불통과
+        rels = "\n".join(edge_sentences(data))
+        return f"{data.get('title', '')}\n{rels}\n{data.get('caption', '')}"
     if btype == "cloze":
         return f"{data.get('text', '')} / 정답: {', '.join(data.get('blanks') or [])}"
     if btype == "mcq":
@@ -551,8 +620,11 @@ async def generate_section_blocks(
         # json_mode: 응답을 JSON으로 강제 → 파싱 실패로 인한 재생성(콜 2배) 확률 축소.
         # 방어 파싱(parse_llm_blocks)은 그대로 유지(이중 안전망).
         raw = await llm.generate(build_prompt(inp), json_mode=True)
-        items = parse_llm_blocks(raw)
-        if items:
+        parsed = parse_llm_blocks(raw)
+        if len(parsed) > len(items):
+            items = parsed  # 최선의 시도 유지(재생성이 더 나빠도 후퇴 안 함)
+        # 설명+인출 구성상 3블록 미만은 퇴화 응답 → 재생성 1회로 회복 시도
+        if len(items) >= 3:
             break
     if not items:
         items = _fallback_blocks(inp)
@@ -612,14 +684,14 @@ async def generate_section_blocks(
         )
         order += 1
 
-    # [게이트3] cloze 풀이 검증 — 학습자가 볼 설명(concept/analogy/table)만 컨텍스트로.
-    # "설명만 읽고 풀 수 있는가"를 검수 LLM이 재현한다(없으면 근거 발췌 폴백).
+    # [게이트3] cloze 풀이 검증 — 학습자가 볼 설명(concept/analogy/table/diagram)만
+    # 컨텍스트로. "설명만 읽고 풀 수 있는가"를 검수 LLM이 재현한다(없으면 근거 폴백).
     explanation = "\n\n".join(
         _block_claim_text(d.type, d.data)
-        if d.type == "table"
+        if d.type in ("table", "diagram")
         else str(d.data.get("body") or d.data.get("text") or "")
         for d in drafts
-        if d.type in ("concept", "analogy", "table")
+        if d.type in ("concept", "analogy", "table", "diagram")
     ).strip()
     return await _drop_unsolvable_cloze(
         llm, drafts, context=explanation or evidence, concept_name=inp.concept_name

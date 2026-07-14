@@ -14,7 +14,14 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationInfo,
+    field_validator,
+    model_validator,
+)
 
 
 def _to_camel(s: str) -> str:
@@ -91,6 +98,61 @@ class TableData(_CamelModel):
             return rows
         width = len(cols)
         return [([str(c) for c in r] + [""] * width)[:width] for r in rows]
+
+
+class DiagramNode(_CamelModel):
+    id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_]{0,15}$")
+    label: str = Field(min_length=1, max_length=40)
+
+
+class DiagramEdge(_CamelModel):
+    source: str  # 노드 id 참조
+    target: str
+    label: str | None = Field(default=None, max_length=20)
+
+    @field_validator("label", mode="before")
+    @classmethod
+    def _empty_to_none(cls, v: object) -> object:
+        return None if isinstance(v, str) and not v.strip() else v
+
+
+class DiagramData(_CamelModel):
+    """① 다이어그램 블록. 추적 없음. v1은 flowchart만(절차·구조·포함 관계).
+
+    LLM은 그래프 JSON(nodes/edges)만 만들고 Mermaid 코드는 서버가 결정적으로
+    조립한다(diagram.assemble_mermaid) → 문법 오류가 구조적으로 불가능.
+    그래프 정합성 검증(렌더 가능성 게이트)은 여기 검증기가 담당:
+    치명 결함(dangling 참조·id 중복)은 폐기, 사소한 결함(자기 루프·고립 노드)은
+    제거 후 통과 — table의 행 패딩과 같은 관대 처리 철학.
+    조립된 `mermaid` 문자열은 모델 밖에서 주입된다(LLM이 넣어도 무시됨).
+    """
+
+    title: str
+    direction: Literal["TD", "LR"] = "TD"
+    nodes: list[DiagramNode] = Field(min_length=2, max_length=8)
+    edges: list[DiagramEdge] = Field(min_length=1, max_length=12)
+    caption: str | None = None  # 한 줄 설명(선택)
+
+    @model_validator(mode="after")
+    def _validate_graph(self) -> "DiagramData":
+        ids = [n.id for n in self.nodes]
+        idset = set(ids)
+        if len(ids) != len(idset):
+            raise ValueError("노드 id 중복")
+        if any(e.source not in idset or e.target not in idset for e in self.edges):
+            raise ValueError("edge가 없는 노드를 참조(dangling)")
+        # 자기 루프(A→A)는 엣지만 제거하고 통과 — 전부 사라지면 폐기
+        edges = [e for e in self.edges if e.source != e.target]
+        if not edges:
+            raise ValueError("유효한 edge 없음")
+        # 고립 노드(어느 엣지에도 안 붙음)는 제거하고 통과 — 2개 미만이 되면 폐기
+        used = {e.source for e in edges} | {e.target for e in edges}
+        nodes = [n for n in self.nodes if n.id in used]
+        if len(nodes) < 2:
+            raise ValueError("연결된 노드가 2개 미만")
+        self.edges = edges
+        self.nodes = nodes
+        return self
 
 
 class ClozeData(_CamelModel):

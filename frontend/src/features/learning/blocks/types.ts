@@ -41,6 +41,19 @@ export type TableBlockData = {
   caption?: string;
 };
 
+// ① 다이어그램 — LLM은 그래프 JSON만, mermaid 코드는 서버가 결정적 조립.
+// 렌더 실패 시 nodes/edges 구조화 데이터로 폴백 리스트를 그린다(빈 화면 금지).
+export type DiagramNode = { id: string; label: string };
+export type DiagramEdge = { source: string; target: string; label?: string };
+export type DiagramBlockData = {
+  title?: string;
+  direction?: "TD" | "LR";
+  nodes: DiagramNode[];
+  edges: DiagramEdge[];
+  caption?: string;
+  mermaid?: string; // 서버 조립본
+};
+
 // ② 빈칸 — 문장 조각 배열(text/blank 교차). blank는 인라인 input으로 렌더.
 // answer는 서빙 시 스트립됨(서버 채점) — 채점 후 reveal.blanks로 공개.
 export type ClozeSegment =
@@ -67,6 +80,7 @@ export type AnalogyBlockData = { title?: string; label: string; text: string };
 export type LearningBlock =
   | Envelope<"concept", ConceptBlockData>
   | Envelope<"table", TableBlockData>
+  | Envelope<"diagram", DiagramBlockData>
   | Envelope<"cloze", ClozeBlockData>
   | Envelope<"mcq", McqBlockData>
   | Envelope<"explainBack", ExplainBackBlockData>

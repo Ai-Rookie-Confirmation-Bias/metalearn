@@ -62,6 +62,24 @@ class MockLLMClient(LLMClient):
                             },
                         },
                         {
+                            "type": "diagram",
+                            "difficulty": "mid",
+                            "data": {
+                                "title": f"{name} 처리 흐름",
+                                "direction": "TD",
+                                "nodes": [
+                                    {"id": "N1", "label": "입력"},
+                                    {"id": "N2", "label": name[:38]},
+                                    {"id": "N3", "label": "결과"},
+                                ],
+                                "edges": [
+                                    {"source": "N1", "target": "N2", "label": "적용"},
+                                    {"source": "N2", "target": "N3"},
+                                ],
+                                "caption": "근거 발췌의 절차를 도식으로 정리했습니다.",
+                            },
+                        },
+                        {
                             "type": "analogy",
                             "difficulty": "easy",
                             "data": {"label": "비유", "text": f"{name}은(는) 정리함에 물건을 나누어 담는 것과 비슷합니다."},
