@@ -44,6 +44,21 @@ class MockLLMClient(LLMClient):
                                 "title": name,
                                 "body": f"{name}의 핵심을 근거 발췌 기준으로 정리한 설명입니다.",
                                 "whyItMatters": f"{name}은(는) 이후 상위 개념의 바탕이 됩니다.",
+                                "example": f"예를 들어 {name}을(를) 실제 상황에 적용하면 이렇게 동작합니다.",
+                                "misconception": f"{name}을(를) 비슷한 개념과 혼동하기 쉽지만, 목적이 다릅니다.",
+                            },
+                        },
+                        {
+                            "type": "table",
+                            "difficulty": "mid",
+                            "data": {
+                                "title": f"{name} 비교",
+                                "columns": ["구분", "특징", "예"],
+                                "rows": [
+                                    ["유형 A", "가장 기본적인 형태", "사례 1"],
+                                    ["유형 B", "확장된 형태", "사례 2"],
+                                ],
+                                "caption": "근거 발췌의 비교 내용을 표로 정리했습니다.",
                             },
                         },
                         {

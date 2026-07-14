@@ -24,8 +24,22 @@ type Envelope<T extends string, D> = {
   data: D;
 };
 
-// ① 설명 — 개념 본문
-export type ConceptBlockData = { title?: string; body: string };
+// ① 설명 — 개념 본문 + 구조화 필드(텍스트 벽 해소: 각 필드가 색·아이콘 다른 박스로)
+export type ConceptBlockData = {
+  title?: string;
+  body: string;
+  whyItMatters?: string; // 왜 중요한가 (indigo 콜아웃)
+  example?: string; // 구체 예시 (green 박스)
+  misconception?: string; // 흔한 오해 (amber 경고 콜아웃)
+};
+
+// ① 비교표 — LLM이 {columns, rows} JSON만 뽑고 표는 렌더러가 그린다(HTML 생성 금지)
+export type TableBlockData = {
+  title?: string;
+  columns: string[];
+  rows: string[][];
+  caption?: string;
+};
 
 // ② 빈칸 — 문장 조각 배열(text/blank 교차). blank는 인라인 input으로 렌더.
 // answer는 서빙 시 스트립됨(서버 채점) — 채점 후 reveal.blanks로 공개.
@@ -52,6 +66,7 @@ export type AnalogyBlockData = { title?: string; label: string; text: string };
 
 export type LearningBlock =
   | Envelope<"concept", ConceptBlockData>
+  | Envelope<"table", TableBlockData>
   | Envelope<"cloze", ClozeBlockData>
   | Envelope<"mcq", McqBlockData>
   | Envelope<"explainBack", ExplainBackBlockData>

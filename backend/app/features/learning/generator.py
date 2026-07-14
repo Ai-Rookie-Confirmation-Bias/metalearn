@@ -36,12 +36,14 @@ from app.features.learning.schemas import (
     ExplainBackData,
     McqData,
     ReviewGateData,
+    TableData,
 )
 
 # type → (data 검증 모델, 추적 대상 여부). 기획서 ①설명/②문제 분류.
 _TYPE_SPECS: dict[str, tuple[type, bool]] = {
     "concept": (ConceptData, False),
     "analogy": (AnalogyData, False),
+    "table": (TableData, False),
     "cloze": (ClozeData, True),
     "mcq": (McqData, True),
     "explainBack": (ExplainBackData, True),
@@ -175,7 +177,15 @@ def build_prompt(inp: GenerationInput) -> str:
    4~6문장으로 충실하게 쓰고, 내용이 많으면 concept 블록을 2개로 나눠도 된다.
    **가독성: body는 한 덩어리로 쓰지 말고 2~3문장마다 빈 줄(\\n\\n)로 문단을
    나눠라.** 핵심 용어는 **볼드**로 표시해도 된다.
+   concept에는 body 외에 선택 필드를 적극 활용하라 — 각각 별도 박스로 렌더된다:
+   - "whyItMatters": 이 개념이 왜 중요한지 1~2문장.
+   - "example": 근거 범위 안의 구체 예시 1개(body에 쓴 예시의 반복 금지).
+   - "misconception": 학습자가 흔히 오해하거나 헷갈리는 지점 1~2문장(근거에서
+     구분·대비가 명시된 경우에만. 억지로 만들지 마라).
 2) 필요하면 analogy(비유)로 직관을 돕는다.
+   **나열·비교가 문단보다 명확한 내용(종류·계층·단계별 특징 등)이 근거에 있으면
+   table(비교표) 블록을 만들어라** — 열 2~4개, 행 2~6개, 셀은 짧은 구·단어로.
+   근거에 비교 대상이 없으면 만들지 마라.
 3) 그런 다음 인출 문제(cloze·mcq·explainBack)를 충분히 배치해 방금 배운 것을
    학습자가 직접 꺼내게 한다(인출학습은 유지·강화한다).
 **핵심 규칙: 모든 인출 문제의 정답 근거는 위 설명(concept/analogy) 안에 반드시
@@ -193,7 +203,8 @@ DIFFICULTY: {difficulty_word}
 BLOCKS_JSON 형식으로만 응답한다. 마크다운/설명 없이 JSON 하나
 (concept는 1~2개로 충분히 설명, 그 뒤 인출 문제들):
 {{"blocks": [
-  {{"type": "concept", "difficulty": "mid", "data": {{"title": "...", "body": "...", "whyItMatters": "..."}}}},
+  {{"type": "concept", "difficulty": "mid", "data": {{"title": "...", "body": "...", "whyItMatters": "...", "example": "...", "misconception": "..."}}}},
+  {{"type": "table", "difficulty": "mid", "data": {{"title": "...", "columns": ["구분", "..."], "rows": [["...", "..."]], "caption": "..."}}}},
   {{"type": "analogy", "difficulty": "easy", "data": {{"label": "비유", "text": "..."}}}},
   {{"type": "cloze", "difficulty": "mid", "data": {{"text": "... {{{{blank}}}} ...", "blanks": ["정답"], "hint": "..."}}}},
   {{"type": "mcq", "difficulty": "mid", "data": {{"question": "...", "options": ["...", "...", "...", "..."], "answerIndex": 0, "explanation": "..."}}}},
@@ -310,7 +321,7 @@ def _fallback_blocks(inp: GenerationInput) -> list[dict]:
 
 # ── faithfulness 검증(§2.5A [3], 블록 단위 1콜) ──────────────────────────────
 # analogy는 면제(라벨 강제), reviewGate는 복습용 → 사실 블록만 대조.
-_FAITHFULNESS_TYPES = {"concept", "cloze", "mcq", "explainBack"}
+_FAITHFULNESS_TYPES = {"concept", "table", "cloze", "mcq", "explainBack"}
 
 
 def _evidence_text(inp: GenerationInput) -> str:
@@ -327,8 +338,15 @@ def _block_claim_text(btype: str, data: dict) -> str:
     """블록에서 사실성 대조 대상 텍스트를 뽑는다(정답·해설 포함)."""
     if btype == "concept":
         return " ".join(
-            str(data.get(k, "")) for k in ("title", "body", "whyItMatters")
+            str(data.get(k, ""))
+            for k in ("title", "body", "whyItMatters", "example", "misconception")
         )
+    if btype == "table":
+        cols = " | ".join(str(c) for c in (data.get("columns") or []))
+        rows = "\n".join(
+            " | ".join(str(c) for c in r) for r in (data.get("rows") or [])
+        )
+        return f"{data.get('title', '')}\n{cols}\n{rows}\n{data.get('caption', '')}"
     if btype == "cloze":
         return f"{data.get('text', '')} / 정답: {', '.join(data.get('blanks') or [])}"
     if btype == "mcq":
@@ -594,12 +612,14 @@ async def generate_section_blocks(
         )
         order += 1
 
-    # [게이트3] cloze 풀이 검증 — 학습자가 볼 설명(concept/analogy)만 컨텍스트로.
+    # [게이트3] cloze 풀이 검증 — 학습자가 볼 설명(concept/analogy/table)만 컨텍스트로.
     # "설명만 읽고 풀 수 있는가"를 검수 LLM이 재현한다(없으면 근거 발췌 폴백).
     explanation = "\n\n".join(
-        str(d.data.get("body") or d.data.get("text") or "")
+        _block_claim_text(d.type, d.data)
+        if d.type == "table"
+        else str(d.data.get("body") or d.data.get("text") or "")
         for d in drafts
-        if d.type in ("concept", "analogy")
+        if d.type in ("concept", "analogy", "table")
     ).strip()
     return await _drop_unsolvable_cloze(
         llm, drafts, context=explanation or evidence, concept_name=inp.concept_name

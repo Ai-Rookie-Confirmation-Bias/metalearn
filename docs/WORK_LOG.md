@@ -81,6 +81,35 @@
 
 ---
 
+## 2026-07-14 (세션22) — Claude CLI — 학습 콘텐츠 시각 구조화 Layer 0: concept 구조화 박스 + 비교표(table) 블록
+
+### 사용자 요청
+- 텍스트만으로는 학습 환경이 지루함 → 박스 분리·시각 자료로 이해도를 높이자. 비용 대비 효과 4층 정리 중 **Layer 0(구조화 텍스트) 착수 승인**.
+- **절대 원칙 재확인: 프론트는 조립만, 백+DB가 구조화 JSON만 보낸다** (LLM HTML 생성 금지).
+
+### 추론 / 결정
+- 봉투+registry 설계 덕에 "새 유형 = data 모델 + 렌더러"로 끝난다 — 마이그레이션 0(blocks.type은 String(64) 자유형), 계약 변경도 additive라 팀 충돌 없음.
+- 발견: 백엔드는 `whyItMatters`를 이미 생성하는데 **프론트가 버리고 있었음**(types.ts에 필드 없음) → 구조화 렌더로 회수.
+- table 행 정렬은 관대 처리(초과 절단·부족 공백 패딩) — LLM 정렬 실수로 표 전체를 폐기하지 않기 위해. 내용 정확성은 faithfulness 게이트가 담당(table도 대조 대상에 포함).
+
+### 한 일
+- **백엔드**: `ConceptData`에 `example`/`misconception` 추가, `TableData` 신설(columns≥2, rows≥1, 행 정렬 validator) — `schemas.py`. `_TYPE_SPECS`/`_FAITHFULNESS_TYPES`에 table 등록, `_block_claim_text` table 지원, cloze 풀이검증 컨텍스트에 table 포함, `build_prompt` 확장(구조화 필드 지침 + "근거에 비교 대상이 있을 때만 table") — `generator.py`. mock LLM에 example/misconception+table 응답 추가 — `mock.py`.
+- **프론트**: `ConceptBlockData` 확장 + `TableBlockData` 신설 — `types.ts`. ConceptBlock 구조화 콜아웃 렌더(왜 중요할까=indigo·예시=green·흔한 오해=amber, 좌측보더 idiom) — `ConceptBlock.tsx`. `TableBlock.tsx` 신설(overflow-x-auto, 첫 열 강조, 줄무늬, caption). registry에 `table` 케이스.
+- serializer 스트립 불필요(concept/table엔 정답류 없음 — data 원본 그대로 서빙이 정상).
+
+### 검증
+- pydantic 단위: 행 절단/패딩, camelCase 왕복, 1열 표 거부 ✅ (컨테이너 py3.12)
+- 파이프라인(mock LLM, 게이트 전부): `['concept','table','analogy','cloze','mcq','explainBack']`, table tracked=False·verified=True, concept에 example/misconception 보존, strip_answers 무손실 ✅
+- **실 Solar 라이브**: LAN/MAN/WAN 근거로 생성 → concept 5필드 전부 + 4열×3행 비교표(구분/커버범위/속도/오류율) faithfulness 통과 ✅
+- 프론트 tsc 0에러(컨테이너), backend/frontend HTTP 200. 스택: mlv2를 이번 세션부터 **`~/metalearn-work` 마운트**로 운용.
+
+### 다음 액션
+1. Layer 1: Mermaid diagram 블록(+렌더 가능성 검증 게이트) — "텍스트→도식 자동 생성" 데모 장면.
+2. 조사: Upstage Document Parse가 figure 좌표를 주는지 → 되면 Layer 2(원문 이미지 크롭 재사용).
+3. 실 코스에서 새 블록 육안 확인(신규 챕터 generate 필요 — 기존 저장 블록엔 소급 안 됨).
+
+---
+
 ## 2026-07-13 (세션21) — Claude CLI — feat/purpose-policy 통합 머지 + 백업 푸시 + 라이브 스모크
 
 ### 사용자 요청

@@ -14,7 +14,7 @@ from __future__ import annotations
 import uuid
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
 
 def _to_camel(s: str) -> str:
@@ -52,11 +52,17 @@ class BlockMeta(_CamelModel):
 
 # ── type별 data 모델 (1차 5종) ───────────────────────────────────────────────
 class ConceptData(_CamelModel):
-    """① 설명 블록. 추적 없음. 왜 배우나(앞연결) 한 줄 포함 가능."""
+    """① 설명 블록. 추적 없음. 왜 배우나(앞연결) 한 줄 포함 가능.
+
+    구조화 필드(example/misconception)는 '텍스트 벽' 해소용 — 프론트가 각각
+    색·아이콘이 다른 박스로 렌더한다(HTML 생성 금지 원칙: 구조는 JSON, 그림은 렌더러).
+    """
 
     title: str
     body: str
     why_it_matters: str | None = None
+    example: str | None = None  # 구체 예시 1개(근거 범위 안)
+    misconception: str | None = None  # 흔한 오해/헷갈리는 지점 경고
 
 
 class AnalogyData(_CamelModel):
@@ -64,6 +70,27 @@ class AnalogyData(_CamelModel):
 
     label: Literal["비유"] = "비유"
     text: str
+
+
+class TableData(_CamelModel):
+    """① 비교표 블록. 추적 없음. LAN/WAN, OSI 계층처럼 나열·비교가
+    문단보다 나은 개념용 — LLM은 {columns, rows} JSON만 뽑고 표는 렌더러가 그린다.
+    """
+
+    title: str | None = None
+    columns: list[str] = Field(min_length=2)
+    rows: list[list[str]] = Field(min_length=1)
+    caption: str | None = None  # 표 아래 한 줄 부연(선택)
+
+    @field_validator("rows", mode="after")
+    @classmethod
+    def _align_rows(cls, rows: list[list[str]], info: ValidationInfo) -> list[list[str]]:
+        """행 길이를 열 수에 맞춘다(초과 절단·부족 공백) — LLM 정렬 실수에 관대."""
+        cols = info.data.get("columns")
+        if not cols:
+            return rows
+        width = len(cols)
+        return [([str(c) for c in r] + [""] * width)[:width] for r in rows]
 
 
 class ClozeData(_CamelModel):
