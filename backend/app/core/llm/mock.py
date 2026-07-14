@@ -49,6 +49,17 @@ class MockLLMClient(LLMClient):
                             },
                         },
                         {
+                            # 페어 구조: concept 조각 바로 뒤 확인 문제(실 프롬프트와 동일 순서)
+                            "type": "cloze",
+                            "difficulty": "mid",
+                            "afterConcept": 1,
+                            "data": {
+                                "text": f"{name}의 핵심 목적은 {{{{blank}}}} 이다.",
+                                "blanks": ["중복 제거"],
+                                "hint": "무엇을 없애기 위한 것일까요?",
+                            },
+                        },
+                        {
                             "type": "table",
                             "difficulty": "mid",
                             "data": {
@@ -85,17 +96,9 @@ class MockLLMClient(LLMClient):
                             "data": {"label": "비유", "text": f"{name}은(는) 정리함에 물건을 나누어 담는 것과 비슷합니다."},
                         },
                         {
-                            "type": "cloze",
-                            "difficulty": "mid",
-                            "data": {
-                                "text": f"{name}의 핵심 목적은 {{{{blank}}}} 이다.",
-                                "blanks": ["중복 제거"],
-                                "hint": "무엇을 없애기 위한 것일까요?",
-                            },
-                        },
-                        {
                             "type": "mcq",
                             "difficulty": "mid",
+                            "afterConcept": 1,
                             "data": {
                                 "question": f"{name}에 대한 설명으로 가장 적절한 것은?",
                                 "options": ["근거 기반 정답", "그럴듯한 오답 A", "그럴듯한 오답 B", "무관한 오답 C"],

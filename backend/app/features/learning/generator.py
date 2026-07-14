@@ -174,10 +174,10 @@ def build_prompt(inp: GenerationInput) -> str:
 학습 블록을 만든다. 근거에 없는 사실은 지어내지 마라.
 {disposition}
 
-구성 원칙 — "충분히 가르친 뒤, 인출로 굳힌다":
-1) 먼저 개념을 원문 근거로 **충분히 설명**한다(concept 블록). 원문을 요약·재구성해
-   [정의 → 왜 필요한가/맥락 → 동작 원리 → 구체 예시] 순으로 풀어라. body는 최소
-   4~6문장으로 충실하게 쓰고, 내용이 많으면 concept 블록을 2개로 나눠도 된다.
+구성 원칙 — "조각으로 가르치고, 조각마다 바로 꺼내게 한다":
+1) 개념을 원문 근거로 **충분히 설명**하되, 한 덩어리가 아니라 **의미 단위
+   조각(concept 블록 1~3개)**으로 나눠라. 전체 흐름은 [정의 → 왜 필요한가/맥락
+   → 동작 원리 → 구체 예시] 순. 각 body는 3~5문장으로 충실하게.
    **가독성: body는 한 덩어리로 쓰지 말고 2~3문장마다 빈 줄(\\n\\n)로 문단을
    나눠라.** 핵심 용어는 **볼드**로 표시해도 된다.
    concept에는 body 외에 선택 필드를 적극 활용하라 — 각각 별도 박스로 렌더된다:
@@ -185,19 +185,24 @@ def build_prompt(inp: GenerationInput) -> str:
    - "example": 근거 범위 안의 구체 예시 1개(body에 쓴 예시의 반복 금지).
    - "misconception": 학습자가 흔히 오해하거나 헷갈리는 지점 1~2문장(근거에서
      구분·대비가 명시된 경우에만. 억지로 만들지 마라).
-2) 필요하면 analogy(비유)로 직관을 돕는다.
+2) **concept 조각마다, 그 조각만 읽으면 풀 수 있는 가벼운 확인 문제(cloze
+   또는 mcq) 1개를 만들어라** — 읽은 직후 스스로 꺼내보는 확인용. 각 확인
+   문제에는 **"afterConcept": 몇 번째 concept 조각의 확인인지(1부터)**를
+   붙여라(배치는 시스템이 한다).
+3) analogy(비유)·table(비교표)·diagram(도식)은 **관련된 concept 조각 바로
+   옆에** 배치한다.
    **나열·비교가 문단보다 명확한 내용(종류·계층·단계별 특징 등)이 근거에 있으면
-   table(비교표) 블록을 만들어라** — 열 2~4개, 행 2~6개, 셀은 짧은 구·단어로.
+   table 블록을 만들어라** — 열 2~4개, 행 2~6개, 셀은 짧은 구·단어로.
    근거에 비교 대상이 없으면 만들지 마라.
    **절차·흐름·구조 관계(단계 진행, 계층 통과, 포함·의존 관계)가 근거에 있으면
-   diagram(도식) 블록을 만들어라** — 노드 2~8개(id는 N1, N2… 형식, label은
+   diagram 블록을 만들어라** — 노드 2~8개(id는 N1, N2… 형식, label은
    40자 이내), 화살표(edges)는 **근거에 명시된 관계만**. 근거에 흐름·구조가
    없으면 만들지 마라. Mermaid 코드는 쓰지 마라 — 노드와 화살표 JSON만.
-3) 그런 다음 인출 문제(cloze·mcq·explainBack)를 충분히 배치해 방금 배운 것을
-   학습자가 직접 꺼내게 한다(인출학습은 유지·강화한다).
-**핵심 규칙: 모든 인출 문제의 정답 근거는 위 설명(concept/analogy) 안에 반드시
+4) **마지막 블록은 반드시 explainBack 1개** — 절 전체를 통합해 자신의 말로
+   설명하게 하는 마무리 인출(조각 확인 문제와 달리 통합형).
+**핵심 규칙: 모든 문제의 정답 근거는 그 문제보다 앞에 나온 설명 안에 반드시
 들어 있어야 한다. 설명하지 않은 것을 묻지 마라 — 학습자가 방금 읽은 설명만으로
-풀 수 있어야 한다.** 블록 순서는 반드시 '설명 먼저 → 인출 나중'.
+풀 수 있어야 한다.** 블록 순서: 조각1 → 확인문제 → 조각2 → 확인문제 → … → 통합 explainBack.
 {_ITEM_RULES}
 
 CONCEPT_NAME: {inp.concept_name}
@@ -209,14 +214,14 @@ DIFFICULTY: {difficulty_word}
 
 BLOCKS_JSON 형식으로만 응답한다. 마크다운/설명 없이 JSON 하나.
 **모든 블록을 최상위 "blocks" 배열 하나에 넣어라 — 다른 키를 만들지 마라.**
-(concept는 1~2개로 충분히 설명, 그 뒤 인출 문제들):
+(배열 순서 = 화면 순서: 조각+확인문제 페어로, 마지막은 explainBack):
 {{"blocks": [
   {{"type": "concept", "difficulty": "mid", "data": {{"title": "...", "body": "...", "whyItMatters": "...", "example": "...", "misconception": "..."}}}},
   {{"type": "table", "difficulty": "mid", "data": {{"title": "...", "columns": ["구분", "..."], "rows": [["...", "..."]], "caption": "..."}}}},
   {{"type": "diagram", "difficulty": "mid", "data": {{"title": "...", "direction": "TD", "nodes": [{{"id": "N1", "label": "..."}}, {{"id": "N2", "label": "..."}}], "edges": [{{"source": "N1", "target": "N2", "label": "..."}}], "caption": "..."}}}},
   {{"type": "analogy", "difficulty": "easy", "data": {{"label": "비유", "text": "..."}}}},
-  {{"type": "cloze", "difficulty": "mid", "data": {{"text": "... {{{{blank}}}} ...", "blanks": ["정답"], "hint": "..."}}}},
-  {{"type": "mcq", "difficulty": "mid", "data": {{"question": "...", "options": ["...", "...", "...", "..."], "answerIndex": 0, "explanation": "..."}}}},
+  {{"type": "cloze", "difficulty": "mid", "afterConcept": 1, "data": {{"text": "... {{{{blank}}}} ...", "blanks": ["정답"], "hint": "..."}}}},
+  {{"type": "mcq", "difficulty": "mid", "afterConcept": 2, "data": {{"question": "...", "options": ["...", "...", "...", "..."], "answerIndex": 0, "explanation": "..."}}}},
   {{"type": "explainBack", "difficulty": "hard", "data": {{"prompt": "...", "rubric": ["키포인트1", "키포인트2"]}}}}
 ]}}"""
 
@@ -605,6 +610,56 @@ async def _drop_unsolvable_cloze(
     return [d for i, d in enumerate(kept) if i not in dropped]
 
 
+_EXPLANATION_TYPES = ("concept", "analogy", "table", "diagram")
+
+
+def order_interleaved(drafts: list[BlockDraft]) -> list[BlockDraft]:
+    """조각+확인문제 페어 순서를 결정적으로 강제한다(순수 함수).
+
+    - 설명 블록(concept/analogy/table/diagram)은 생성 순서 유지 — concept가
+      조각 경계이고, 뒤따르는 보조 자료(비유·표·도식)는 그 조각에 붙는다.
+    - `meta.afterConcept == k`인 확인 문제는 k번째 concept 조각(+보조 자료)
+      바로 뒤에 삽입. 태그 없는 문제는 설명 전체 뒤(기존 배치)로.
+    - explainBack(통합 인출)·reviewGate는 항상 맨 뒤.
+    앞의 설명만으로 풀 수 있어야 한다는 핵심 규칙을 배치가 깨지 않게, 태그가
+    조각 수보다 크면 마지막 조각 뒤로 흡수한다. 끝나면 meta.order 재스탬프.
+    """
+    explanations = [d for d in drafts if d.type in _EXPLANATION_TYPES]
+    finals = [d for d in drafts if d.type not in _EXPLANATION_TYPES and d.type not in ("cloze", "mcq")]
+    problems = [d for d in drafts if d.type in ("cloze", "mcq")]
+
+    n_concepts = sum(1 for d in explanations if d.type == "concept")
+    tagged: dict[int, list[BlockDraft]] = {}
+    untagged: list[BlockDraft] = []
+    for p in problems:
+        k = p.meta.get("afterConcept")
+        if isinstance(k, int) and 1 <= k and n_concepts:
+            tagged.setdefault(min(k, n_concepts), []).append(p)
+        else:
+            untagged.append(p)
+
+    out: list[BlockDraft] = []
+    concept_no = 0
+    for i, d in enumerate(explanations):
+        # 다음 블록이 새 concept 조각이거나 설명이 끝나는 지점 = 현재 조각의 끝
+        out.append(d)
+        if d.type == "concept":
+            concept_no += 1
+        next_is_boundary = (
+            i + 1 == len(explanations) or explanations[i + 1].type == "concept"
+        )
+        if next_is_boundary and concept_no in tagged:
+            out.extend(tagged.pop(concept_no))
+    # 남은 태그 문제(조각 소실 등) + 태그 없는 문제 → 설명 뒤, 통합 인출 앞
+    for k in sorted(tagged):
+        out.extend(tagged[k])
+    out.extend(untagged)
+    out.extend(finals)
+    for i, d in enumerate(out):
+        d.meta["order"] = i  # frozen dataclass지만 meta dict는 가변 — 재스탬프
+    return out
+
+
 async def generate_section_blocks(
     llm: LLMClient, inp: GenerationInput
 ) -> list[BlockDraft]:
@@ -632,7 +687,9 @@ async def generate_section_blocks(
     evidence = _evidence_text(inp)  # faithfulness 대조 기준(루프 밖 1회)
 
     # [게이트1] 규격 코어스 + 근거 게이트 — 통과분만 faithfulness 후보로.
-    candidates: list[tuple[str, dict, str, str, list[uuid.UUID], list[uuid.UUID]]] = []
+    candidates: list[
+        tuple[str, dict, str, str, list[uuid.UUID], list[uuid.UUID], int | None]
+    ] = []
     for item in items:
         coerced = _coerce_block(item)
         if coerced is None:
@@ -647,7 +704,12 @@ async def generate_section_blocks(
         )
         if not verified:
             continue  # 근거 없는 블록은 저장하지 않는다(서빙 금지보다 강한 폐기 정책)
-        candidates.append((btype, data, difficulty, source, use_chunks, use_refs))
+        # 페어 배치 힌트 — 확인 문제가 몇 번째 concept 조각의 것인지(1부터)
+        hint = item.get("afterConcept")
+        after_concept = hint if isinstance(hint, int) and hint >= 1 else None
+        candidates.append(
+            (btype, data, difficulty, source, use_chunks, use_refs, after_concept)
+        )
 
     # [게이트2] faithfulness — 블록별 Solar 판정을 동시 실행(직렬 대기 제거). 불통과면 폐기.
     # check_faithfulness가 예외를 내부에서 관대 통과로 흡수하므로 gather에 안전하다.
@@ -660,7 +722,7 @@ async def generate_section_blocks(
 
     drafts: list[BlockDraft] = []
     order = 0
-    for (btype, data, difficulty, source, use_chunks, use_refs), ok in zip(
+    for (btype, data, difficulty, source, use_chunks, use_refs, after_concept), ok in zip(
         candidates, passes
     ):
         if not ok:
@@ -669,6 +731,9 @@ async def generate_section_blocks(
             )
             continue
         _, tracked = _TYPE_SPECS[btype]
+        meta: dict = {"difficulty": difficulty, "version": 1, "order": order}
+        if after_concept is not None and btype in ("cloze", "mcq"):
+            meta["afterConcept"] = after_concept
         drafts.append(
             BlockDraft(
                 type=btype,
@@ -677,7 +742,7 @@ async def generate_section_blocks(
                 tracked=tracked and inp.tracked_retrieval,
                 verified=True,
                 data=data,
-                meta={"difficulty": difficulty, "version": 1, "order": order},
+                meta=meta,
                 source_chunk_ids=use_chunks,
                 external_ref_ids=use_refs,
             )
@@ -693,9 +758,11 @@ async def generate_section_blocks(
         for d in drafts
         if d.type in ("concept", "analogy", "table", "diagram")
     ).strip()
-    return await _drop_unsolvable_cloze(
+    kept = await _drop_unsolvable_cloze(
         llm, drafts, context=explanation or evidence, concept_name=inp.concept_name
     )
+    # 페어 배치 강제(결정적) — 프롬프트만으론 순서를 안 지킨다(실측: concept 5연속).
+    return order_interleaved(kept)
 
 
 # ── 맞춤 보충(재설명) 생성 — 개입 사다리 ②(ISSUE-005) ───────────────────────
