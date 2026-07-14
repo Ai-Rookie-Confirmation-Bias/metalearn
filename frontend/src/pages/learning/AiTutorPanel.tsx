@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { clsx } from "clsx";
-import { RobotIcon, PaperPlaneRightIcon } from "@phosphor-icons/react";
+import { RobotIcon, PaperPlaneRightIcon, XIcon } from "@phosphor-icons/react";
 
 import type { AttemptResponse } from "@/features/learning/api/submitAttempt";
 import type { SupplementResponse } from "@/features/learning/api/getSupplement";
+import { postTutorChat, type TutorChatTurn } from "@/features/learning/api/tutorChat";
 
 // 오답 보충 상태(LearningPage가 소유) — loading 동안 "분석 중" 버블, ready면 진단+재설명 버블.
 export type SupplementState =
@@ -11,10 +12,10 @@ export type SupplementState =
   | { status: "loading" }
   | { status: "ready"; data: SupplementResponse };
 
-// 서버 채점 신호(cause/feedback)를 튜터의 적응형 코멘트로 변환. 채팅 Q&A는 아직 mock(백엔드 LLM).
+// 서버 채점 신호(cause/feedback)를 튜터의 적응형 코멘트로 변환.
 function tutorMessage(signal: AttemptResponse | null | undefined): string {
   if (!signal) {
-    return "위의 빈칸 문제나 객관식 퀴즈가 어렵다면 언제든 질문해 주세요! 힌트를 드릴게요.";
+    return "위의 빈칸 문제나 객관식 퀴즈가 어렵다면 언제든 질문해 주세요! 정답 대신 스스로 떠올릴 수 있는 힌트를 드릴게요.";
   }
   if (signal.feedback?.comment) return signal.feedback.comment;
   switch (signal.cause?.type) {
@@ -31,22 +32,65 @@ function tutorMessage(signal: AttemptResponse | null | undefined): string {
   }
 }
 
-// 우측 패널 — AI 튜터(적응형 코멘트 + 오답 맞춤 재설명) / 나의 요약 노트 탭.
+// 우측 플로팅 패널 — AI 튜터(적응형 코멘트 + 오답 재설명 + 근거 접지 Q&A) / 요약 노트 탭.
+// 항상 떠 있지 않고 FAB로 여닫는다(LearningPage 소유) — 인출 학습이 주인공, 튜터는 보조.
 export function AiTutorPanel({
+  sectionId,
   signal,
   supplement,
+  onClose,
 }: {
+  sectionId?: string | null;
   signal?: AttemptResponse | null;
   supplement?: SupplementState;
+  onClose?: () => void;
 }) {
   const [tab, setTab] = useState<"ai" | "note">("ai");
   const [note, setNote] = useState("");
   const message = tutorMessage(signal);
 
+  // 채팅 Q&A — 서버 무저장, 절 단위 컨텍스트라 절이 바뀌면 리셋.
+  const [chat, setChat] = useState<TutorChatTurn[]>([]);
+  const [draft, setDraft] = useState("");
+  const [sending, setSending] = useState(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    setChat([]);
+    setDraft("");
+    setSending(false);
+  }, [sectionId]);
+
+  // 새 버블(채팅·보충) 도착 시 맨 아래로
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chat, sending, supplement?.status]);
+
+  const send = async () => {
+    const text = draft.trim();
+    if (!text || sending || !sectionId) return;
+    const history = chat;
+    setChat((c) => [...c, { role: "user", text }]);
+    setDraft("");
+    setSending(true);
+    try {
+      const res = await postTutorChat({ sectionId, message: text, history });
+      setChat((c) => [...c, { role: "tutor", text: res.reply }]);
+    } catch {
+      setChat((c) => [
+        ...c,
+        { role: "tutor", text: "지금은 답변을 만들지 못했어요. 잠시 후 다시 물어봐 주세요." },
+      ]);
+    } finally {
+      setSending(false);
+    }
+  };
+
   return (
-    <aside className="flex w-[340px] flex-shrink-0 flex-col border-l border-border-primary bg-white shadow-[-4px_0_15px_rgba(0,0,0,0.02)]">
-      {/* 탭 */}
-      <div className="flex border-b border-border-primary">
+    <aside className="flex h-full w-full flex-col bg-white">
+      {/* 탭 + 닫기 */}
+      <div className="flex items-center border-b border-border-primary">
         {(
           [
             ["ai", "AI 튜터"],
@@ -67,12 +111,22 @@ export function AiTutorPanel({
             {label}
           </button>
         ))}
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="튜터 패널 닫기"
+            className="flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-full text-text-tertiary transition-colors hover:bg-bg-secondary hover:text-text-primary"
+          >
+            <XIcon weight="bold" />
+          </button>
+        )}
       </div>
 
       {tab === "ai" ? (
         <>
           {/* AI 프로필 */}
-          <div className="flex items-center gap-3 border-b border-border-primary px-6 py-5">
+          <div className="flex items-center gap-3 border-b border-border-primary px-6 py-4">
             <div className="flex h-9 w-9 items-center justify-center rounded-full bg-accent text-xl text-white">
               <RobotIcon weight="fill" />
             </div>
@@ -83,12 +137,11 @@ export function AiTutorPanel({
           </div>
 
           {/* 채팅 */}
-          <div className="flex flex-1 flex-col gap-4 overflow-y-auto bg-[#fafafa] p-6">
+          <div ref={scrollRef} className="flex flex-1 flex-col gap-4 overflow-y-auto bg-[#fafafa] p-6">
             <div className="flex max-w-[90%] flex-col gap-1 self-start">
               <div className="rounded-2xl rounded-tl-[4px] border border-border-primary bg-white px-4 py-3.5 text-[0.9rem] leading-normal text-text-primary shadow-sm">
                 {message}
               </div>
-              <span className="px-1 text-[0.7rem] text-text-tertiary">방금 전</span>
             </div>
 
             {/* 오답 맞춤 재설명(개입 사다리 ②) — 서버가 실제 오답을 분석해 생성 */}
@@ -118,11 +171,35 @@ export function AiTutorPanel({
                   </div>
                   <span className="px-1 text-[0.7rem] text-text-tertiary">
                     {supplement.data.fallback
-                      ? "원문 발췌 · 방금 전"
-                      : "내 답안 기반 맞춤 설명 · 방금 전"}
+                      ? "원문 발췌"
+                      : "내 답안 기반 맞춤 설명"}
                   </span>
                 </div>
               </>
+            )}
+
+            {/* Q&A 대화 — 근거 접지 + 정답 비유출(서버 규칙) */}
+            {chat.map((t, i) =>
+              t.role === "user" ? (
+                <div key={i} className="flex max-w-[90%] flex-col gap-1 self-end">
+                  <div className="whitespace-pre-wrap break-keep rounded-2xl rounded-tr-[4px] bg-accent px-4 py-3.5 text-[0.9rem] leading-relaxed text-white shadow-sm">
+                    {t.text}
+                  </div>
+                </div>
+              ) : (
+                <div key={i} className="flex max-w-[90%] flex-col gap-1 self-start">
+                  <div className="whitespace-pre-wrap break-keep rounded-2xl rounded-tl-[4px] border border-border-primary bg-white px-4 py-3.5 text-[0.9rem] leading-relaxed text-text-primary shadow-sm">
+                    {t.text}
+                  </div>
+                </div>
+              ),
+            )}
+            {sending && (
+              <div className="flex max-w-[90%] flex-col gap-1 self-start">
+                <div className="animate-pulse rounded-2xl rounded-tl-[4px] border border-border-primary bg-white px-4 py-3.5 text-[0.9rem] text-text-tertiary shadow-sm">
+                  생각하는 중…
+                </div>
+              </div>
             )}
           </div>
 
@@ -130,12 +207,21 @@ export function AiTutorPanel({
           <div className="flex items-center gap-2 border-t border-border-primary bg-white p-4">
             <input
               type="text"
-              placeholder="AI에게 질문하기..."
-              className="flex-1 rounded-full border border-border-primary bg-bg-secondary px-5 py-3 text-[0.9rem] text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-accent focus:bg-white"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) send();
+              }}
+              disabled={!sectionId}
+              placeholder={sectionId ? "AI에게 질문하기..." : "절을 열면 질문할 수 있어요"}
+              className="flex-1 rounded-full border border-border-primary bg-bg-secondary px-5 py-3 text-[0.9rem] text-text-primary outline-none transition-colors placeholder:text-text-tertiary focus:border-accent focus:bg-white disabled:opacity-60"
             />
             <button
               type="button"
-              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-accent text-white transition-transform hover:scale-105"
+              onClick={send}
+              disabled={sending || !draft.trim() || !sectionId}
+              aria-label="질문 보내기"
+              className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-full bg-accent text-white transition-transform hover:scale-105 disabled:opacity-50 disabled:hover:scale-100"
             >
               <PaperPlaneRightIcon weight="fill" />
             </button>

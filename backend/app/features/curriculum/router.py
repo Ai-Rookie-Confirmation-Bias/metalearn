@@ -62,6 +62,20 @@ def list_courses(
     return CourseListResponse(courses=items)
 
 
+@router.delete("/courses/{course_id}", status_code=204)
+def delete_course(
+    course_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> None:
+    """책장에서 코스 삭제 — 본인 소유만. 콘텐츠·학습 이력 전부 제거(복구 불가)."""
+    course = repo.get_course(db, course_id)
+    if course is None or course.user_id != user_id:
+        raise HTTPException(status_code=404, detail="course not found")
+    repo.delete_course_deep(db, course)
+    db.commit()
+
+
 @router.get("/courses/{course_id}/mastery", response_model=MasteryResponse)
 def get_course_mastery(
     course_id: uuid.UUID,

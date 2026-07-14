@@ -31,6 +31,8 @@ from app.features.learning.schemas import (
     ReadCompleteResponse,
     SectionBlocksResponse,
     SupplementResponse,
+    TutorChatRequest,
+    TutorChatResponse,
 )
 
 router = APIRouter()
@@ -66,6 +68,21 @@ async def post_block_supplement(
         return await service.generate_block_supplement(
             db, user_id=user_id, block_id=block_id
         )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.post("/tutor/chat", response_model=TutorChatResponse)
+async def post_tutor_chat(
+    body: TutorChatRequest,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> TutorChatResponse:
+    """AI 튜터 Q&A — 현재 절 근거 접지 + 정답 비유출(소크라틱, tutor.py 규칙)."""
+    try:
+        return await service.tutor_chat(db, user_id=user_id, req=body)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:

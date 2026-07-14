@@ -331,6 +331,30 @@ class SupplementResponse(_CamelModel):
     fallback: bool = False
 
 
+class TutorChatTurn(_CamelModel):
+    role: Literal["user", "tutor"]
+    text: str = Field(min_length=1, max_length=1000)
+
+
+class TutorChatRequest(_CamelModel):
+    """POST /tutor/chat — 현재 절 컨텍스트의 근거 접지 Q&A.
+
+    history는 프론트가 들고 있는 이번 절의 최근 대화(서버 무저장 — 개인화
+    콘텐츠는 영속하지 않는 supplement와 동일 원칙).
+    """
+
+    section_id: str
+    message: str = Field(min_length=1, max_length=500)
+    history: list[TutorChatTurn] = Field(default_factory=list, max_length=12)
+
+
+class TutorChatResponse(_CamelModel):
+    """튜터 응답. 정답 비유출(소크라틱) 규칙은 서버 프롬프트가 강제."""
+
+    section_id: str
+    reply: str
+
+
 class CursorResponse(_CamelModel):
     """GET /courses/:id/cursor — 현재 학습 위치 + 복귀 대기 깊이(살아있는 커리큘럼)."""
 

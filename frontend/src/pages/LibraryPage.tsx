@@ -1,4 +1,5 @@
 import { Link, useNavigate } from "react-router-dom";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   PlusIcon,
   PlayIcon,
@@ -9,11 +10,13 @@ import {
   NotebookIcon,
   GraduationCapIcon,
   BookmarkIcon,
+  TrashIcon,
   type Icon,
 } from "@phosphor-icons/react";
 
 import { meStats, type CourseSummary } from "@/pages/library/mock";
 import { useCreatedCourses } from "@/features/course-create/store";
+import { deleteCourse } from "@/features/library/api/deleteCourse";
 import { useCourses } from "@/features/library/queries/useCourses";
 import { useReviewDue } from "@/features/review/queries/useReviewDue";
 
@@ -90,7 +93,15 @@ function ContinueBanner({ course }: { course: CourseSummary }) {
   );
 }
 
-function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
+function BookCard({
+  course,
+  cover,
+  onDelete,
+}: {
+  course: CourseSummary;
+  cover: Cover;
+  onDelete?: (course: CourseSummary) => void;
+}) {
   const started = course.diagStatus === "completed";
   const progress = course.sectionsTotal
     ? Math.round((course.sectionsCompleted / course.sectionsTotal) * 100)
@@ -127,7 +138,7 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
   }
 
   return (
-    <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm transition-all hover:-translate-y-1 hover:border-text-tertiary hover:shadow-lg">
+    <div className="group flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm transition-all hover:-translate-y-1 hover:border-text-tertiary hover:shadow-lg">
       <div
         className={`relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`}
       >
@@ -135,6 +146,17 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
         <span className="absolute right-4 top-4 rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur-sm">
           {difficultyLabel(course.difficultyEst)}
         </span>
+        {/* 삭제 — 호버 시에만 노출(오클릭 방지), 확인은 onDelete(페이지)가 담당 */}
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => onDelete(course)}
+            aria-label={`${course.title} 삭제`}
+            className="absolute left-3 top-3 flex h-8 w-8 items-center justify-center rounded-full bg-black/25 text-white opacity-0 backdrop-blur-sm transition-opacity hover:bg-[#ef4444] group-hover:opacity-100"
+          >
+            <TrashIcon />
+          </button>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col p-6">
@@ -178,7 +200,20 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
 
 export function LibraryPage() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const drafts = useCreatedCourses((s) => s.drafts);
+
+  // 코스 삭제 — 학습 이력까지 전부 지워지므로 반드시 확인 후. 성공 시 책장 refetch.
+  const removeCourse = useMutation({
+    mutationFn: deleteCourse,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["courses"] }),
+  });
+  const handleDelete = (course: CourseSummary) => {
+    const ok = window.confirm(
+      `'${course.title}' 코스를 삭제할까요?\n커리큘럼과 학습 기록이 모두 삭제되며 복구할 수 없어요.`,
+    );
+    if (ok) removeCourse.mutate(course.id);
+  };
 
   // 서버 책장(GET /api/courses) — mock 대체. 로딩 중엔 빈 배열.
   const { data: serverCourses = [] } = useCourses();
@@ -283,7 +318,13 @@ export function LibraryPage() {
             </button>
 
             {allCourses.map((course) => (
-              <BookCard key={course.id} course={course} cover={coverByCourse.get(course.id)!} />
+              <BookCard
+                key={course.id}
+                course={course}
+                cover={coverByCourse.get(course.id)!}
+                // 생성 중 드래프트(스토어 전용)는 서버에 아직 없음 → 삭제 대상 아님
+                onDelete={course.generating ? undefined : handleDelete}
+              />
             ))}
           </div>
         )}

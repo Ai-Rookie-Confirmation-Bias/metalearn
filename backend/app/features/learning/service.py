@@ -43,6 +43,7 @@ from app.features.learning.grading import (
 )
 from app.features.learning.localization import Cause, PrereqState, localize
 from app.features.learning.policy import policy_of
+from app.features.learning.tutor import TutorTurn, generate_tutor_reply
 from app.features.learning.mastery import (
     MasteryState,
     apply_boolean_attempt,
@@ -839,6 +840,40 @@ def _format_user_answer(block_type: str, block_data: dict, user_input: dict | No
     if isinstance(value, list):
         return " / ".join(str(v) for v in value)
     return str(value)
+
+
+async def tutor_chat(
+    db: Session, *, user_id: uuid.UUID, req: "TutorChatRequest"
+) -> "TutorChatResponse":
+    """POST /tutor/chat 본체 — 현재 절의 근거로 접지된 Q&A 1콜.
+
+    근거·성향 수집은 첫 생성/보충과 동일 경로(_prepare_generation_input).
+    대화는 서버에 저장하지 않는다(프론트가 history로 왕복 — supplement와 동일하게
+    개인화 콘텐츠 비영속 원칙).
+    """
+    from app.features.learning.schemas import TutorChatResponse
+
+    section = repo.get_section(db, uuid.UUID(req.section_id))
+    if section is None:
+        raise LookupError("section not found")
+    chapter = repo.get_chapter(db, section.chapter_id)
+    course = repo.get_course_of_chapter(db, chapter) if chapter else None
+    if course is None:
+        raise ValueError("절의 코스 맥락을 확인할 수 없습니다")
+
+    inp = await _prepare_generation_input(
+        db, section=section, course=course, user_id=user_id
+    )
+    if inp is None:
+        raise ValueError("개념 정보를 찾을 수 없습니다")
+
+    reply = await generate_tutor_reply(
+        get_llm_client(),
+        inp=inp,
+        question=req.message,
+        history=[TutorTurn(role=t.role, text=t.text) for t in req.history],
+    )
+    return TutorChatResponse(section_id=req.section_id, reply=reply)
 
 
 async def generate_block_supplement(

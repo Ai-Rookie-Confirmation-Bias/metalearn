@@ -5,7 +5,7 @@ import uuid
 
 from datetime import datetime
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from app.features.curriculum.models import Chapter, Section
@@ -13,13 +13,49 @@ from app.features.learning.models import (
     Attempt,
     ConceptMastery,
     Enrollment,
+    LearningCursor,
     SectionProgress,
 )
+from app.features.materials.models import Document
 from app.features.seed.models import Concept, Course
 
 
 def get_course(db: Session, course_id: uuid.UUID) -> Course | None:
     return db.get(Course, course_id)
+
+
+def delete_course_deep(db: Session, course: Course) -> None:
+    """코스와 학습 이력 전부 삭제(커밋은 호출자).
+
+    NO ACTION FK는 PostgreSQL에서 **즉시 검사**라(DEFERRABLE 아님) 캐스케이드에
+    맡기면 순서가 어긋난다 — courses 삭제가 concepts로 캐스케이드될 때 sections/
+    blocks(concept_id NO ACTION)가 아직 살아 있어 FK 위반(실측, ORM·Core 동일).
+    그래서 참조 방향의 역순으로 명시 삭제한다:
+      ① 학습 이력(attempts·mastery·progress·enrollment·cursor)
+      ② chapters(→ sections → blocks 캐스케이드) — concepts 참조자 제거
+      ③ courses(→ concepts·documents·diagnostic_sessions 캐스케이드)
+    """
+    concept_ids = select(Concept.id).where(Concept.course_id == course.id)
+    section_ids = (
+        select(Section.id)
+        .join(Chapter, Section.chapter_id == Chapter.id)
+        .where(Chapter.course_id == course.id)
+    )
+    db.execute(delete(Attempt).where(Attempt.concept_id.in_(concept_ids)))
+    db.execute(
+        delete(ConceptMastery).where(ConceptMastery.concept_id.in_(concept_ids))
+    )
+    db.execute(
+        delete(SectionProgress).where(SectionProgress.section_id.in_(section_ids))
+    )
+    db.execute(delete(Enrollment).where(Enrollment.course_id == course.id))
+    db.execute(delete(LearningCursor).where(LearningCursor.course_id == course.id))
+    db.execute(delete(Chapter).where(Chapter.course_id == course.id))
+    doc_id = course.document_id  # 코스 삭제 전에 확보(legacy 1:1 원본 문서)
+    db.execute(delete(Course).where(Course.id == course.id))
+    # documents.course_id(1:N)는 CASCADE로 함께 지워지지만, course.document_id로만
+    # 연결된 legacy 문서는 course_id가 NULL이라 남는다 — 고아 방지 명시 삭제(멱등).
+    db.execute(delete(Document).where(Document.id == doc_id))
 
 
 def get_course_chapters(db: Session, course_id: uuid.UUID) -> list[Chapter]:

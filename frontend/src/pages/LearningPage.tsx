@@ -8,7 +8,9 @@ import {
   LockKeyIcon,
   CheckCircleIcon,
   ListIcon,
+  RobotIcon,
   SparkleIcon,
+  XIcon,
 } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
 
@@ -46,8 +48,11 @@ export function LearningPage() {
 
   // 휘발성 UI(현재 보고 있는 절)만 클라 상태. 진행/완료/잠금은 전부 서버(트리) 미러.
   const [currentSectionId, setCurrentSectionId] = useState<string | null>(null);
-  // 몰입 뷰어 — 좌(커리큘럼)·우(AI튜터) 패널을 숨기고 본문에만 집중.
+  // 몰입 뷰어 — 좌(커리큘럼) 패널을 숨기고 본문에만 집중.
   const [immersive, setImmersive] = useState(false);
+  // AI 튜터 — 기본은 닫힘(FAB). 학습이 주인공, 튜터는 필요할 때만(정답 자판기 방지).
+  const [tutorOpen, setTutorOpen] = useState(false);
+  const [tutorUnread, setTutorUnread] = useState(false);
   // 살아있는 커리큘럼 신호(서버 attempt 응답) — 원인 국소화·선행 삽입·복귀 표면화
   const [signal, setSignal] = useState<AttemptResponse | null>(null);
   // 오답 맞춤 보충(재설명) — nextAction=supplement 시 자동 요청, AI튜터 패널에 표시
@@ -63,6 +68,11 @@ export function LearningPage() {
     setSignal(null);
     setSupplement({ status: "idle" });
   }, [courseId]);
+
+  // 오답 재설명이 도착했는데 패널이 닫혀 있으면 FAB에 알림 점 — 말없이 사라지지 않게
+  useEffect(() => {
+    if (supplement.status !== "idle" && !tutorOpen) setTutorUnread(true);
+  }, [supplement.status, tutorOpen]);
 
   // 시작 절 초기화(첫 미완료부터) — 진행도는 저장하지 않고 트리에서 읽는다.
   useEffect(() => {
@@ -449,8 +459,34 @@ export function LearningPage() {
           </div>
         </main>
 
-        {!immersive && <AiTutorPanel signal={signal} supplement={supplement} />}
       </div>
+
+      {/* AI 튜터 — 우측 하단 FAB + 플로팅 패널. 항상 떠 있지 않는다:
+          학습 칸을 넓게 쓰고, 튜터 의존(정답 자판기화)을 구조적으로 줄인다. */}
+      {tutorOpen && (
+        <div className="fixed bottom-24 right-6 z-50 flex h-[min(620px,calc(100vh-130px))] w-[380px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-2xl">
+          <AiTutorPanel
+            sectionId={currentSectionId}
+            signal={signal}
+            supplement={supplement}
+            onClose={() => setTutorOpen(false)}
+          />
+        </div>
+      )}
+      <button
+        type="button"
+        onClick={() => {
+          setTutorOpen((o) => !o);
+          setTutorUnread(false);
+        }}
+        aria-label={tutorOpen ? "AI 튜터 닫기" : "AI 튜터 열기"}
+        className="fixed bottom-6 right-6 z-50 flex h-14 w-14 items-center justify-center rounded-full bg-accent text-2xl text-white shadow-lg transition-transform hover:scale-105"
+      >
+        {tutorOpen ? <XIcon weight="bold" /> : <RobotIcon weight="fill" />}
+        {!tutorOpen && tutorUnread && (
+          <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 animate-pulse rounded-full border-2 border-white bg-[#ef4444]" />
+        )}
+      </button>
     </div>
   );
 }

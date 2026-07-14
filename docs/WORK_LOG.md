@@ -81,6 +81,37 @@
 
 ---
 
+## 2026-07-14 (세션24) — Claude CLI — AI 튜터 채팅(FAB화) + 코스 삭제 + 코스별 라우팅 + 트라이얼 포트
+
+### 사용자 요청
+1. 학습 화면에서 코스 여러 개일 때 courses[0]만 보는 문제 해결.
+2. AI 튜터 채팅 구현(전에 구 세션 아키텍처에 있다 v2 재구축 때 제거된 335줄 tutor.py 확인) + **우측 고정 패널 → 우하단 FAB 토글로**: "학습 칸이 좁고, 튜터를 많이 쓰면 서비스 목적(인출)에 안 좋다".
+3. 책장에서 코스 삭제.
+4. (버그) library 빈 화면 + "업로드 실패: Network Error".
+
+### 추론 / 결정
+- **튜터 = 정답 자판기 방지 설계**: 서버 프롬프트가 ① 절 근거 접지(발췌 밖 지어내기 금지) ② **정답 비유출**(퀴즈 정답 직접 요구 시 단계적 힌트·역질문) 강제 — `tutor.py` 순수 계층. 대화는 서버 무저장(history 왕복, supplement의 비영속 원칙). UI도 같은 철학: 항상 떠 있지 않고 **FAB 토글**, supplement 도착 시 알림 점만.
+- **Network Error 원인 = Windows(Hyper-V) excludedportrange**: `wsl --shutdown` 후 57981–58080 대역이 예약돼 브라우저→localhost:58001만 거부(**WSL 내부 curl은 정상이라 은폐**). 트라이얼 backend 포트 58001→**48001**(<49152, 재발 불가)로 이동.
+- **코스 삭제**: NO ACTION FK는 PG에서 **즉시 검사**(DEFERRABLE 아님)라 CASCADE에 못 맡김(ORM·Core 단문 모두 FK 위반 실측) → 역순 명시 삭제: 학습이력(attempts·mastery·progress·enrollment·cursor) → chapters(→sections→blocks) → courses(→concepts·documents) → legacy 1:1 document 고아 정리.
+
+### 한 일
+- 라우팅: `/learning/:courseId` + 책장 링크 코스별 + 코스 전환 시 절 선택·신호 리셋(remount 없음 대응) — 이슈 #4 해결 (`7c62754`).
+- 트라이얼 포트 48001 (`ffd6888`) + 메모리/주석에 excludedportrange 함정 기록.
+- 튜터 채팅: `tutor.py`(신규) + `POST /tutor/chat` + 프론트 `tutorChat.ts`·AiTutorPanel 채팅 배선(Enter, IME 조합 가드, 절 변경 리셋, 자동 스크롤) + LearningPage FAB·플로팅 패널·unread 점. 고정 340px 사이드바 제거 → 본문 폭 확대.
+- 코스 삭제: `DELETE /courses/:id`(소유자만, `delete_course_deep`) + 책장 카드 호버 휴지통(confirm 후 실행, 생성 중 드래프트 제외) + 목록 invalidate.
+
+### 검증 (실 스택·실 Solar)
+- 튜터: 개념 질문 → 근거 접지+성향 반영 답변 ✅ / **"정답 그냥 알려줘" → 정답 단어 없이 소크라틱 역질문으로 유도** ✅
+- 코스 삭제: NO ACTION 전 경로(attempts·mastery·progress·enroll·cursor·blocks·concepts·documents) 커버한 합성 코스로 204 + 잔여 0행 ✅ / 타 유저 삭제 시도 404(소유권 가드) ✅
+- Windows에서 backend(48001)·frontend(55173) 모두 200, tsc 0, backend import 클린.
+
+### 다음 액션
+1. 실 코스에서 table/diagram/구조화 concept + 튜터 FAB 육안 확인(사용자).
+2. 튜터 응답 톤 다듬기("이 절의 범위를 벗어난다" 직역투 — 프롬프트 문구 조정 후보).
+3. Layer 2 조사(Document Parse figure 좌표) + 기존 "1블록 절" 실태 파악(세션23 잔여).
+
+---
+
 ## 2026-07-14 (세션23) — Claude CLI — Layer 1: diagram(Mermaid) 블록 + LLM 응답 붕괴 버그 발굴·수리
 
 ### 사용자 요청
