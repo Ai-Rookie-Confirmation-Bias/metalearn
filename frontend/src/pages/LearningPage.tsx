@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { clsx } from "clsx";
 import {
   ArrowLeftIcon,
@@ -74,14 +74,21 @@ export function LearningPage() {
     if (supplement.status !== "idle" && !tutorOpen) setTutorUnread(true);
   }, [supplement.status, tutorOpen]);
 
-  // 시작 절 초기화(첫 미완료부터) — 진행도는 저장하지 않고 트리에서 읽는다.
+  // 시작 절 초기화 — ?section=(지식 지도 딥링크)이 있으면 그 절, 없으면 첫 미완료.
+  const [searchParams] = useSearchParams();
+  const sectionParam = searchParams.get("section");
   useEffect(() => {
     if (!tree) return;
     const secs = tree.chapters.flatMap((c) => c.sections);
     setCurrentSectionId(
-      (cur) => cur ?? secs.find((s) => s.progressStatus !== "completed")?.id ?? secs[0]?.id ?? null,
+      (cur) =>
+        cur ??
+        (sectionParam && secs.some((s) => s.id === sectionParam) ? sectionParam : null) ??
+        secs.find((s) => s.progressStatus !== "completed")?.id ??
+        secs[0]?.id ??
+        null,
     );
-  }, [tree]);
+  }, [tree, sectionParam]);
 
   const { data: sectionData, isLoading: blocksLoading } = useSectionBlocks(
     currentSectionId ?? undefined,

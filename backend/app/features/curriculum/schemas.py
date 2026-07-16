@@ -85,10 +85,21 @@ class ConceptMasteryItem(_CamelModel):
     explanation_score: float = 0.0
     confidence: str | None = None
     next_due_at: str | None = None
+    # 지식 지도(B7): 이 개념이 커리큘럼 절의 대표 개념이면 그 절 id —
+    # 지도는 대표 개념만 노드로 그리고, 클릭 시 학습 이동에 쓴다.
+    section_id: str | None = None
+
+
+class ConceptEdgeItem(_CamelModel):
+    """개념 간 관계(지식 지도 엣지). from=학습대상 → to=선행 (parsing 규약)."""
+
+    from_concept_id: str
+    to_concept_id: str
+    kind: str  # prerequisite | contains
 
 
 class MasteryResponse(_CamelModel):
-    """GET /courses/:id/mastery → 메타인지 분석용 개념별 숙련도 + 요약."""
+    """GET /courses/:id/mastery → 메타인지 분석용 개념별 숙련도 + 요약 + 관계."""
 
     course_id: str
     mastered: int = 0
@@ -96,3 +107,4 @@ class MasteryResponse(_CamelModel):
     todo: int = 0
     locked: int = 0
     concepts: list[ConceptMasteryItem] = Field(default_factory=list)
+    edges: list[ConceptEdgeItem] = Field(default_factory=list)

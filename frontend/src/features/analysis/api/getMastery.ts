@@ -11,6 +11,14 @@ export type ConceptMasteryItem = {
   explanationScore: number;
   confidence: string | null;
   nextDueAt: string | null;
+  // 커리큘럼 절의 대표 개념이면 그 절 id — 지식 지도 노드 필터 + 클릭→학습 이동
+  sectionId: string | null;
+};
+// 개념 간 관계(지식 지도 엣지). from=학습대상 → to=선행 (parsing 규약).
+export type ConceptEdgeItem = {
+  fromConceptId: string;
+  toConceptId: string;
+  kind: "prerequisite" | "contains" | string;
 };
 export type MasteryResponse = {
   courseId: string;
@@ -19,6 +27,7 @@ export type MasteryResponse = {
   todo: number;
   locked: number;
   concepts: ConceptMasteryItem[];
+  edges: ConceptEdgeItem[];
 };
 
 export async function getMastery(courseId: string): Promise<MasteryResponse> {

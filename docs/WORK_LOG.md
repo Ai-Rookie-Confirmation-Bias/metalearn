@@ -81,6 +81,32 @@
 
 ---
 
+## 2026-07-16 (세션28) — Claude CLI — B7: 지식 지도(학습 캔버스) — 개념 DAG + mastery 시각화
+
+### 사용자 요청
+- B7(학습캔버스/로드맵 시각화) 착수 — 본선 제출까지 ~1달, B6(온디바이스)보다 먼저.
+
+### 추론 / 결정
+- **노드 = 커리큘럼 대표 개념(절 연결)만** — 전체 개념(수백)을 다 그리면 지도가 아니라 안개. 실측: 데이터통신 코스 212개념 중 대표 34개·그 사이 엣지 32개 = 지도 밀도 적정.
+- **열 배치 = depth가 아니라 선행관계 위상 레이어**(longest-path) — 대표 개념의 depth 분포가 0~1로 좁아 depth 열 불가(실측). 같은 열 안은 barycenter 1패스로 교차 감소. 외부 그래프 라이브러리 0(결정적 레이아웃·번들 비용 없음), 사이클 가드 포함.
+- 제안서 갭 (b) "학습캔버스·로드맵 시각화 미이식(지식그래프 평탄화)" 해소 시작.
+
+### 한 일
+- 백엔드(additive): `GET /courses/:id/mastery`에 **edges[]**(prerequisite/contains, 코스 개념 사이만) + 개념별 **sectionId**(대표 개념 식별) — `get_edges_among`/`get_section_map`.
+- 프론트: `KnowledgeMap.tsx`(순수 SVG) — mastery 4색 노드(+강도 미니바), 선행=실선 화살표·contains=옅은 점선, 범례, 스크롤 컨테이너. **노드 클릭 → `/learning/:courseId?section=<절>` 직행**.
+- `LearningPage`가 `?section=` 딥링크 지원(트리 검증 후 초기 절로 채택).
+- `AnalysisPage`: 지도 카드 통합 + **코스 선택 드롭다운**(courses[0] 고정 문제 이 페이지도 해소).
+
+### 검증
+- 실 API: concepts 212 / 대표 34 / edges 317(대표 사이 32, prerequisite+contains) ✅
+- backend import 클린, tsc 0, /analysis 200. 육안 확인은 사용자(55173/analysis).
+
+### 다음 액션
+1. 지도 육안 확인 후 다듬기(노드 겹침·긴 이름 툴팁·챕터 구분선 등 반응 보고).
+2. B6 온디바이스 통합(결선 대비) — 다음 큰 산.
+
+---
+
 ## 2026-07-16 (세션27) — Claude CLI — Layer 2: 교재 원문 그림 재사용 (image 블록)
 
 ### 사용자 요청

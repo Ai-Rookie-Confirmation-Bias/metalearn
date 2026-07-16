@@ -16,6 +16,7 @@ from app.core.deps import get_current_user_id
 from app.features.curriculum import repository as repo
 from app.features.curriculum.schemas import (
     ChapterNode,
+    ConceptEdgeItem,
     ConceptMasteryItem,
     CourseListItem,
     CourseListResponse,
@@ -91,6 +92,8 @@ def get_course_mastery(
     mmap = repo.get_mastery_map(
         db, user_id=user_id, concept_ids=[c.id for c in concepts]
     )
+    # 지식 지도(B7): 대표 개념 식별(절 매핑) + 개념 간 관계 엣지
+    section_of = repo.get_section_map(db, course_id)
     counts = {"mastered": 0, "learning": 0, "todo": 0, "locked": 0}
     items: list[ConceptMasteryItem] = []
     for c in concepts:
@@ -110,9 +113,22 @@ def get_course_mastery(
                 next_due_at=(
                     m.next_due_at.isoformat() if m and m.next_due_at else None
                 ),
+                section_id=(
+                    str(section_of[c.id]) if c.id in section_of else None
+                ),
             )
         )
-    return MasteryResponse(course_id=str(course_id), concepts=items, **counts)
+    edges = [
+        ConceptEdgeItem(
+            from_concept_id=str(e.from_concept_id),
+            to_concept_id=str(e.to_concept_id),
+            kind=e.kind,
+        )
+        for e in repo.get_edges_among(db, [c.id for c in concepts])
+    ]
+    return MasteryResponse(
+        course_id=str(course_id), concepts=items, edges=edges, **counts
+    )
 
 
 @router.get("/courses/{course_id}", response_model=CourseTreeResponse)

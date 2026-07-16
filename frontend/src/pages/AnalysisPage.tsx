@@ -1,11 +1,13 @@
+import { useState } from "react";
 import { ChartLineUpIcon } from "@phosphor-icons/react";
 import { clsx } from "clsx";
 
 import { useCourses } from "@/features/library/queries/useCourses";
 import { useMastery } from "@/features/analysis/queries/useMastery";
+import { KnowledgeMap } from "@/features/analysis/KnowledgeMap";
 import type { ConceptMasteryItem } from "@/features/analysis/api/getMastery";
 
-// 메타인지 분석 — GET /courses/:id/mastery(개념별 숙련도 + 상태별 요약).
+// 메타인지 분석 — GET /courses/:id/mastery(개념별 숙련도 + 상태별 요약 + 지식 지도).
 const STATUS: Record<
   ConceptMasteryItem["status"],
   { label: string; dot: string; text: string }
@@ -27,16 +29,33 @@ function StatTile({ label, value, color }: { label: string; value: number; color
 
 export function AnalysisPage() {
   const { data: courses } = useCourses();
-  const courseId = courses?.[0]?.id;
+  // 코스 선택 — 첫 코스 기본, 드롭다운으로 전환(courses[0] 고정 문제 방지)
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const courseId = selectedId ?? courses?.[0]?.id;
   const { data, isLoading } = useMastery(courseId);
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-12 py-12">
-      <div className="mb-10">
-        <h2 className="mb-1 text-[2rem] font-extrabold tracking-tight text-text-primary">
-          메타인지 분석
-        </h2>
-        <p className="text-text-secondary">개념별 숙련도와 취약점을 한눈에 확인하세요.</p>
+      <div className="mb-10 flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <h2 className="mb-1 text-[2rem] font-extrabold tracking-tight text-text-primary">
+            메타인지 분석
+          </h2>
+          <p className="text-text-secondary">개념별 숙련도와 취약점을 한눈에 확인하세요.</p>
+        </div>
+        {courses && courses.length > 1 && (
+          <select
+            value={courseId ?? ""}
+            onChange={(e) => setSelectedId(e.target.value)}
+            className="rounded-xl border border-border-primary bg-white px-4 py-2.5 text-[0.9rem] font-semibold text-text-primary outline-none focus:border-accent"
+          >
+            {courses.map((c) => (
+              <option key={c.id} value={c.id}>
+                {c.title}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
 
       {isLoading || !data ? (
@@ -54,6 +73,13 @@ export function AnalysisPage() {
             <StatTile label="예정" value={data.todo} color="text-[#b45309]" />
             <StatTile label="잠금" value={data.locked} color="text-text-tertiary" />
           </div>
+
+          {/* 지식 지도(학습 캔버스) — 대표 개념 DAG + mastery 색, 클릭=그 절로 */}
+          {courseId && (
+            <div className="mb-8">
+              <KnowledgeMap courseId={courseId} concepts={data.concepts} edges={data.edges ?? []} />
+            </div>
+          )}
 
           <div className="overflow-hidden rounded-2xl border border-border-primary bg-white">
             <div className="border-b border-border-primary px-6 py-4 text-[0.9rem] font-bold text-text-secondary">

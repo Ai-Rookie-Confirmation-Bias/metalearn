@@ -229,6 +229,30 @@ def prereq_triggers_by_chapter(
     return out
 
 
+# ── 지식 지도 (B7) ───────────────────────────────────────────────────────────
+def get_section_map(db: Session, course_id: uuid.UUID) -> dict[uuid.UUID, uuid.UUID]:
+    """개념 → 그 개념이 대표인 절 id (커리큘럼 대표 개념 식별)."""
+    stmt = (
+        select(Section.concept_id, Section.id)
+        .join(Chapter, Section.chapter_id == Chapter.id)
+        .where(Chapter.course_id == course_id, Section.concept_id.is_not(None))
+    )
+    return {cid: sid for cid, sid in db.execute(stmt)}
+
+
+def get_edges_among(db: Session, concept_ids: list[uuid.UUID]) -> list:
+    """주어진 개념들 사이의 관계 엣지(prerequisite/contains)."""
+    if not concept_ids:
+        return []
+    from app.features.seed.models import ConceptEdge
+
+    stmt = select(ConceptEdge).where(
+        ConceptEdge.from_concept_id.in_(concept_ids),
+        ConceptEdge.to_concept_id.in_(concept_ids),
+    )
+    return list(db.scalars(stmt))
+
+
 # ── 개념별 숙련도 (GET /courses/:id/mastery) ─────────────────────────────────
 def get_concepts_of_course(db: Session, course_id: uuid.UUID) -> list[Concept]:
     stmt = (
