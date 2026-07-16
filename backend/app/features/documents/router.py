@@ -15,6 +15,7 @@ from fastapi import (
     File,
     Form,
     HTTPException,
+    Response,
     UploadFile,
 )
 from sqlalchemy.orm import Session
@@ -181,3 +182,19 @@ def list_courses(db: Session = Depends(get_db)) -> list[CourseSummary]:
 @router.get("/courses/{course_id}", response_model=CourseDetail)
 def get_course(course_id: uuid.UUID, db: Session = Depends(get_db)) -> CourseDetail:
     return DocumentService(db).get_course_detail(course_id)
+
+
+@router.get("/figures/{figure_id}")
+def get_figure(figure_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    """교재 그림 서빙(Layer 2) — image 블록의 <img src>가 이 URL을 문다.
+
+    바이트 불변 콘텐츠라 브라우저 캐시 허용(절 재방문 시 재다운로드 방지).
+    """
+    fig = DocumentService(db).repo.get_figure(figure_id)
+    if fig is None:
+        raise HTTPException(status_code=404, detail="figure not found")
+    return Response(
+        content=fig.data,
+        media_type=fig.mime,
+        headers={"Cache-Control": "private, max-age=86400"},
+    )

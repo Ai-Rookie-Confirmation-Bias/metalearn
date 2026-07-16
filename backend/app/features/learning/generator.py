@@ -610,7 +610,9 @@ async def _drop_unsolvable_cloze(
     return [d for i, d in enumerate(kept) if i not in dropped]
 
 
-_EXPLANATION_TYPES = ("concept", "analogy", "table", "diagram")
+# image(교재 그림)는 LLM이 생성하지 않고 서버(service)가 부착하지만, 재배열에선
+# 설명 자료로 취급한다(문제·explainBack보다 앞).
+_EXPLANATION_TYPES = ("concept", "analogy", "table", "diagram", "image")
 
 # 페어 재생성 상한 — 조각 수만큼 콜이 늘지 않게(생성 1콜 + faithfulness/cloze 검증 콜)
 _PAIR_REGEN_LIMIT = 3

@@ -27,6 +27,7 @@ from app.core.llm.factory import get_llm_client
 from app.features.learning import repository as repo
 from app.features.learning.bkt import estimate_p_known, p_l0_from_prereqs
 from app.features.learning.generator import (
+    BlockDraft,
     GenerationInput,
     SupplementInput,
     generate_retrieval_blocks,
@@ -231,6 +232,47 @@ async def _prepare_generation_input(
     )
 
 
+def _attach_section_figures(
+    db: Session, drafts: list[BlockDraft], inp: GenerationInput
+) -> list[BlockDraft]:
+    """교재 그림(Layer 2)을 절 블록에 부착 — 근거 청크 페이지 매칭, 절당 최대 2장.
+
+    LLM 생성이 아니라 원문 크롭(doc_figures) 그대로라 게이트 없이 verified —
+    그림 자체가 근거("근거 없이 지어내지 않는다"와 정합). 첫 concept 조각 바로
+    뒤에 넣는다(원문 그림이 설명을 보강하는 위치).
+    """
+    if not drafts or not inp.chunks:
+        return drafts
+    figures = repo.get_figures_for_chunks(
+        db, chunk_ids=[c.id for c in inp.chunks], limit=2
+    )
+    if not figures:
+        return drafts
+    image_drafts = [
+        BlockDraft(
+            type="image",
+            source=ContentSource.BOOK.value,
+            tracked=False,
+            verified=True,
+            data={
+                "figureId": str(f.id),
+                "page": f.page,
+                **({"caption": f.caption} if f.caption else {}),
+            },
+            meta={"difficulty": "mid", "version": 1, "order": 0},
+            source_chunk_ids=[c.id for c in inp.chunks],
+            external_ref_ids=[],
+        )
+        for f in figures
+    ]
+    # 첫 concept 바로 뒤 삽입(없으면 맨 앞) → meta.order 재스탬프
+    at = next((i + 1 for i, d in enumerate(drafts) if d.type == "concept"), 0)
+    out = drafts[:at] + image_drafts + drafts[at:]
+    for i, d in enumerate(out):
+        d.meta["order"] = i
+    return out
+
+
 async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> None:
     """백그라운드 태스크 본체. 자체 세션을 열고 끝나면 ready/failed 마킹.
 
@@ -321,14 +363,15 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
             return_exceptions=True,
         )
 
-        # [저장] 직렬 저장
+        # [저장] 직렬 저장 (+ Layer 2: 교재 그림 부착 — DB 조회라 직렬 구간에서)
         total = 0
-        for (section, _), drafts in zip(plans, results):
+        for (section, inp), drafts in zip(plans, results):
             if isinstance(drafts, BaseException):
                 logger.error(
                     "절 생성 실패 — 건너뜀: section=%s", section.id, exc_info=drafts
                 )
                 continue
+            drafts = _attach_section_figures(db, drafts, inp)
             repo.replace_section_blocks(
                 db, section_id=section.id, concept_id=section.concept_id, drafts=drafts
             )

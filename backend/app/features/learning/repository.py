@@ -13,7 +13,7 @@ import uuid
 
 from datetime import datetime, timezone
 
-from sqlalchemy import func, select, update
+from sqlalchemy import and_, func, select, update
 from sqlalchemy.orm import Session
 
 from app.core.enums import ChapterOrigin, EdgeKind, GenStatus, MasteryStatus
@@ -28,7 +28,7 @@ from app.features.learning.models import (
     SectionProgress,
     StudyNote,
 )
-from app.features.materials.models import DocChunk, Document
+from app.features.materials.models import DocChunk, DocFigure, Document
 from app.features.seed.models import Concept, ConceptEdge, Course, ExternalRef
 
 
@@ -59,6 +59,35 @@ def get_chapter_sections(db: Session, chapter_id: uuid.UUID) -> list[Section]:
         select(Section)
         .where(Section.chapter_id == chapter_id)
         .order_by(Section.order_index)
+    )
+    return list(db.scalars(stmt))
+
+
+# ── 교재 그림 (Layer 2, mig 0022) ────────────────────────────────────────────
+def get_figures_for_chunks(
+    db: Session, *, chunk_ids: list[uuid.UUID], limit: int = 2
+) -> list[DocFigure]:
+    """근거 청크들의 페이지 범위와 겹치는 교재 그림을 찾는다(절당 최대 limit).
+
+    같은 문서 + 청크의 page_from~page_to 안의 페이지 = 그 개념을 설명하던
+    지면의 그림. 페이지 메타 없는 청크(마크다운 폴백)는 매칭에서 빠진다.
+    """
+    if not chunk_ids:
+        return []
+    stmt = (
+        select(DocFigure)
+        .join(
+            DocChunk,
+            and_(
+                DocFigure.document_id == DocChunk.document_id,
+                DocFigure.page >= DocChunk.page_from,
+                DocFigure.page <= DocChunk.page_to,
+            ),
+        )
+        .where(DocChunk.id.in_(chunk_ids))
+        .distinct()
+        .order_by(DocFigure.page, DocFigure.element_id)
+        .limit(limit)
     )
     return list(db.scalars(stmt))
 

@@ -8,7 +8,7 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session, aliased, selectinload
 
-from app.features.materials.models import DocChunk, Document
+from app.features.materials.models import DocChunk, DocFigure, Document
 from app.features.seed.models import Concept, ConceptEdge, Course
 
 
@@ -103,6 +103,32 @@ class DocumentRepository:
             rows.append(row)
         self.db.flush()
         return rows
+
+    def add_figures(self, *, document_id: uuid.UUID, figures: list[dict]) -> int:
+        """DP 크롭 이미지(figure/chart)를 doc_figures로 영속화(Layer 2).
+
+        figures: [{"page","element_id","category","mime","data"(bytes)}].
+        같은 문서 재섭취 시 중복 방지를 위해 기존 행을 비우고 다시 넣는다(멱등).
+        """
+        from sqlalchemy import delete
+
+        self.db.execute(delete(DocFigure).where(DocFigure.document_id == document_id))
+        for f in figures:
+            self.db.add(
+                DocFigure(
+                    document_id=document_id,
+                    page=f["page"],
+                    element_id=f["element_id"],
+                    category=f.get("category") or "figure",
+                    mime=f.get("mime") or "image/png",
+                    data=f["data"],
+                )
+            )
+        self.db.flush()
+        return len(figures)
+
+    def get_figure(self, figure_id: uuid.UUID) -> DocFigure | None:
+        return self.db.get(DocFigure, figure_id)
 
     def add_concept(
         self,

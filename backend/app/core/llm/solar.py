@@ -192,6 +192,10 @@ class SolarClient(LLMClient):
                 "model": settings.DOCUMENT_PARSE_MODEL,
                 "output_formats": '["markdown"]',
                 "ocr": "auto",
+                # 교재 그림·도표를 크롭 이미지(base64)로 함께 받는다(Layer 2 —
+                # 원문 이미지 재사용: AI가 그리는 게 아니라 원문에서 추출, 환각 0).
+                # 실증(2026-07-16): figure 요소에 base64_encoding 필드로 옴.
+                "base64_encoding": '["figure", "chart"]',
             },
             timeout=_PARSE_TIMEOUT,
         )

@@ -4,6 +4,7 @@ import type { LearningBlock, OnAnswer } from "./types";
 import { BlockShell } from "./BlockShell";
 import { ConceptBlock } from "./ConceptBlock";
 import { TableBlock } from "./TableBlock";
+import { ImageBlock } from "./ImageBlock";
 import { DiagramBlock } from "./DiagramBlock";
 import { ClozeBlock } from "./ClozeBlock";
 import { McqBlock } from "./McqBlock";
@@ -18,6 +19,8 @@ function renderBody(block: LearningBlock, onAnswer: OnAnswer) {
       return <ConceptBlock data={block.data} />;
     case "table": // 읽기 전용(tracked 아님) — 비교표
       return <TableBlock data={block.data} />;
+    case "image": // 읽기 전용 — 교재 원문 그림(환각 0)
+      return <ImageBlock data={block.data} />;
     case "diagram": // 읽기 전용 — 서버 조립 mermaid 렌더 + 구조화 폴백
       return <DiagramBlock blockId={block.id} data={block.data} />;
     case "analogy": // 읽기 전용(tracked 아님) — prereq 절이 비유만 있는 경우가 있어 폴백이 뜨던 타입

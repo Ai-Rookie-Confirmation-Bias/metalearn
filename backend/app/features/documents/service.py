@@ -11,6 +11,7 @@ ISSUE-008 설계 ("넓이는 미리, 깊이는 JIT"):
 (ISSUE-015 비대칭 임베딩), 개념 임베딩은 query 모델 유지.
 """
 import asyncio
+import base64
 import logging
 import re
 import uuid
@@ -136,6 +137,39 @@ def _normalize_name(name: str) -> str:
     return re.sub(r"\s+", "", base).lower()
 
 
+def _extract_figures(elements: list[dict]) -> list[dict]:
+    """DP elements에서 figure/chart 크롭(base64)을 뽑아 저장용 dict로.
+
+    **부수효과**: 각 element의 base64_encoding 키를 제거한다(pop) — 이미지는
+    doc_figures가 정본이고, elements는 refined_elements(JSONB)로 저장되므로
+    수 MB짜리 base64를 남기면 안 된다. mime은 매직 바이트로 판별.
+    """
+    out: list[dict] = []
+    for e in elements:
+        if not isinstance(e, dict):
+            continue
+        b64 = e.pop("base64_encoding", None)
+        if not b64 or e.get("category") not in ("figure", "chart"):
+            continue
+        try:
+            blob = base64.b64decode(b64)
+        except Exception:  # noqa: BLE001 — 깨진 이미지는 버림
+            continue
+        if len(blob) < 200:  # 아이콘·불릿 수준의 초소형은 노이즈
+            continue
+        mime = "image/jpeg" if blob[:3] == b"\xff\xd8\xff" else "image/png"
+        out.append(
+            {
+                "page": int(e.get("page") or 0),
+                "element_id": int(e.get("id") or 0),
+                "category": e.get("category"),
+                "mime": mime,
+                "data": blob,
+            }
+        )
+    return out
+
+
 class DocumentService:
     def __init__(self, db: Session) -> None:
         self.db = db
@@ -219,6 +253,14 @@ class DocumentService:
             raise ValueError("Document Parse 결과가 비어 있습니다.")
         document.raw_text = parsed
         self.db.commit()
+
+        # Layer 2: DP가 크롭해 준 그림(base64)을 영속화하고 elements에서는
+        # 스트립한다(refined_elements JSONB 비대화 방지 — 이미지는 doc_figures가 정본).
+        figures = _extract_figures(elements)
+        if figures:
+            n = self.repo.add_figures(document_id=document.id, figures=figures)
+            self.db.commit()
+            _log.info("교재 그림 저장: %d개 (%s)", n, filename)
 
         stage("refining")
         refined, profile = await refinement.refine(elements)

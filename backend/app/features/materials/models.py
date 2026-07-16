@@ -9,7 +9,16 @@ from datetime import datetime
 from typing import Any
 
 from pgvector.sqlalchemy import HALFVEC
-from sqlalchemy import DateTime, ForeignKey, Integer, SmallInteger, String, Text, func
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    SmallInteger,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -95,3 +104,33 @@ class DocChunk(Base):
     page_to: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     document: Mapped["Document"] = relationship(back_populates="chunks")
+
+
+class DocFigure(Base):
+    """교재 그림·도표 크롭(mig 0022, Layer 2 — 원문 이미지 재사용).
+
+    Document Parse의 base64_encoding으로 받은 figure/chart 크롭 이미지.
+    AI 생성이 아니라 원문 추출 — 환각 0, 그림 자체가 근거. 절 생성 시 근거
+    청크의 페이지와 매칭해 image 블록으로 붙는다.
+    """
+
+    __tablename__ = "doc_figures"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    document_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    page: Mapped[int] = mapped_column(Integer, nullable=False)
+    element_id: Mapped[int] = mapped_column(Integer, nullable=False)
+    category: Mapped[str] = mapped_column(
+        String(32), nullable=False, server_default="figure"
+    )
+    caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    mime: Mapped[str] = mapped_column(
+        String(64), nullable=False, server_default="image/png"
+    )
+    data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)

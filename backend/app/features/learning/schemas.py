@@ -79,6 +79,17 @@ class AnalogyData(_CamelModel):
     text: str
 
 
+class ImageData(_CamelModel):
+    """① 교재 그림 블록(Layer 2). 추적 없음. LLM 생성이 아니라 서버가
+    doc_figures(원문 크롭)를 절 근거 페이지와 매칭해 붙인다 — 환각 0.
+    프론트는 figureId로 GET /api/documents/figures/:id를 <img src>에 문다.
+    """
+
+    figure_id: str
+    page: int | None = None
+    caption: str | None = None
+
+
 class TableData(_CamelModel):
     """① 비교표 블록. 추적 없음. LAN/WAN, OSI 계층처럼 나열·비교가
     문단보다 나은 개념용 — LLM은 {columns, rows} JSON만 뽑고 표는 렌더러가 그린다.

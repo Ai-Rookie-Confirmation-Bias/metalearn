@@ -41,6 +41,15 @@ export type TableBlockData = {
   caption?: string;
 };
 
+// ① 교재 그림 — 서버가 원문 크롭(doc_figures)을 근거 페이지와 매칭해 부착(환각 0).
+// 렌더러는 figureId로 GET /api/documents/figures/:id를 <img src>에 문다.
+export type ImageBlockData = {
+  title?: string;
+  figureId: string;
+  page?: number;
+  caption?: string;
+};
+
 // ① 다이어그램 — LLM은 그래프 JSON만, mermaid 코드는 서버가 결정적 조립.
 // 렌더 실패 시 nodes/edges 구조화 데이터로 폴백 리스트를 그린다(빈 화면 금지).
 export type DiagramNode = { id: string; label: string };
@@ -80,6 +89,7 @@ export type AnalogyBlockData = { title?: string; label: string; text: string };
 export type LearningBlock =
   | Envelope<"concept", ConceptBlockData>
   | Envelope<"table", TableBlockData>
+  | Envelope<"image", ImageBlockData>
   | Envelope<"diagram", DiagramBlockData>
   | Envelope<"cloze", ClozeBlockData>
   | Envelope<"mcq", McqBlockData>

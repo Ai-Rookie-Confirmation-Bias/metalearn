@@ -81,6 +81,35 @@
 
 ---
 
+## 2026-07-16 (세션27) — Claude CLI — Layer 2: 교재 원문 그림 재사용 (image 블록)
+
+### 사용자 요청
+- B단계 진행 — B5(Layer 2: Document Parse figure 조사 → 원문 이미지 크롭 재사용)부터.
+
+### 조사 결과 (착수 근거)
+- 기존 저장 elements에 **figure 63개 + 상대좌표(0~1) 4점** 있음. 단 원본 PDF 미보관(storage_url 전부 NULL)이라 좌표 크롭은 기존 문서에 불가.
+- **실증**: DP `base64_encoding: ["figure","chart"]` 파라미터 → figure 요소에 **크롭 이미지 base64가 직접 옴**(합성 PDF, 13.5KB). PDF 렌더링 의존성 0인 최적 경로 확정. 신규 업로드부터 적용(기존 문서는 재업로드 시 소급).
+
+### 한 일
+- `solar.parse_document`에 base64_encoding 요청 추가.
+- **doc_figures 테이블(mig 0022)**: document FK CASCADE, page·element_id·category·mime·bytea. ingest 파싱 직후 `_extract_figures`로 저장하고 **elements에서 base64 스트립**(refined_elements JSONB 비대화 방지, 200B 미만 노이즈 컷, 매직바이트로 mime 판별). 재섭취 멱등(문서 단위 delete-insert).
+- 서빙: `GET /api/documents/figures/:id`(bytes + Cache-Control 1일).
+- **image 블록**: 서버(learning service)가 절 저장 직전 근거 청크의 page_from~to와 doc_figures를 매칭해 **첫 concept 뒤에 최대 2장 부착**(`_attach_section_figures`). LLM 무관·원문 그대로라 게이트 없이 verified(그림 자체가 근거). `_EXPLANATION_TYPES`에 image 포함(재배열 시 설명 취급).
+- 프론트: `ImageBlockData`+`ImageBlock.tsx`(lazy img, 실패 폴백, 캡션·페이지 표기)+registry.
+
+### 검증 (실 DP·실 파이프라인)
+- 합성 figure PDF 업로드 → ingest → **doc_figures 1행(JPEG 10KB)** + refined_elements에 base64 잔존 0 ✅
+- figure 서빙 200/image/jpeg ✅
+- 챕터 JIT 생성 → 절 서빙: `concept → image(figureId 정확) → analogy → table → diagram → cloze → explainBack` — 부착 위치·페어 재배열 공존 ✅
+- 정리: 검증 코스 3개를 **코스 삭제 API로 제거(204)** → doc_figures 캐스케이드 0행 ✅ (삭제 기능 도그푸딩)
+- 참고: DP figure 분류는 레이아웃 의존 편차 있음(작은 도형은 paragraph 처리) — 실교재 그림은 크고 캡션 동반이라 분류 잘 됨(기존 교재에서 63개 확인).
+
+### 다음 액션
+1. 실교재(ch02 OSI 등) 재업로드로 실그림 육안 확인 — 기존 문서 소급은 재업로드 필요.
+2. 남은 B: B6 온디바이스 통합(결선 대비) · B7 학습캔버스. C 백로그.
+
+---
+
 ## 2026-07-14 (세션26) — Claude CLI — A단계 후속 4종: 페어 재생성 + 요약 노트 실저장 + 튜터 접지 강화 + WAN 절 수리
 
 ### 사용자 요청
