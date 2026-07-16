@@ -30,6 +30,8 @@ from app.features.learning.schemas import (
     PlacementResponse,
     NoteResponse,
     NoteSaveRequest,
+    OfflinePackBlock,
+    OfflinePackResponse,
     ReadCompleteResponse,
     SectionBlocksResponse,
     SupplementResponse,
@@ -74,6 +76,42 @@ async def post_block_supplement(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/sections/{section_id}/offline-pack", response_model=OfflinePackResponse)
+def get_offline_pack(
+    section_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> OfflinePackResponse:
+    """오프라인 채점 팩 — **정답 포함**(스트립 안 함). 온디바이스 이중구조(제안서 ④).
+
+    소비자는 사용자 기기의 로컬 엔진 어댑터(ondevice/adapter.py)다: 온라인일 때
+    미리 받아 두고, 서버가 안 닿으면 로컬 sLLM(EXAONE 1.2B)이 채점을 이어받는다.
+    브라우저 학습 UI는 이 경로를 쓰지 않는다(치팅 방지 스트립은 GET /sections/:id 그대로).
+    """
+    section = repo.get_section(db, section_id)
+    if section is None:
+        raise HTTPException(status_code=404, detail="section not found")
+    concept = (
+        repo.get_concept(db, section.concept_id) if section.concept_id else None
+    )
+    blocks = repo.get_verified_section_blocks(db, section_id)
+    return OfflinePackResponse(
+        section_id=str(section_id),
+        title=section.title,
+        concept_name=concept.name if concept else None,
+        blocks=[
+            OfflinePackBlock(
+                id=str(b.id),
+                type=b.type,
+                concept_id=str(b.concept_id) if b.concept_id else None,
+                tracked=b.tracked,
+                data=b.data or {},
+            )
+            for b in blocks
+        ],
+    )
 
 
 @router.get("/sections/{section_id}/note", response_model=NoteResponse)

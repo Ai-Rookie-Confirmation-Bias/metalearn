@@ -366,6 +366,30 @@ class TutorChatResponse(_CamelModel):
     reply: str
 
 
+class OfflinePackBlock(_CamelModel):
+    """오프라인 팩 블록 1개 — **정답 포함 원본 data**(스트립 안 함).
+
+    소비자는 브라우저 UI가 아니라 사용자 기기의 로컬 엔진 어댑터(ondevice/)다:
+    온라인일 때 미리 받아 두고, 오프라인이 되면 어댑터가 로컬 sLLM으로 채점을
+    이어받는다(제안서 차별점 ④ 클라우드+로컬 이중구조).
+    """
+
+    id: str
+    type: str
+    concept_id: str | None = None
+    tracked: bool = False
+    data: dict = Field(default_factory=dict)
+
+
+class OfflinePackResponse(_CamelModel):
+    """GET /sections/:id/offline-pack — 절 1개의 오프라인 채점 팩."""
+
+    section_id: str
+    title: str
+    concept_name: str | None = None
+    blocks: list[OfflinePackBlock] = Field(default_factory=list)
+
+
 class NoteSaveRequest(_CamelModel):
     """PUT /sections/:id/note — 요약 노트 저장(upsert). 빈 문자열 = 비우기."""
 

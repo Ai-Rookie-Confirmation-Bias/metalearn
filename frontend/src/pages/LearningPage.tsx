@@ -24,6 +24,7 @@ import {
 import { CurriculumPanel } from "@/pages/learning/CurriculumPanel";
 import { AiTutorPanel } from "@/pages/learning/AiTutorPanel";
 import type { Chapter as PanelChapter } from "@/pages/learning/mock";
+import { syncSectionToAdapter } from "@/shared/api/offline";
 import { useCourses } from "@/features/library/queries/useCourses";
 import { useCourseTree } from "@/features/learning/queries/useCourseTree";
 import { useSectionBlocks } from "@/features/learning/queries/useSectionBlocks";
@@ -74,6 +75,13 @@ export function LearningPage() {
     if (supplement.status !== "idle" && !tutorOpen) setTutorUnread(true);
   }, [supplement.status, tutorOpen]);
 
+  // 온디바이스 이중구조: 절을 열면 로컬 어댑터에 오프라인 팩을 미리 저장
+  // (fire-and-forget — 어댑터 없으면 조용히 무시). 오프라인 채점 발생 시 배너.
+  const [offlineGraded, setOfflineGraded] = useState(false);
+  useEffect(() => {
+    if (currentSectionId) void syncSectionToAdapter(currentSectionId);
+  }, [currentSectionId]);
+
   // 시작 절 초기화 — ?section=(지식 지도 딥링크)이 있으면 그 절, 없으면 첫 미완료.
   const [searchParams] = useSearchParams();
   const sectionParam = searchParams.get("section");
@@ -103,6 +111,8 @@ export function LearningPage() {
   // 프론트는 판단하지 않는다: 채점 후 트리를 refetch해 진행/완료/잠금을 서버에서 다시 읽는다.
   const onAnswer: OnAnswer = async (e: AnswerEvent): Promise<AttemptResult> => {
     const r = await submit.mutateAsync(e);
+    setOfflineGraded(Boolean(r.offline)); // 로컬 sLLM 채점 → 배너, 서버 복귀 → 해제
+    if (r.offline) return r; // 오프라인 채점: 서버 신호(트리/국소화/보충) 없음
     queryClient.invalidateQueries({ queryKey: ["courseTree"] });
     setSignal(r); // 원인 국소화/선행 삽입/복귀 신호 표면화
     // 오답 + supplement 신호 → 맞춤 재설명 자동 요청(개입 사다리 ②).
@@ -467,6 +477,15 @@ export function LearningPage() {
         </main>
 
       </div>
+
+      {/* 온디바이스 이중구조 — 서버가 안 닿아 로컬 sLLM(EXAONE 1.2B)이 채점을
+          이어받는 중임을 알린다. 서버 채점이 다시 성공하면 자동으로 사라진다. */}
+      {offlineGraded && (
+        <div className="fixed left-1/2 top-4 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full bg-[#0f172a] px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-lg">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-[#f59e0b]" />
+          오프라인 모드 — 내 기기의 AI(EXAONE)가 채점하고 있어요
+        </div>
+      )}
 
       {/* AI 튜터 — 우측 하단 FAB + 플로팅 패널. 항상 떠 있지 않는다:
           학습 칸을 넓게 쓰고, 튜터 의존(정답 자판기화)을 구조적으로 줄인다. */}

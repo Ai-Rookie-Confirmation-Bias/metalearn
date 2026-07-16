@@ -81,6 +81,33 @@
 
 ---
 
+## 2026-07-16 (세션29) — Claude CLI — B6 Phase 1: 온디바이스 이중구조 — 오프라인 채점 이어받기
+
+### 사용자 요청
+- 지도 확인 완료 → B6(온디바이스 통합) 진행.
+
+### 추론 / 결정 (아키텍처)
+- **핵심 제약**: 정답은 서빙 시 스트립(치팅 방지) → 오프라인 채점엔 정답이 로컬에 미리 있어야 함. 해법 = **오프라인 팩**: 온라인일 때 브라우저가 절을 열면 로컬 어댑터가 backend에서 정답 포함 팩을 pull(브라우저 UI엔 정답 안 감 — 어댑터는 사용자 기기의 신뢰 컴포넌트, 데모 범위 전제).
+- 구조: 브라우저 → (연결 실패 시) **adapter.py :8600**(stdlib 전용, 의존성 0) → llama-server :8080(EXAONE-4.0-1.2B, MVP 워크트리 모델·바이너리 재사용). 채점 계약 = 본 서비스 POST /attempts 동일 + `offline:true` 표식.
+- 채점 경계(결정문 준수): 생성=온라인 전용 / mcq=index 비교(LLM 무관) / cloze=정규화 매칭→불일치만 1.2B 인정판정 / explainBack=1.2B 루브릭 판정. 살아있는 커리큘럼 신호(국소화·선행삽입·보충)는 오프라인에 없음(프론트가 스킵).
+
+### 한 일
+- backend: `GET /sections/:id/offline-pack`(정답 포함, 로컬 엔진 전용 계약 — 학습 서빙 스트립은 불변).
+- `ondevice/`(신규): `adapter.py`(:8600 — /health·/sync·/api/attempts, CORS, 팩 파일캐시, 기동 워밍업), `local_llm.py`(1.2B 래퍼 — enable_thinking:false 필수 등 MVP 함정 이식), `run_local.sh`(llama-server libgomp 트릭 포함), README.
+- frontend: `shared/api/offline.ts`(어댑터 헬스캐시 15s·절 열 때 fire-and-forget /sync), `submitAttempt`가 **연결 실패(응답 없음)에만** 어댑터 폴백(4xx/5xx는 그대로 throw), LearningPage 오프라인 채점 배너("내 기기의 AI(EXAONE)가 채점") + 오프라인 결과는 트리 invalidate·신호 처리 스킵.
+
+### 검증 (실 llama-server + 실 어댑터 + 실 backend)
+- 팩 sync 7블록(WAN 절) → 오프라인 채점 3종: cloze 정답 4ms / cloze 오답(1.2B 판정) **7.5s** / explainBack(루브릭 3개 배치 1콜) **3.6s, score 0.67·missed 1 — 합리적 판정** ✅
+- 최적화 실측: 항목별 개별 콜 40~64s → 배치 1콜+max_tokens 축소+워밍업으로 4~8s(약 10배).
+- tsc 0, backend import 클린. 함정 재확인: llama-server는 harness 백그라운드로만 유지됨(서브셸 detach는 세션 종료 시 사망 — 메모리 기록대로).
+
+### 남은 것 (Phase 2 후보)
+1. 오프라인 attempts 재동기화(온라인 복귀 시 BKT/진행 반영) — 지금은 오프라인 채점이 서버 기록 안 됨.
+2. 오프라인 힌트·꼬리질문(MVP tail_prompt 이식), 팩 다중 절 프리페치(다음 절까지).
+3. 브라우저 실연 시나리오: backend 컨테이너 stop → 채점 → 배너 확인(데모 각본).
+
+---
+
 ## 2026-07-16 (세션28) — Claude CLI — B7: 지식 지도(학습 캔버스) — 개념 DAG + mastery 시각화
 
 ### 사용자 요청
