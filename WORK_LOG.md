@@ -44,7 +44,7 @@
 | 2 | 위키 429 → external_refs LLM 폴백 과다(web 17/llm 69) — refs.py rate-limit 개선 | 미착수 |
 | 3 | 문서 병렬 ingest(속도) — 지금 순차, Solar 8슬롯 중 3만 사용 | 미착수 |
 | 4 | LearningPage가 courses[0]만 봄 — 클릭한 코스로 라우팅(`/learning/:courseId`) | ✅ 해결(2026-07-14: 라우트 추가 + 책장 링크 코스별 + 코스 전환 시 절 선택 리셋) |
-| 5 | 진단 미완료 코스 트리 400 (ceiling 없음) — 논점 4와 연결 | 미착수 |
+| 5 | 진단 미완료 코스 트리 400 (ceiling 없음) — 논점 4와 연결 | ✅ 해결(2026-07-20: 서버 400은 진단 재설계로 이미 소멸 재검증(트리/mastery/cursor 200, 절 잠금 정상) + 우회 진입 시 진단 유도 배너 추가) |
 | 6 | Document 스키마 변경(course_id/seq/role)은 parsing 팀 영역 → 병합 시 조율 | 협의 |
 
 ### 별개 브랜치

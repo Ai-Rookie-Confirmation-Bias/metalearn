@@ -46,7 +46,11 @@ export function LearningPage() {
   const { data: courses } = useCourses();
   // URL의 :courseId 우선 — 책장에서 클릭한 코스로 진입. 없으면 첫 코스(하위호환).
   const courseId = courseIdParam ?? courses?.[0]?.id;
-  const category = courses?.find((c) => c.id === courseId)?.category ?? "";
+  const currentCourse = courses?.find((c) => c.id === courseId);
+  const category = currentCourse?.category ?? "";
+  // 진단 미완료 코스를 (지식 지도 클릭·URL 직접 등으로) 학습에서 열면 안내 —
+  // 정상 경로(책장)는 진단으로 보내지만 우회 진입 시 잠긴 트리만 보여 혼란(C10).
+  const needsDiagnosis = Boolean(currentCourse && currentCourse.diagStatus !== "completed");
   const { data: tree, isLoading: treeLoading } = useCourseTree(courseId);
 
   const chapters = useMemo(() => tree?.chapters ?? [], [tree]);
@@ -349,6 +353,22 @@ export function LearningPage() {
             <h2 className="mb-6 text-[2rem] font-extrabold tracking-tight text-text-primary">
               {currentSection?.title ?? ""}
             </h2>
+
+            {/* 진단 미완료 안내(C10) — 우회 진입 시 진단으로 유도. 학습은 막지 않는다. */}
+            {needsDiagnosis && courseId && (
+              <div className="mb-6 flex flex-col gap-3 rounded-2xl border border-accent/40 bg-accent/[0.06] px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-[0.9rem] leading-relaxed text-text-primary">
+                  <b>아직 수준 진단을 하지 않은 코스예요.</b> 진단하면 내 수준에 맞게
+                  커리큘럼이 조정되고 복습에도 반영돼요.
+                </div>
+                <Link
+                  to={`/diagnosis/${courseId}`}
+                  className="shrink-0 rounded-xl bg-accent px-4 py-2 text-center text-[0.85rem] font-semibold text-white transition-transform hover:-translate-y-0.5"
+                >
+                  진단 시작하기
+                </Link>
+              </div>
+            )}
 
             {/* 선행 장 진입 안내 — 지금 학습 중인 절이 선행학습이면 명시적으로 알림 */}
             {currentChapter?.origin === "prereq" && (
