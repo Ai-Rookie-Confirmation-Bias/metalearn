@@ -22,6 +22,7 @@ import {
   type SupplementResponse,
 } from "@/features/learning/api/getSupplement";
 import { CurriculumPanel } from "@/pages/learning/CurriculumPanel";
+import { FocusViewer } from "@/pages/learning/FocusViewer";
 import { AiTutorPanel } from "@/pages/learning/AiTutorPanel";
 import type { Chapter as PanelChapter } from "@/pages/learning/mock";
 import {
@@ -293,6 +294,31 @@ export function LearningPage() {
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-[#f3f4f6]">
+      {immersive ? (
+        // 몰입 학습 모드 — 목업(UXUI_ANT/focus.html) 2D 매트릭스 뷰어 포팅.
+        // 일반 레이아웃을 통째로 대체하고, 채점·게이트는 동일 서버 라운드트립 재사용.
+        <FocusViewer
+          chapters={chapters}
+          currentSectionId={currentSectionId}
+          onNavigate={goToSection}
+          blocks={blocks}
+          blocksLoading={blocksLoading}
+          waitingGeneration={waitingGeneration}
+          genFailed={currentChapter?.genStatus === "failed"}
+          onRetryGenerate={onGenerate}
+          generatePending={generate.isPending}
+          onAnswer={onAnswer}
+          unlocked={unlocked}
+          hasTracked={hasTracked}
+          hasNext={Boolean(nextSection)}
+          onNext={goNext}
+          onReadComplete={onReadComplete}
+          readCompletePending={readComplete.isPending}
+          signal={signal}
+          onExit={() => setImmersive(false)}
+        />
+      ) : (
+        <>
       {/* 상단 학습 헤더 */}
       <header className="z-20 flex h-16 flex-shrink-0 items-center justify-between border-b border-border-primary bg-white px-6">
         <div className="flex items-center gap-6">
@@ -521,6 +547,8 @@ export function LearningPage() {
         </main>
 
       </div>
+        </>
+      )}
 
       {/* 온디바이스 이중구조 — 서버가 안 닿아 로컬 sLLM(EXAONE 1.2B)이 채점을
           이어받는 중임을 알린다. 서버 채점이 다시 성공하면 자동으로 사라진다. */}
@@ -538,8 +566,9 @@ export function LearningPage() {
       )}
 
       {/* AI 튜터 — 우측 하단 FAB + 플로팅 패널. 항상 떠 있지 않는다:
-          학습 칸을 넓게 쓰고, 튜터 의존(정답 자판기화)을 구조적으로 줄인다. */}
-      {tutorOpen && (
+          학습 칸을 넓게 쓰고, 튜터 의존(정답 자판기화)을 구조적으로 줄인다.
+          몰입 모드에선 숨김(목업 focus-mode가 ai-panel을 숨기는 규칙과 동일). */}
+      {!immersive && tutorOpen && (
         <div className="fixed bottom-24 right-6 z-50 flex h-[min(620px,calc(100vh-130px))] w-[380px] max-w-[calc(100vw-3rem)] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-2xl">
           <AiTutorPanel
             sectionId={currentSectionId}
@@ -549,6 +578,7 @@ export function LearningPage() {
           />
         </div>
       )}
+      {!immersive && (
       <button
         type="button"
         onClick={() => {
@@ -563,6 +593,7 @@ export function LearningPage() {
           <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 animate-pulse rounded-full border-2 border-white bg-[#ef4444]" />
         )}
       </button>
+      )}
     </div>
   );
 }
