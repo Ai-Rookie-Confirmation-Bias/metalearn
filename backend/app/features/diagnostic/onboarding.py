@@ -130,6 +130,45 @@ class OnboardingService:
         self.placement = PlacementService(db)  # 대표 선정·선수 사슬 재활용
 
     # ── 시작 ─────────────────────────────────────────────────
+    async def _drop_noise_reps(
+        self, course_title: str, concepts: list[Concept]
+    ) -> list[Concept]:
+        """대표 개념에서 표지·삽화·목차 유래 잡음을 LLM 배치 1콜로 제외(C11).
+
+        오판 방어: 애매하면 학습 개념으로 남기라고 지시하고, 전부 잡음 판정이면
+        원본을 그대로 쓴다(진단 자체가 비지 않게). 판정 실패도 원본 유지.
+        """
+        if len(concepts) <= 1:
+            return concepts
+        from app.core.llm.solar import solar_client
+
+        lines = [
+            f"교재 '{course_title}'에서 자동 추출된 개념 후보 목록이다. 각 개념이 "
+            "이 과목에서 실제로 배우는 **학습 개념**인지, 아니면 표지 그림·삽화 "
+            "캡션·목차·머리말·저작권 문구 등에서 잘못 뽑힌 **잡음**인지 판정하라.\n"
+            "확실한 잡음만 noise에 넣어라(조금이라도 학습 개념 같으면 남긴다).\n"
+            'JSON만: {"noise": [id, ...]}\n\n',
+        ]
+        for i, c in enumerate(concepts):
+            lines.append(f"- id={i}: {c.name} — {(c.description or '')[:80]}\n")
+        try:
+            raw = await solar_client.generate_json(
+                "".join(lines),
+                system="너는 교재 개념 검수자다. 학습 개념과 표지·삽화 잡음을 가른다. JSON만 출력.",
+            )
+            noise = {x for x in (raw.get("noise") or []) if isinstance(x, int)}
+        except Exception as exc:  # noqa: BLE001 — 판정 실패는 필터 스킵(진단 우선)
+            _log.warning("노이즈 판정 실패, 필터 건너뜀: %s", exc)
+            return concepts
+        kept = [c for i, c in enumerate(concepts) if i not in noise]
+        if len(kept) < len(concepts):
+            _log.info(
+                "노이즈 대표 개념 %d개 제외: %s",
+                len(concepts) - len(kept),
+                [concepts[i].name for i in sorted(noise) if i < len(concepts)],
+            )
+        return kept or concepts  # 전부 잡음 판정이면 오판으로 보고 원본 유지
+
     async def start(
         self, course_id: uuid.UUID, purpose: str | None = None
     ) -> OnboardingState:
@@ -148,6 +187,10 @@ class OnboardingService:
                 status_code=400,
                 detail="대표 개념이 없는 코스입니다. seed tree를 먼저 실행하세요.",
             )
+        # 노이즈 개념 필터(C11, ISSUE-016④) — 표지 그림·삽화 캡션·목차에서 잘못
+        # 뽑힌 잡음("무지개" 등)이 진단에 출제되는 것을 막는다. 정제는 보수적으로
+        # 두고(개념은 DB에 남김) '진단 대상 선정'에서만 거른다.
+        reps = await self._drop_noise_reps(course.title, reps)
         plan = [str(c.id) for c in reps[:_ENTRY_COUNT]]
 
         session = DiagnosticSession(
