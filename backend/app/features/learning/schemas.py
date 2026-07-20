@@ -208,6 +208,9 @@ class BlockEnvelope(_CamelModel):
     concept_id: str | None = None
     source: BlockSource = "book"
     source_chunk_ids: list[str] = Field(default_factory=list)
+    # 근거 배지(book) — source_chunk_ids가 가리키는 교재 페이지 범위(오름차순 유니크).
+    # 서빙 시 doc_chunks에서 조회해 채운다("교재 N쪽" 표시용).
+    source_pages: list[int] = Field(default_factory=list)
     external_refs: list[ExternalRefOut] = Field(default_factory=list)
     verified: bool = False
     tracked: bool = False

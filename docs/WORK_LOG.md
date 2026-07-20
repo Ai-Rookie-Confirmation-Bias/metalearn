@@ -81,6 +81,27 @@
 
 ---
 
+## 2026-07-20 (세션33) — Claude CLI — 근거 배지 렌더 (수집→표시 완결)
+
+### 사용자 요청
+- C 완료 후 후속 — external_refs 수집은 됐는데 화면에 근거가 안 보이는 반쪽을 닫자.
+
+### 추론 / 결정
+- 봉투는 이미 `externalRefs`(ai_prereq)·`sourceChunkIds`(book)를 서빙하는데 **프론트가 안 씀** → 사용자는 "근거 기반 생성"을 못 봄(제안서 핵심이 화면에 없음).
+- book 페이지 배지용으로 봉투에 `source_pages` 추가(청크→doc_chunks 페이지 배치 조회, N+1 방지). 단 청크가 섹션 단위라 범위가 넓음(실측 3–28쪽) → 리스트를 **min–max로 압축 표시**하고, 진짜 값어치는 **ai_prereq 위키 링크**(지금껏 화면에 전혀 안 뜸)에 둠.
+
+### 한 일
+- 백엔드(additive): `BlockEnvelope.source_pages` + `repo.get_chunk_pages`(배치) + `to_envelope(page_map=)`에서 `_pages_from_chunks`(page_from~to 유니크 오름차순). 서빙에서 페이지맵 주입.
+- 프론트: `sourcePages` 타입 + **`EvidenceBadge`** — book="교재 N–M쪽"(indigo), ai_prereq=외부 출처 링크(url 있으면 새 탭, llm 폴백은 정적), analogy 면제, 근거 없으면 null. BlockShell children 하단에 배선.
+
+### 검증
+- 봉투에 source_pages 서빙 확인(book concept/cloze에 페이지, analogy 빈 배열). tsc 0. ai_prereq 링크는 현 DB에 ai_prereq 블록이 없어 로직 검증(화면 실물은 해당 개념 코스에서).
+
+### 참고
+- "교재 3–28쪽"은 청크가 커서 넓음 — 근거 신뢰 어필엔 ai_prereq 링크가 주력. 넓은 페이지가 거슬리면 정적 "교재 근거" 배지로 축소 가능(사용자 판단).
+
+---
+
 ## 2026-07-20 (세션32) — Claude CLI — C단계 일괄: C9 병렬 ingest · C8 external_refs 보강 · C11 노이즈 필터
 
 ### 사용자 요청

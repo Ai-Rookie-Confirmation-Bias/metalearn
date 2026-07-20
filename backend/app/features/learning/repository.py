@@ -63,6 +63,18 @@ def get_chapter_sections(db: Session, chapter_id: uuid.UUID) -> list[Section]:
     return list(db.scalars(stmt))
 
 
+def get_chunk_pages(
+    db: Session, chunk_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, tuple[int | None, int | None]]:
+    """청크 id → (page_from, page_to) — 근거 배지의 "교재 N쪽" 표시용(N+1 방지 배치)."""
+    if not chunk_ids:
+        return {}
+    stmt = select(DocChunk.id, DocChunk.page_from, DocChunk.page_to).where(
+        DocChunk.id.in_(chunk_ids)
+    )
+    return {cid: (pf, pt) for cid, pf, pt in db.execute(stmt)}
+
+
 # ── 교재 그림 (Layer 2, mig 0022) ────────────────────────────────────────────
 def get_figures_for_chunks(
     db: Session, *, chunk_ids: list[uuid.UUID], limit: int = 2

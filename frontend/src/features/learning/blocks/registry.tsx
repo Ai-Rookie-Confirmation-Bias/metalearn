@@ -2,6 +2,7 @@ import { ClockCounterClockwiseIcon, WarningCircleIcon } from "@phosphor-icons/re
 
 import type { LearningBlock, OnAnswer } from "./types";
 import { BlockShell } from "./BlockShell";
+import { EvidenceBadge } from "./EvidenceBadge";
 import { ConceptBlock } from "./ConceptBlock";
 import { TableBlock } from "./TableBlock";
 import { ImageBlock } from "./ImageBlock";
@@ -68,6 +69,7 @@ export function BlockRenderer({ block, onAnswer }: { block: LearningBlock; onAns
       )}
       <BlockShell source={block.source} title={block.data.title}>
         {body}
+        <EvidenceBadge block={block} />
       </BlockShell>
     </div>
   );

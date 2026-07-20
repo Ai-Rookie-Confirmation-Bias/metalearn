@@ -16,6 +16,7 @@ type Envelope<T extends string, D> = {
   kind?: AttemptKind; // 진단/학습/복습/연결 구분 (attempts 기록에 필요)
   source: ContentSource; // 📖 book / 🤖 ai_prereq / 💡 analogy 출처 배지
   sourceChunkIds?: string[]; // book 근거: 책 청크 id ("근거 보기" 기능용)
+  sourcePages?: number[]; // book 근거: 교재 페이지(오름차순) — "교재 N–M쪽" 배지
   externalRefs?: ExternalRef[]; // ai_prereq 근거: 외부 신뢰 출처
   verified: boolean; // 근거 대조 통과(true만 서빙됨)
   tracked: boolean; // ②③ 정답 추적 대상 → 게이트·onAnswer 대상
