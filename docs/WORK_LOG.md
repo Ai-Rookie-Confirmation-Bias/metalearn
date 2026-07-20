@@ -81,6 +81,31 @@
 
 ---
 
+## 2026-07-20 (세션30) — Claude CLI — B6 Phase 2: 오프라인 시도 재동기화 + 다음 절 프리페치
+
+### 사용자 요청
+- B6(온디바이스) 이어서 — Phase 2 마무리.
+
+### 추론 / 결정
+- **재동기화가 이중구조 완성의 핵심**: 오프라인 채점은 즉시 형성 피드백일 뿐, 서버 기록이 아니면 "진짜 학습"이 안 된다(BKT·복습·진행 미반영). 발견: `record_attempt`가 **클라 correct를 안 믿고 서버가 재채점** → 오프라인 시도의 userInput만 기존 `POST /attempts`로 재전송하면 정식 채점·기록됨. **별도 엔드포인트 불필요**(백엔드 변경 0).
+- 큐는 **브라우저 localStorage**(어댑터 아님) — 브라우저가 이미 제출 주체고, 온라인 복귀 감지·재전송도 브라우저 몫. 어댑터는 순수 채점기로 유지. 재전송은 시간순(BKT 순서 의존).
+- **힌트·꼬리질문은 보류**: 온라인에도 없는 기능(힌트≈supplement 재설명이 이미 대체, 꼬리질문 미구현)이라 오프라인만 추가하면 온·오프 패리티가 깨진다 → 온·오프 공통 기능으로 별도 트랙.
+
+### 한 일 (프론트 전용, 백엔드 0)
+- `shared/api/offline.ts`: 재생 큐(localStorage) + `queueOfflineAttempt`/`replayOfflineAttempts`(poster 주입 — 순환 import 회피)/`pendingReplayCount`. `syncSectionToAdapter`를 가변 인자로(현재+다음 절 프리페치).
+- `submitAttempt.ts`: `submitAttemptOnline`(온라인 전용, 재생용) 분리. 오프라인 폴백 채점 후 **큐잉**.
+- `LearningPage`: 절 열 때 현재+다음 절 프리페치, 온라인 채점 성공 시 `tryReplay`(복귀 신호), 진입 시 큐 있으면 flush, "다시 연결됨 — N문제 반영" 녹색 토스트 + 트리 invalidate.
+
+### 검증
+- 서버측 재동기화: 오프라인 userInput을 `POST /attempts` 재전송 → attempts 0→1 기록 + 서버 재채점(correct 서버 판정) + mastery 갱신 ✅
+- tsc 0. 브라우저 큐 로직은 순차 재전송(실패분만 잔류) — 실 흐름은 사용자 데모에서.
+
+### B6 상태
+- **Phase 1**(채점 이어받기)·**Phase 2**(재동기화·프리페치) 완료 = 이중구조 실용 완성.
+- 남은 선택: 오프라인 힌트·꼬리질문(온·오프 패리티 설계 후), 어댑터 다중 절 sync 부하 관찰.
+
+---
+
 ## 2026-07-16 (세션29) — Claude CLI — B6 Phase 1: 온디바이스 이중구조 — 오프라인 채점 이어받기
 
 ### 사용자 요청

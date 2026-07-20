@@ -24,7 +24,12 @@ import {
 import { CurriculumPanel } from "@/pages/learning/CurriculumPanel";
 import { AiTutorPanel } from "@/pages/learning/AiTutorPanel";
 import type { Chapter as PanelChapter } from "@/pages/learning/mock";
-import { syncSectionToAdapter } from "@/shared/api/offline";
+import {
+  pendingReplayCount,
+  replayOfflineAttempts,
+  syncSectionToAdapter,
+} from "@/shared/api/offline";
+import { submitAttemptOnline } from "@/features/learning/api/submitAttempt";
 import { useCourses } from "@/features/library/queries/useCourses";
 import { useCourseTree } from "@/features/learning/queries/useCourseTree";
 import { useSectionBlocks } from "@/features/learning/queries/useSectionBlocks";
@@ -76,11 +81,29 @@ export function LearningPage() {
   }, [supplement.status, tutorOpen]);
 
   // 온디바이스 이중구조: 절을 열면 로컬 어댑터에 오프라인 팩을 미리 저장
-  // (fire-and-forget — 어댑터 없으면 조용히 무시). 오프라인 채점 발생 시 배너.
+  // (fire-and-forget — 어댑터 없으면 조용히 무시). 현재 절 + 다음 절 프리페치.
   const [offlineGraded, setOfflineGraded] = useState(false);
+  const [replayed, setReplayed] = useState(0); // 온라인 복귀 시 서버에 반영된 오프라인 시도 수
   useEffect(() => {
-    if (currentSectionId) void syncSectionToAdapter(currentSectionId);
-  }, [currentSectionId]);
+    if (!currentSectionId) return;
+    const idx = flatSections.findIndex((s) => s.id === currentSectionId);
+    const nextId = idx >= 0 ? flatSections[idx + 1]?.id : undefined;
+    void syncSectionToAdapter(currentSectionId, nextId);
+  }, [currentSectionId, flatSections]);
+
+  // 오프라인 시도 재동기화 — 학습 화면 진입/온라인 복귀 시 큐를 서버로 flush(정식 채점).
+  const tryReplay = async () => {
+    const n = await replayOfflineAttempts(submitAttemptOnline);
+    if (n > 0) {
+      setReplayed(n);
+      queryClient.invalidateQueries({ queryKey: ["courseTree"] });
+      window.setTimeout(() => setReplayed(0), 6000);
+    }
+  };
+  useEffect(() => {
+    if (pendingReplayCount() > 0) void tryReplay();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [courseId]);
 
   // 시작 절 초기화 — ?section=(지식 지도 딥링크)이 있으면 그 절, 없으면 첫 미완료.
   const [searchParams] = useSearchParams();
@@ -113,6 +136,7 @@ export function LearningPage() {
     const r = await submit.mutateAsync(e);
     setOfflineGraded(Boolean(r.offline)); // 로컬 sLLM 채점 → 배너, 서버 복귀 → 해제
     if (r.offline) return r; // 오프라인 채점: 서버 신호(트리/국소화/보충) 없음
+    void tryReplay(); // 온라인 채점 성공 = 서버 복귀 신호 → 밀린 오프라인 시도 flush
     queryClient.invalidateQueries({ queryKey: ["courseTree"] });
     setSignal(r); // 원인 국소화/선행 삽입/복귀 신호 표면화
     // 오답 + supplement 신호 → 맞춤 재설명 자동 요청(개입 사다리 ②).
@@ -484,6 +508,12 @@ export function LearningPage() {
         <div className="fixed left-1/2 top-4 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full bg-[#0f172a] px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-lg">
           <span className="h-2 w-2 animate-pulse rounded-full bg-[#f59e0b]" />
           오프라인 모드 — 내 기기의 AI(EXAONE)가 채점하고 있어요
+        </div>
+      )}
+      {replayed > 0 && (
+        <div className="fixed left-1/2 top-4 z-[60] flex -translate-x-1/2 items-center gap-2 rounded-full bg-[#047857] px-5 py-2.5 text-[0.85rem] font-semibold text-white shadow-lg">
+          <span className="h-2 w-2 rounded-full bg-white" />
+          다시 연결됨 — 오프라인에서 푼 {replayed}문제를 학습 기록에 반영했어요
         </div>
       )}
 

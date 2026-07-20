@@ -4,7 +4,7 @@
 import { isAxiosError } from "axios";
 
 import { apiClient } from "@/shared/api/client";
-import { submitAttemptOffline } from "@/shared/api/offline";
+import { queueOfflineAttempt, submitAttemptOffline } from "@/shared/api/offline";
 import type { AnswerEvent, AttemptResult } from "@/features/learning/blocks/types";
 
 export type AttemptResponse = AttemptResult & {
@@ -23,20 +23,35 @@ export type AttemptResponse = AttemptResult & {
   offline?: boolean;
 };
 
+type AttemptBody = {
+  blockId: string;
+  conceptId: string;
+  kind: string;
+  userInput: unknown;
+};
+
+/** 온라인 전용 제출 — 재생 큐 flush가 서버 정식 채점에 쓴다(폴백 없음). */
+export async function submitAttemptOnline(body: AttemptBody): Promise<AttemptResponse> {
+  const { data } = await apiClient.post<AttemptResponse>("/api/attempts", body);
+  return data;
+}
+
 export async function submitAttempt(e: AnswerEvent): Promise<AttemptResponse> {
-  const body = {
+  const body: AttemptBody = {
     blockId: e.blockId,
     conceptId: e.conceptId,
     kind: e.kind ?? "learn",
     userInput: e.userInput,
   };
   try {
-    const { data } = await apiClient.post<AttemptResponse>("/api/attempts", body);
-    return data;
+    return await submitAttemptOnline(body);
   } catch (error) {
     // 서버 응답이 있는 실패(4xx/5xx)는 그대로 던진다 — 폴백 대상은 '연결 자체 불가'만
     if (isAxiosError(error) && !error.response) {
-      return (await submitAttemptOffline(body)) as AttemptResponse;
+      const graded = (await submitAttemptOffline(body)) as AttemptResponse;
+      // 오프라인 채점은 형성 피드백일 뿐 — 온라인 복귀 시 서버 정식 기록을 위해 큐잉
+      queueOfflineAttempt(body);
+      return graded;
     }
     throw error;
   }
