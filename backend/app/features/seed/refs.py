@@ -26,13 +26,17 @@ _log = logging.getLogger("uvicorn.error")
 
 _WIKI_SEARCH = "https://ko.wikipedia.org/w/rest.php/v1/search/page"
 _WIKI_PAGE = "https://ko.wikipedia.org/wiki/"
-# 동시 3 + 429 시 1회 대기 재시도 — 위키 rate limit 예절 (실측: 동시 8로
+# 동시 3 + 429 지수 백오프 재시도 — 위키 rate limit 예절 (실측: 동시 8로
 # 반복 실행 시 429 다발 → 전부 LLM 폴백으로 밀려 출처 품질 하락)
 _CONCURRENCY = 3
-_RETRY_AFTER_SEC = 2.0
+_RETRY_AFTER_SEC = 1.5
+_RETRIES = 3
+_SEARCH_LIMIT = 5  # 1위만 보면 동음이의·목록에 막힘 → 상위 후보 중 근거 가치 있는 첫 것
 _TIMEOUT = 10.0
 _SNIPPET_MAX = 600
 _TAG_RE = re.compile(r"<[^>]+>")
+# 근거 가치 없는 문서 신호 — 동음이의·목록·분류 문서는 건너뛰고 다음 후보로.
+_SKIP_SIGNALS = ("동음이의", "다음을 의미한다", "다음을 가리킨다")
 
 _FALLBACK_SYSTEM = (
     "너는 학습 개념 사전 집필자다. 각 개념을 사실 위주로 2문장으로 설명한다. "
@@ -51,28 +55,41 @@ def _fallback_prompt(items: list[tuple[int, str, str]]) -> str:
     return "".join(lines)
 
 
+async def _wiki_get(client: httpx.AsyncClient, name: str) -> list[dict]:
+    """위키 검색 상위 페이지들 — 429는 지수 백오프로 재시도(폴백으로 안 밀리게)."""
+    for attempt in range(_RETRIES):
+        resp = await client.get(_WIKI_SEARCH, params={"q": name, "limit": _SEARCH_LIMIT})
+        if resp.status_code == 429 and attempt < _RETRIES - 1:
+            await asyncio.sleep(_RETRY_AFTER_SEC * (2**attempt))
+            continue
+        resp.raise_for_status()
+        return (resp.json() or {}).get("pages") or []
+    return []
+
+
 async def _search_wiki(client: httpx.AsyncClient, name: str) -> dict | None:
-    """위키 검색 1위 결과 → {'title','url','snippet'} 또는 None."""
-    resp = await client.get(_WIKI_SEARCH, params={"q": name, "limit": 1})
-    if resp.status_code == 429:  # rate limit — 잠깐 쉬고 1회 재시도
-        await asyncio.sleep(_RETRY_AFTER_SEC)
-        resp = await client.get(_WIKI_SEARCH, params={"q": name, "limit": 1})
-    resp.raise_for_status()
-    pages = (resp.json() or {}).get("pages") or []
-    if not pages:
-        return None
-    page = pages[0]
-    excerpt = _TAG_RE.sub("", page.get("excerpt") or "").strip()
-    description = (page.get("description") or "").strip()
-    snippet = " — ".join(x for x in (description, excerpt) if x)[:_SNIPPET_MAX]
-    # 동음이의어/목록 문서는 근거 가치가 없다 — 미스로 돌려 LLM 폴백에 맡긴다.
-    if not snippet or "동음이의" in snippet or "다음을 의미한다" in snippet:
-        return None
-    return {
-        "title": page.get("title") or name,
-        "url": _WIKI_PAGE + quote(page.get("key") or page.get("title") or name),
-        "snippet": snippet,
-    }
+    """위키 검색 → 상위 후보 중 근거 가치 있는 첫 결과 {'title','url','snippet'}.
+
+    1위만 보면 동음이의·목록 문서에서 미스가 잦다(히트율 19% 원인) → 상위
+    _SEARCH_LIMIT개를 순회하며 스킵 신호가 없는 첫 후보를 채택.
+    """
+    pages = await _wiki_get(client, name)
+    for page in pages:
+        title = (page.get("title") or "").strip()
+        excerpt = _TAG_RE.sub("", page.get("excerpt") or "").strip()
+        description = (page.get("description") or "").strip()
+        snippet = " — ".join(x for x in (description, excerpt) if x)[:_SNIPPET_MAX]
+        if not snippet:
+            continue
+        blob = f"{title} {snippet}"
+        if any(sig in blob for sig in _SKIP_SIGNALS) or title.endswith("목록"):
+            continue  # 동음이의·목록 문서 → 다음 후보
+        return {
+            "title": title or name,
+            "url": _WIKI_PAGE + quote(page.get("key") or title or name),
+            "snippet": snippet,
+        }
+    return None
 
 
 async def collect_external_refs(db: Session, course_id: uuid.UUID) -> dict:
