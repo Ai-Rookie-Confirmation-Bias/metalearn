@@ -63,16 +63,30 @@ def get_chapter_sections(db: Session, chapter_id: uuid.UUID) -> list[Section]:
     return list(db.scalars(stmt))
 
 
-def get_chunk_pages(
-    db: Session, chunk_ids: list[uuid.UUID]
-) -> dict[uuid.UUID, tuple[int | None, int | None]]:
-    """청크 id → (page_from, page_to) — 근거 배지의 "교재 N쪽" 표시용(N+1 방지 배치)."""
-    if not chunk_ids:
+def get_concept_anchor_pages(
+    db: Session, concept_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, list[int]]:
+    """개념 id → 그 개념이 정의된 **대표 청크(앵커)**의 페이지 목록(근거 배지용).
+
+    절 생성에 투입된 근거 청크 전부(합집합=문서 거의 전체)를 쓰면 배지가
+    "교재 1–28쪽"이 돼 무의미 → 개념의 source_chunk_id(정확히 1청크)로 좁힌다.
+    "이 개념이 나온 곳"이라 정직하고 좁다. ai_prereq는 anchor 없음(외부근거).
+    """
+    from app.features.seed.models import Concept
+
+    if not concept_ids:
         return {}
-    stmt = select(DocChunk.id, DocChunk.page_from, DocChunk.page_to).where(
-        DocChunk.id.in_(chunk_ids)
+    stmt = (
+        select(Concept.id, DocChunk.page_from, DocChunk.page_to)
+        .join(DocChunk, DocChunk.id == Concept.source_chunk_id)
+        .where(Concept.id.in_(concept_ids))
     )
-    return {cid: (pf, pt) for cid, pf, pt in db.execute(stmt)}
+    out: dict[uuid.UUID, list[int]] = {}
+    for cid, pf, pt in db.execute(stmt):
+        if pf is None:
+            continue
+        out[cid] = list(range(pf, (pt or pf) + 1))
+    return out
 
 
 # ── 교재 그림 (Layer 2, mig 0022) ────────────────────────────────────────────

@@ -449,14 +449,14 @@ def serve_section(
     blocks = repo.get_verified_section_blocks(db, section_id)
     blocks = filter_by_variant(blocks, variant)
 
-    # ai_prereq 인용 배지용 외부근거 + book 교재 페이지 배지용 청크 페이지 일괄 로드(N+1 방지)
+    # ai_prereq 인용 배지용 외부근거 + book 근거 배지용 대표 청크 페이지 일괄 로드(N+1 방지)
     ref_ids = [rid for b in blocks for rid in (b.external_ref_ids or [])]
     refs = repo.get_external_refs_by_ids(db, ref_ids)
-    chunk_ids = [cid for b in blocks for cid in (b.source_chunk_ids or [])]
-    page_map = repo.get_chunk_pages(db, chunk_ids)
+    concept_ids = [b.concept_id for b in blocks if b.concept_id]
+    concept_pages = repo.get_concept_anchor_pages(db, concept_ids)
 
     envelopes: list[BlockEnvelope] = [
-        to_envelope(b, external_refs=refs, page_map=page_map) for b in blocks
+        to_envelope(b, external_refs=refs, concept_pages=concept_pages) for b in blocks
     ]
     return SectionBlocksResponse(
         id=str(section_id),

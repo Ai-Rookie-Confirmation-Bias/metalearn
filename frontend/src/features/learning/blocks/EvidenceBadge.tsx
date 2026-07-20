@@ -11,8 +11,13 @@ export function EvidenceBadge({ block }: { block: LearningBlock }) {
 
   const pages = block.sourcePages ?? [];
   const refs = block.externalRefs ?? [];
+  // 페이지 배지는 **좁을 때만** 노출한다(정확할 때만 주장 — 정직성).
+  // 이 교재는 청크가 섹션 단위라 개념에 따라 대표 청크가 넓게 잡히는데,
+  // "교재 3–17쪽" 같은 넓은 귀속은 신뢰를 깎으므로 아예 표시하지 않는다.
+  // (진짜 블록 단위 귀속은 faithfulness 부산물로 좁히는 후속 트랙)
+  const PAGE_MAX = 5;
   const pageLabel =
-    pages.length > 0
+    pages.length > 0 && pages.length <= PAGE_MAX
       ? pages[0] === pages[pages.length - 1]
         ? `${pages[0]}쪽`
         : `${pages[0]}–${pages[pages.length - 1]}쪽`

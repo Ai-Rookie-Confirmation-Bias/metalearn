@@ -82,28 +82,12 @@ def filter_by_variant(blocks: list[Block], variant: str) -> list[Block]:
     return picked if picked else list(blocks)
 
 
-def _pages_from_chunks(chunk_ids: list, page_map: dict | None) -> list[int]:
-    """근거 청크들의 page_from~page_to를 모아 오름차순 유니크 페이지 목록으로.
-
-    "교재 3–5쪽" 배지용. page 메타 없는 청크(마크다운 폴백)는 자연히 빠진다.
-    """
-    if not page_map:
-        return []
-    pages: set[int] = set()
-    for cid in chunk_ids or []:
-        pf, pt = page_map.get(cid, (None, None))
-        if pf is None:
-            continue
-        for p in range(pf, (pt or pf) + 1):
-            pages.add(p)
-    return sorted(pages)
-
-
 def to_envelope(
-    block: Block, *, external_refs: dict | None = None, page_map: dict | None = None
+    block: Block, *, external_refs: dict | None = None, concept_pages: dict | None = None
 ) -> BlockEnvelope:
     """DB Block → 와이어 봉투. external_refs: {id: ExternalRef}(ai_prereq 인용 배지),
-    page_map: {chunk_id: (page_from, page_to)}(book 교재 페이지 배지)."""
+    concept_pages: {concept_id: [page]}(book 대표 청크 페이지 — 근거 배지를 좁힘)."""
+    pages = (concept_pages or {}).get(block.concept_id, []) if block.concept_id else []
     refs: list[ExternalRefOut] = []
     if block.external_ref_ids and external_refs:
         for rid in block.external_ref_ids:
@@ -119,7 +103,7 @@ def to_envelope(
         concept_id=str(block.concept_id) if block.concept_id else None,
         source=block.source,
         source_chunk_ids=[str(c) for c in (block.source_chunk_ids or [])],
-        source_pages=_pages_from_chunks(block.source_chunk_ids, page_map),
+        source_pages=pages,
         external_refs=refs,
         verified=block.verified,
         tracked=block.tracked,
