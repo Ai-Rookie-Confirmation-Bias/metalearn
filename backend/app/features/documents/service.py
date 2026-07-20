@@ -21,6 +21,8 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.database import SessionLocal
+
 from app.core.config import settings
 from app.core.llm.solar import solar_client
 from app.features.auth.repository import AuthRepository
@@ -368,32 +370,25 @@ class DocumentService:
         if anchor is None:
             return
         try:
-            for spec in docs:
-                document = self.db.get(Document, spec["document_id"])
-                if document is None:
-                    continue
-                if spec.get("url"):
-                    # 링크 보조자료 — 실패해도 코스는 계속(근거 하나 빠질 뿐).
-                    try:
-                        await self._ingest_link(document=document, url=spec["url"])
-                    except Exception as exc:  # noqa: BLE001
-                        self.db.rollback()
-                        document.status = "failed"
-                        document.error = str(exc)[:2000]
-                        self.db.commit()
-                        _log.warning("링크 섭취 실패(무시하고 진행): %s — %s", spec["url"], exc)
-                        continue
-                else:
-                    await self._ingest_document(
-                        document=document, course_id=course_id,
-                        file_bytes=spec["file_bytes"], filename=spec["filename"],
-                        extract_graph=(spec.get("role") == "primary"),
-                    )
-                # 개별 문서는 ingest 완료로 마킹(앵커는 아래 트리 후 ready).
-                if document.id != anchor.id:
-                    document.status = "ready"
-                    self.db.commit()
+            # 문서 간 병렬 ingest (C9): 각 문서를 독립 DB 세션에서 동시에 처리해
+            # Solar 슬롯을 채운다(순차일 땐 소형 PDF들이 8슬롯 중 3~4만 사용).
+            # sync Session은 태스크 간 공유 불가라 문서마다 세션 분리가 필수.
+            # 동시 API 상한은 Solar 클라 전역 세마포어(8)가 잡는다(429 방지).
+            results = await asyncio.gather(
+                *(
+                    self._ingest_one_isolated(spec, course_id, anchor_document_id)
+                    for spec in docs
+                ),
+                return_exceptions=True,
+            )
+            # primary PDF 실패만 배치 실패로 전파(supplementary·링크 실패는 흡수).
+            for r in results:
+                if isinstance(r, BaseException):
+                    raise r
 
+            # 독립 세션들이 커밋한 변경을 배치 세션이 보게 refresh 후 dedup·트리(순차).
+            self.db.expire_all()
+            anchor = self.db.get(Document, anchor_document_id)
             await self._dedup_pass(course_id)
             anchor.status = "building_seed"
             self.db.commit()
@@ -402,11 +397,54 @@ class DocumentService:
             self.db.commit()
         except Exception as exc:  # noqa: BLE001
             self.db.rollback()
-            anchor.status = "failed"
-            anchor.error = str(exc)[:2000]
-            self.db.commit()
+            anchor = self.db.get(Document, anchor_document_id)
+            if anchor is not None:
+                anchor.status = "failed"
+                anchor.error = str(exc)[:2000]
+                self.db.commit()
             _log.exception("배치 섭취 실패(course=%s)", course_id)
             raise
+
+    async def _ingest_one_isolated(
+        self, spec: dict, course_id: uuid.UUID, anchor_id: uuid.UUID
+    ) -> None:
+        """문서 1건을 독립 DB 세션에서 ingest — 문서 간 병렬화의 단위(C9).
+
+        anchor 문서는 여기서 status를 바꾸지 않는다(배치 세션이 트리 후 ready로).
+        primary PDF 실패만 예외를 올려 배치 실패로 전파하고, supplementary·링크
+        실패는 해당 문서만 failed로 마킹하고 삼킨다(근거 하나 빠질 뿐).
+        """
+        from app.features.materials.models import Document
+
+        db = SessionLocal()
+        try:
+            svc = DocumentService(db)
+            document = db.get(Document, spec["document_id"])
+            if document is None:
+                return
+            try:
+                if spec.get("url"):
+                    await svc._ingest_link(document=document, url=spec["url"])
+                else:
+                    await svc._ingest_document(
+                        document=document, course_id=course_id,
+                        file_bytes=spec["file_bytes"], filename=spec["filename"],
+                        extract_graph=(spec.get("role") == "primary"),
+                    )
+                if document.id != anchor_id:
+                    document.status = "ready"
+                db.commit()
+            except Exception as exc:  # noqa: BLE001
+                db.rollback()
+                document.status = "failed"
+                document.error = str(exc)[:2000]
+                db.commit()
+                label = spec.get("filename") or spec.get("url") or spec["document_id"]
+                _log.warning("문서 섭취 실패: %s — %s", label, exc)
+                if spec.get("role") == "primary" and not spec.get("url"):
+                    raise  # primary PDF 실패 → 배치 전체 실패
+        finally:
+            db.close()
 
     async def ingest(self, *, file_bytes: bytes, filename: str, title: str | None) -> CourseDetail:
         """(동기 경로 — 스크립트/하위호환) 스텁 생성 + 파이프라인 완주 후 상세 반환."""

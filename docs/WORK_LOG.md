@@ -81,7 +81,15 @@
 
 ---
 
-## 2026-07-20 (세션31) — Claude CLI — C10: 진단 미완료 코스 400 재검증 + 진단 유도 배너
+## 2026-07-20 (세션32) — Claude CLI — C단계 일괄: C9 병렬 ingest · C8 external_refs 보강 · C11 노이즈 필터
+
+### 사용자 요청
+- C10에 이어 C 작업 전부(C9/C8/C11) 진행.
+
+### C9 — 문서 병렬 ingest
+- **원인 재진단**: EXTRACTION_MAX_CONCURRENCY·Solar 전역 세마포어 둘 다 이미 8. 병목은 `run_batch_pipeline`의 `for spec in docs` **문서 간 순차** — 소형 PDF들이 순차라 8슬롯 중 3~4만 참.
+- **해결**: 문서마다 **독립 DB 세션**(SessionLocal)으로 `_ingest_one_isolated`, `asyncio.gather`로 병렬. sync Session은 태스크 간 공유 불가라 세션 분리 필수(원칙 ①). dedup·트리는 배치 세션에서 순차 유지(gather 후 `expire_all`+refresh). primary PDF 실패만 배치 실패로 전파, supplementary·링크 실패는 해당 문서 failed 마킹 후 흡수.
+- **검증**: 합성 PDF 3개 배치 → 15s ready, docs 3/3·concepts 10·chapters 3, 문서 손실 0. 추출 시작 타임스탬프 겹침(21.6→24.8→29.5s = 병렬 진행). 검증 코스 삭제로 정리.
 
 ### 사용자 요청
 - C단계 착수, C10(진단 미완료 코스 트리 400)부터.
