@@ -393,6 +393,22 @@ class OfflinePackResponse(_CamelModel):
     blocks: list[OfflinePackBlock] = Field(default_factory=list)
 
 
+class ChunkEvidenceOut(_CamelModel):
+    """근거 청크 1개 — "근거 보기" 팝업이 보여줄 교재 원문."""
+
+    id: str
+    content: str
+    page_from: int | None = None
+    page_to: int | None = None
+    heading: str | None = None
+
+
+class ChunkEvidenceResponse(_CamelModel):
+    """GET /chunks/evidence — 배지가 가리키는 근거 청크들의 원문(추적 가능한 AI)."""
+
+    chunks: list[ChunkEvidenceOut] = Field(default_factory=list)
+
+
 class NoteSaveRequest(_CamelModel):
     """PUT /sections/:id/note — 요약 노트 저장(upsert). 빈 문자열 = 비우기."""
 

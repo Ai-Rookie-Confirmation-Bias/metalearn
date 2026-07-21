@@ -63,6 +63,17 @@ def get_chapter_sections(db: Session, chapter_id: uuid.UUID) -> list[Section]:
     return list(db.scalars(stmt))
 
 
+def get_chunks_by_ids(db: Session, chunk_ids: list[uuid.UUID]) -> list[DocChunk]:
+    """청크 원문 조회 — "근거 보기"(배지 클릭 → 교재 원문 팝업)용. 순서는 입력 유지."""
+    if not chunk_ids:
+        return []
+    rows = {
+        c.id: c
+        for c in db.scalars(select(DocChunk).where(DocChunk.id.in_(chunk_ids)))
+    }
+    return [rows[i] for i in chunk_ids if i in rows]
+
+
 def get_concept_anchor_pages(
     db: Session, concept_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[int]]:

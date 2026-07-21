@@ -28,6 +28,8 @@ from app.features.learning.schemas import (
     CursorResponse,
     GenerateTriggerResponse,
     PlacementResponse,
+    ChunkEvidenceOut,
+    ChunkEvidenceResponse,
     NoteResponse,
     NoteSaveRequest,
     OfflinePackBlock,
@@ -76,6 +78,40 @@ async def post_block_supplement(
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+@router.get("/chunks/evidence", response_model=ChunkEvidenceResponse)
+def get_chunk_evidence(
+    ids: str,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> ChunkEvidenceResponse:
+    """근거 보기 — 배지가 가리키는 청크 id들의 교재 원문(추적 가능한 AI).
+
+    ids: 쉼표로 구분한 청크 UUID. 잘못된 토큰은 조용히 무시(부분 반환).
+    """
+    chunk_ids: list[uuid.UUID] = []
+    for tok in ids.split(","):
+        tok = tok.strip()
+        if not tok:
+            continue
+        try:
+            chunk_ids.append(uuid.UUID(tok))
+        except ValueError:
+            continue
+    chunks = repo.get_chunks_by_ids(db, chunk_ids)
+    return ChunkEvidenceResponse(
+        chunks=[
+            ChunkEvidenceOut(
+                id=str(c.id),
+                content=c.content,
+                page_from=c.page_from,
+                page_to=c.page_to,
+                heading=c.heading,
+            )
+            for c in chunks
+        ]
+    )
 
 
 @router.get("/sections/{section_id}/offline-pack", response_model=OfflinePackResponse)
