@@ -242,8 +242,10 @@ async def _attach_section_figures(
     그림 자체가 근거("근거 없이 지어내지 않는다"와 정합). 첫 concept 조각 바로
     뒤에 넣는다(원문 그림이 설명을 보강하는 위치).
 
-    "그림만 덩그러니" 방지: 대표 그림에 원문 근거 기반 안내 설명을 붙인다
+    "그림만 덩그러니" 방지: 그림마다 원문 근거 기반 안내 설명을 붙인다
     (solar-pro3 비전 미지원 → 지면 원문+개념으로 그림 역할을 안내, 환각 방지).
+    같은 절이라도 서로 다른 그림이므로 그림이 실린 '자기 페이지 원문'으로
+    개별 설명을 만든다 — 하나의 설명을 공유하면 다른 그림엔 안 맞기 때문.
     """
     if not drafts or not inp.chunks:
         return drafts
@@ -253,12 +255,20 @@ async def _attach_section_figures(
     if not figures:
         return drafts
 
-    explanation = await explain_figure(
-        llm,
-        concept_name=inp.concept_name,
-        concept_description=inp.concept_description,
-        excerpt=inp.chunks[0].content if inp.chunks else "",
-    )
+    async def _explain(f) -> str | None:
+        # 그림 '바로 주변' 원문으로 설명 생성 — 페이지 전체는 딴 주제를 그림
+        # 설명으로 오인하므로 인접 요소만 좁힌다. 주변 텍스트가 없으면 설명 생략.
+        excerpt = repo.get_figure_context(db, f.document_id, f.element_id)
+        if not excerpt:
+            return None
+        return await explain_figure(
+            llm,
+            concept_name=inp.concept_name,
+            concept_description=inp.concept_description,
+            excerpt=excerpt,
+        )
+
+    explanations = await asyncio.gather(*(_explain(f) for f in figures))
     image_drafts = [
         BlockDraft(
             type="image",
@@ -269,14 +279,14 @@ async def _attach_section_figures(
                 "figureId": str(f.id),
                 "page": f.page,
                 **({"caption": f.caption} if f.caption else {}),
-                # 설명은 대표(첫) 그림에만 — 인접한 그림들을 함께 안내한다.
-                **({"explanation": explanation} if (i == 0 and explanation) else {}),
+                # 그림마다 자기 페이지 원문 기반 개별 설명(생성 실패 시 생략).
+                **({"explanation": expl} if expl else {}),
             },
             meta={"difficulty": "mid", "version": 1, "order": 0},
             source_chunk_ids=[c.id for c in inp.chunks],
             external_ref_ids=[],
         )
-        for i, f in enumerate(figures)
+        for f, expl in zip(figures, explanations)
     ]
     # 첫 concept 바로 뒤 삽입(없으면 맨 앞) → meta.order 재스탬프
     at = next((i + 1 for i, d in enumerate(drafts) if d.type == "concept"), 0)
