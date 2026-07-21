@@ -7,6 +7,7 @@ import {
   CaretLeftIcon,
   CheckCircleIcon,
   LockKeyIcon,
+  MapTrifoldIcon,
   SparkleIcon,
 } from "@phosphor-icons/react";
 import { clsx } from "clsx";
@@ -234,48 +235,59 @@ export function FocusViewer({
         </button>
       </div>
 
-      {/* 미니맵 확장 시 플리커 방지 히트박스 */}
-      <div
-        className={clsx("minimap-overlay-hitbox", minimapOpen && "active")}
-        onMouseLeave={() => setMinimapOpen(false)}
-      />
-
-      {/* 우측 상단 2D 미니맵 */}
-      <div
-        className={clsx("focus-minimap-2d", minimapOpen && "expanded")}
-        onMouseEnter={() => setMinimapOpen(true)}
+      {/* 미니맵 토글 버튼 — 클릭해야 지도가 열린다(축소 미니맵 제거) */}
+      <button
+        type="button"
+        className="minimap-toggle"
+        aria-label="전체 지도"
+        onClick={() => setMinimapOpen((o) => !o)}
       >
-        {columns.map((col, i) => {
-          const dots = i === x ? cellCount : 1;
-          return (
-            <div className="minimap-chapter-col" key={col.section.id}>
-              <div className="minimap-chapter-title">{col.label}</div>
-              {Array.from({ length: dots }).map((_, dy) => (
-                <button
-                  type="button"
-                  // eslint-disable-next-line react/no-array-index-key
-                  key={dy}
-                  title={`${col.chapter.title} — ${col.section.title}`}
-                  className={clsx(
-                    "minimap-dot",
-                    i === x && dy === y && "active",
-                    col.section.locked && "locked",
-                    (col.section.progressStatus === "completed" ||
-                      (i === x && dy < y)) &&
-                      !(i === x && dy === y) &&
-                      "completed",
-                  )}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (i === x) setY(dy);
-                    else jumpTo(i);
-                  }}
-                />
-              ))}
-            </div>
-          );
-        })}
-      </div>
+        <MapTrifoldIcon weight="fill" />
+        <span>{current ? current.label : "지도"}</span>
+      </button>
+
+      {/* 확장 미니맵 (클릭 시) — 뒷배경 클릭으로 닫힘 */}
+      {minimapOpen && (
+        <>
+          <div className="minimap-backdrop" onClick={() => setMinimapOpen(false)} />
+          <div className="focus-minimap-2d">
+            {columns.map((col, i) => {
+              const dots = i === x ? cellCount : 1;
+              return (
+                <div className="minimap-chapter-col" key={col.section.id}>
+                  <div className="minimap-chapter-title">{col.label}</div>
+                  {Array.from({ length: dots }).map((_, dy) => (
+                    <button
+                      type="button"
+                      // eslint-disable-next-line react/no-array-index-key
+                      key={dy}
+                      title={`${col.chapter.title} — ${col.section.title}`}
+                      className={clsx(
+                        "minimap-dot",
+                        i === x && dy === y && "active",
+                        col.section.locked && "locked",
+                        (col.section.progressStatus === "completed" ||
+                          (i === x && dy < y)) &&
+                          !(i === x && dy === y) &&
+                          "completed",
+                      )}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (i === x) {
+                          setY(dy);
+                          setMinimapOpen(false);
+                        } else {
+                          jumpTo(i);
+                        }
+                      }}
+                    />
+                  ))}
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {/* 메인 2D 뷰포트 */}
       <div className="matrix-viewport">
