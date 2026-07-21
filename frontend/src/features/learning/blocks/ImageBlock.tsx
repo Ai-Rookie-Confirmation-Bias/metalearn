@@ -2,12 +2,13 @@ import { useState } from "react";
 import { ImageBrokenIcon } from "@phosphor-icons/react";
 
 import { apiBaseUrl } from "@/shared/api/client";
+import { Prose } from "@/shared/ui/Prose";
 
 import type { ImageBlockData } from "./types";
 
 // ① 교재 그림 블록 — 읽기만, 추적 없음(onAnswer 없음).
 // AI가 그린 게 아니라 원문에서 잘라온 그림(doc_figures) — 환각 0, 그림 자체가 근거.
-// 로드 실패 시 자리 표시(빈 화면 금지) — 서버가 지워졌거나 네트워크 문제일 때.
+// explanation(원문 근거 기반 안내)이 있으면 그림 아래에 표시 — "그림만 덩그러니" 방지.
 export function ImageBlock({ data }: { data: ImageBlockData }) {
   const [failed, setFailed] = useState(false);
   const src = `${apiBaseUrl}/api/documents/figures/${data.figureId}`;
@@ -32,6 +33,17 @@ export function ImageBlock({ data }: { data: ImageBlockData }) {
         <span>{data.caption ?? "교재 원문 그림"}</span>
         {data.page != null && <span>교재 {data.page}쪽</span>}
       </figcaption>
+      {data.explanation && (
+        <div className="mt-3 rounded-xl border-l-4 border-[#6366f1] bg-[#6366f1]/[0.06] p-4">
+          <span className="mb-1.5 block text-xs font-bold text-[#6366f1]">
+            이 그림은
+          </span>
+          <Prose
+            text={data.explanation}
+            className="text-[0.92rem] leading-relaxed text-text-secondary"
+          />
+        </div>
+      )}
     </figure>
   );
 }

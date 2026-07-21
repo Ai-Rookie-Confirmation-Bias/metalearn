@@ -30,6 +30,7 @@ from app.features.learning.generator import (
     BlockDraft,
     GenerationInput,
     SupplementInput,
+    explain_figure,
     generate_retrieval_blocks,
     generate_section_blocks,
     generate_supplement,
@@ -232,14 +233,17 @@ async def _prepare_generation_input(
     )
 
 
-def _attach_section_figures(
-    db: Session, drafts: list[BlockDraft], inp: GenerationInput
+async def _attach_section_figures(
+    llm, db: Session, drafts: list[BlockDraft], inp: GenerationInput
 ) -> list[BlockDraft]:
     """교재 그림(Layer 2)을 절 블록에 부착 — 근거 청크 페이지 매칭, 절당 최대 2장.
 
     LLM 생성이 아니라 원문 크롭(doc_figures) 그대로라 게이트 없이 verified —
     그림 자체가 근거("근거 없이 지어내지 않는다"와 정합). 첫 concept 조각 바로
     뒤에 넣는다(원문 그림이 설명을 보강하는 위치).
+
+    "그림만 덩그러니" 방지: 대표 그림에 원문 근거 기반 안내 설명을 붙인다
+    (solar-pro3 비전 미지원 → 지면 원문+개념으로 그림 역할을 안내, 환각 방지).
     """
     if not drafts or not inp.chunks:
         return drafts
@@ -248,6 +252,13 @@ def _attach_section_figures(
     )
     if not figures:
         return drafts
+
+    explanation = await explain_figure(
+        llm,
+        concept_name=inp.concept_name,
+        concept_description=inp.concept_description,
+        excerpt=inp.chunks[0].content if inp.chunks else "",
+    )
     image_drafts = [
         BlockDraft(
             type="image",
@@ -258,12 +269,14 @@ def _attach_section_figures(
                 "figureId": str(f.id),
                 "page": f.page,
                 **({"caption": f.caption} if f.caption else {}),
+                # 설명은 대표(첫) 그림에만 — 인접한 그림들을 함께 안내한다.
+                **({"explanation": explanation} if (i == 0 and explanation) else {}),
             },
             meta={"difficulty": "mid", "version": 1, "order": 0},
             source_chunk_ids=[c.id for c in inp.chunks],
             external_ref_ids=[],
         )
-        for f in figures
+        for i, f in enumerate(figures)
     ]
     # 첫 concept 바로 뒤 삽입(없으면 맨 앞) → meta.order 재스탬프
     at = next((i + 1 for i, d in enumerate(drafts) if d.type == "concept"), 0)
@@ -371,7 +384,7 @@ async def run_chapter_generation(chapter_id: uuid.UUID, user_id: uuid.UUID) -> N
                     "절 생성 실패 — 건너뜀: section=%s", section.id, exc_info=drafts
                 )
                 continue
-            drafts = _attach_section_figures(db, drafts, inp)
+            drafts = await _attach_section_figures(llm, db, drafts, inp)
             repo.replace_section_blocks(
                 db, section_id=section.id, concept_id=section.concept_id, drafts=drafts
             )

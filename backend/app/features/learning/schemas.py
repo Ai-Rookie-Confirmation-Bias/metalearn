@@ -68,8 +68,21 @@ class ConceptData(_CamelModel):
     title: str
     body: str
     why_it_matters: str | None = None
+    # 동작 원리·절차를 짧은 단계 배열로 — 프론트가 번호 스텝플로우 그래픽으로 렌더
+    # (문단 대신). 흐름이 근거에 있을 때만. 빈 항목·6개 초과는 정규화.
+    steps: list[str] | None = None
     example: str | None = None  # 구체 예시 1개(근거 범위 안)
-    misconception: str | None = None  # 흔한 오해/헷갈리는 지점 경고
+    misconception: str | None = None  # 흔한 오해(오해 내용, 짧게)
+    # 그 오해의 정정("실제로는"). misconception과 함께 있으면 ❌/✅ 대비 카드로 렌더.
+    misconception_reality: str | None = None
+
+    @field_validator("steps", mode="after")
+    @classmethod
+    def _norm_steps(cls, steps: list[str] | None) -> list[str] | None:
+        if not steps:
+            return None
+        cleaned = [str(s).strip() for s in steps if str(s).strip()]
+        return cleaned[:6] or None
 
 
 class AnalogyData(_CamelModel):
@@ -88,6 +101,9 @@ class ImageData(_CamelModel):
     figure_id: str
     page: int | None = None
     caption: str | None = None
+    # 그림 안내 설명(원문 근거 기반, 서버 생성) — 그림만 덩그러니 놓이지 않게.
+    # LLM이 그림을 직접 보진 못하므로 지면 원문+개념으로 "무엇을 나타내는지" 안내.
+    explanation: str | None = None
 
 
 class TableData(_CamelModel):
