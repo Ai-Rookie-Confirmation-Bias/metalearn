@@ -6,7 +6,10 @@ import {
   XIcon,
 } from "@phosphor-icons/react";
 
-import { getChunkEvidence, type ChunkEvidence } from "@/features/learning/api/chunkEvidence";
+import {
+  getChunkEvidence,
+  type EvidencePassage,
+} from "@/features/learning/api/chunkEvidence";
 
 import type { LearningBlock } from "./types";
 
@@ -17,7 +20,7 @@ import type { LearningBlock } from "./types";
 // (추적 가능한 AI — GPT와의 핵심 차별을 화면으로 증명).
 export function EvidenceBadge({ block }: { block: LearningBlock }) {
   const [open, setOpen] = useState(false);
-  const [chunks, setChunks] = useState<ChunkEvidence[] | null>(null);
+  const [passages, setPassages] = useState<EvidencePassage[] | null>(null);
   const [loading, setLoading] = useState(false);
 
   // analogy는 검증 면제(발판)라 근거 배지를 붙이지 않는다 — source 배지로 충분.
@@ -42,12 +45,13 @@ export function EvidenceBadge({ block }: { block: LearningBlock }) {
 
   const openEvidence = async () => {
     setOpen(true);
-    if (chunks || chunkIds.length === 0) return;
+    if (passages || chunkIds.length === 0) return;
     setLoading(true);
     try {
-      setChunks(await getChunkEvidence(chunkIds));
+      // blockId를 넘겨 이 블록과 관련된 문단만 좁혀서 받는다
+      setPassages(await getChunkEvidence(chunkIds, block.id));
     } catch {
-      setChunks([]);
+      setPassages([]);
     } finally {
       setLoading(false);
     }
@@ -137,25 +141,20 @@ export function EvidenceBadge({ block }: { block: LearningBlock }) {
               </p>
               {loading ? (
                 <div className="py-10 text-center text-text-tertiary">원문 불러오는 중…</div>
-              ) : chunks && chunks.length > 0 ? (
-                <div className="space-y-4">
-                  {chunks.map((c) => (
+              ) : passages && passages.length > 0 ? (
+                <div className="space-y-2.5">
+                  {passages.map((p, i) => (
                     <div
-                      key={c.id}
-                      className="rounded-xl border border-border-primary bg-bg-secondary/40 p-4"
+                      key={i}
+                      className="flex gap-3 rounded-xl border border-border-primary bg-bg-secondary/40 p-3.5"
                     >
-                      <div className="mb-2 flex items-center gap-2 text-[0.78rem] font-semibold text-text-secondary">
-                        {c.pageFrom != null && (
-                          <span className="rounded bg-[#6366f1]/10 px-2 py-0.5 text-[#4f46e5]">
-                            교재 {c.pageFrom === c.pageTo || c.pageTo == null
-                              ? `${c.pageFrom}쪽`
-                              : `${c.pageFrom}–${c.pageTo}쪽`}
-                          </span>
-                        )}
-                        {c.heading && <span className="truncate">{c.heading}</span>}
-                      </div>
+                      {p.page != null && (
+                        <span className="mt-0.5 h-fit shrink-0 rounded bg-[#6366f1]/10 px-1.5 py-0.5 text-[0.7rem] font-semibold text-[#4f46e5]">
+                          {p.page}쪽
+                        </span>
+                      )}
                       <div className="whitespace-pre-wrap break-keep text-[0.9rem] leading-[1.7] text-text-secondary">
-                        {c.content.replace(/!\[image\]\([^)]*\)/g, "").trim()}
+                        {p.text}
                       </div>
                     </div>
                   ))}

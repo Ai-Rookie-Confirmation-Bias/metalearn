@@ -393,20 +393,21 @@ class OfflinePackResponse(_CamelModel):
     blocks: list[OfflinePackBlock] = Field(default_factory=list)
 
 
-class ChunkEvidenceOut(_CamelModel):
-    """근거 청크 1개 — "근거 보기" 팝업이 보여줄 교재 원문."""
+class EvidencePassage(_CamelModel):
+    """근거 구절 1개 — 청크 원문에서 블록과 관련된 문단만 추린 것."""
 
-    id: str
-    content: str
-    page_from: int | None = None
-    page_to: int | None = None
-    heading: str | None = None
+    text: str
+    page: int | None = None
 
 
 class ChunkEvidenceResponse(_CamelModel):
-    """GET /chunks/evidence — 배지가 가리키는 근거 청크들의 원문(추적 가능한 AI)."""
+    """GET /chunks/evidence — 블록이 근거로 삼은 교재 원문 구절(추적 가능한 AI).
 
-    chunks: list[ChunkEvidenceOut] = Field(default_factory=list)
+    blockId를 주면 청크 전체가 아니라 그 블록과 관련된 문단만 추려서 준다
+    (청크가 섹션 단위로 커서 전체를 보이면 범위가 넓음).
+    """
+
+    passages: list[EvidencePassage] = Field(default_factory=list)
 
 
 class NoteSaveRequest(_CamelModel):

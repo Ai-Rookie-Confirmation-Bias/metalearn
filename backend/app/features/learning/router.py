@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+import re
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
@@ -19,6 +20,7 @@ from app.core.deps import get_current_user_id
 from app.core.enums import GenStatus
 from app.features.learning import repository as repo
 from app.features.learning import service
+from app.features.learning.generator import _block_claim_text
 from app.features.learning.schemas import (
     AttemptRequest,
     AttemptResponse,
@@ -28,8 +30,8 @@ from app.features.learning.schemas import (
     CursorResponse,
     GenerateTriggerResponse,
     PlacementResponse,
-    ChunkEvidenceOut,
     ChunkEvidenceResponse,
+    EvidencePassage,
     NoteResponse,
     NoteSaveRequest,
     OfflinePackBlock,
@@ -80,15 +82,60 @@ async def post_block_supplement(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
+_WORD_RE = re.compile(r"[가-힣]{2,}|[A-Za-z]{3,}")
+_IMG_MD_RE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
+_EVIDENCE_MIN_OVERLAP = 2  # 블록 키워드와 이만큼 겹치는 문단만 근거 후보
+_EVIDENCE_MAX_PASSAGES = 12  # 그중 겹침 점수 상위 N개까지(넓은 원문 방지)
+
+
+def _split_paragraphs(content: str) -> list[str]:
+    """청크 마크다운 → 문단 리스트. 이미지 마크다운·짧은 목차 라인 제거."""
+    text = _IMG_MD_RE.sub("", content)
+    parts = re.split(r"\n\s*\n|\n", text)
+    return [p.strip().lstrip("#").strip() for p in parts if len(p.strip()) > 15]
+
+
+def _select_evidence(
+    paragraphs: list[tuple[str, int | None]], claim: str
+) -> list[tuple[str, int | None]]:
+    """블록 텍스트(claim)와 키워드 겹침이 큰 문단만 추린다(원문 순서 유지).
+
+    청크가 섹션 단위로 커서 전체를 보이면 근거가 "이 책 어딘가"가 된다 →
+    블록과 실제 관련된 문단만 남겨 좁힌다. 겹침 후보가 없으면 전체 폴백.
+    """
+    words = set(_WORD_RE.findall(claim))
+    if not words:
+        return paragraphs
+    scored = [
+        (len(words & set(_WORD_RE.findall(text))), i, text, page)
+        for i, (text, page) in enumerate(paragraphs)
+    ]
+    hits = [s for s in scored if s[0] >= _EVIDENCE_MIN_OVERLAP]
+    if not hits:
+        return paragraphs
+    top = sorted(hits, key=lambda s: -s[0])[:_EVIDENCE_MAX_PASSAGES]
+    top.sort(key=lambda s: s[1])  # 원문 순서로 복원
+    out: list[tuple[str, int | None]] = []
+    seen: set[str] = set()
+    for _, _, text, page in top:  # 반복 헤딩 등 중복 문단 제거
+        if text in seen:
+            continue
+        seen.add(text)
+        out.append((text, page))
+    return out
+
+
 @router.get("/chunks/evidence", response_model=ChunkEvidenceResponse)
 def get_chunk_evidence(
     ids: str,
+    blockId: str | None = None,
     db: Session = Depends(get_db),
     user_id: uuid.UUID = Depends(get_current_user_id),
 ) -> ChunkEvidenceResponse:
-    """근거 보기 — 배지가 가리키는 청크 id들의 교재 원문(추적 가능한 AI).
+    """근거 보기 — 배지가 가리키는 청크 원문 중 블록 관련 문단만(추적 가능한 AI).
 
-    ids: 쉼표로 구분한 청크 UUID. 잘못된 토큰은 조용히 무시(부분 반환).
+    ids: 쉼표로 구분한 청크 UUID(잘못된 토큰 무시). blockId가 있으면 그 블록과
+    관련된 문단만 추려 좁힌다(없으면 청크 전체 문단).
     """
     chunk_ids: list[uuid.UUID] = []
     for tok in ids.split(","):
@@ -100,17 +147,25 @@ def get_chunk_evidence(
         except ValueError:
             continue
     chunks = repo.get_chunks_by_ids(db, chunk_ids)
+
+    # 청크들 → (문단, 페이지) 평탄화
+    paragraphs: list[tuple[str, int | None]] = []
+    for c in chunks:
+        for para in _split_paragraphs(c.content):
+            paragraphs.append((para, c.page_from))
+
+    # blockId가 있으면 블록 텍스트로 관련 문단만 좁힌다
+    if blockId:
+        try:
+            block = repo.get_block(db, uuid.UUID(blockId))
+        except ValueError:
+            block = None
+        if block is not None:
+            claim = _block_claim_text(block.type, block.data or {})
+            paragraphs = _select_evidence(paragraphs, claim)
+
     return ChunkEvidenceResponse(
-        chunks=[
-            ChunkEvidenceOut(
-                id=str(c.id),
-                content=c.content,
-                page_from=c.page_from,
-                page_to=c.page_to,
-                heading=c.heading,
-            )
-            for c in chunks
-        ]
+        passages=[EvidencePassage(text=t, page=p) for t, p in paragraphs]
     )
 
 
