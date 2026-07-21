@@ -8,7 +8,9 @@ import {
 
 import {
   getChunkEvidence,
-  type EvidencePassage,
+  getPageContent,
+  type ChunkEvidence,
+  type PageContentItem,
 } from "@/features/learning/api/chunkEvidence";
 
 import type { LearningBlock } from "./types";
@@ -20,8 +22,11 @@ import type { LearningBlock } from "./types";
 // (추적 가능한 AI — GPT와의 핵심 차별을 화면으로 증명).
 export function EvidenceBadge({ block }: { block: LearningBlock }) {
   const [open, setOpen] = useState(false);
-  const [passages, setPassages] = useState<EvidencePassage[] | null>(null);
+  const [evidence, setEvidence] = useState<ChunkEvidence | null>(null);
   const [loading, setLoading] = useState(false);
+  // "언급된 페이지 전체 보기" — 좁힌 문단만 보면 맥락이 손실되니 페이지 전체로 확장
+  const [pageContent, setPageContent] = useState<PageContentItem[] | null>(null);
+  const [pageLoading, setPageLoading] = useState(false);
 
   // analogy는 검증 면제(발판)라 근거 배지를 붙이지 않는다 — source 배지로 충분.
   if (block.source === "analogy") return null;
@@ -45,17 +50,40 @@ export function EvidenceBadge({ block }: { block: LearningBlock }) {
 
   const openEvidence = async () => {
     setOpen(true);
-    if (passages || chunkIds.length === 0) return;
+    setPageContent(null); // 팝업 열 때마다 확장 뷰는 접어서 시작
+    if (evidence || chunkIds.length === 0) return;
     setLoading(true);
     try {
       // blockId를 넘겨 이 블록과 관련된 문단만 좁혀서 받는다
-      setPassages(await getChunkEvidence(chunkIds, block.id));
+      setEvidence(await getChunkEvidence(chunkIds, block.id));
     } catch {
-      setPassages([]);
+      setEvidence({ passages: [], documentId: null, pageFrom: null, pageTo: null });
     } finally {
       setLoading(false);
     }
   };
+
+  const expandPages = async () => {
+    if (!evidence?.documentId || evidence.pageFrom == null || evidence.pageTo == null) return;
+    setPageLoading(true);
+    try {
+      setPageContent(
+        await getPageContent(evidence.documentId, evidence.pageFrom, evidence.pageTo),
+      );
+    } catch {
+      setPageContent([]);
+    } finally {
+      setPageLoading(false);
+    }
+  };
+
+  const passages = evidence?.passages ?? null;
+  const pageRangeLabel =
+    evidence?.pageFrom != null
+      ? evidence.pageFrom === evidence.pageTo
+        ? `${evidence.pageFrom}쪽`
+        : `${evidence.pageFrom}–${evidence.pageTo}쪽`
+      : null;
 
   return (
     <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border-primary pt-3 text-[0.78rem]">
@@ -142,23 +170,62 @@ export function EvidenceBadge({ block }: { block: LearningBlock }) {
               {loading ? (
                 <div className="py-10 text-center text-text-tertiary">원문 불러오는 중…</div>
               ) : passages && passages.length > 0 ? (
-                <div className="space-y-2.5">
-                  {passages.map((p, i) => (
-                    <div
-                      key={i}
-                      className="flex gap-3 rounded-xl border border-border-primary bg-bg-secondary/40 p-3.5"
-                    >
-                      {p.page != null && (
-                        <span className="mt-0.5 h-fit shrink-0 rounded bg-[#6366f1]/10 px-1.5 py-0.5 text-[0.7rem] font-semibold text-[#4f46e5]">
-                          {p.page}쪽
-                        </span>
-                      )}
-                      <div className="whitespace-pre-wrap break-keep text-[0.9rem] leading-[1.7] text-text-secondary">
-                        {p.text}
+                <>
+                  <div className="space-y-2.5">
+                    {passages.map((p, i) => (
+                      <div
+                        key={i}
+                        className="flex gap-3 rounded-xl border border-border-primary bg-bg-secondary/40 p-3.5"
+                      >
+                        {p.page != null && (
+                          <span className="mt-0.5 h-fit shrink-0 rounded bg-[#6366f1]/10 px-1.5 py-0.5 text-[0.7rem] font-semibold text-[#4f46e5]">
+                            {p.page}쪽
+                          </span>
+                        )}
+                        <div className="whitespace-pre-wrap break-keep text-[0.9rem] leading-[1.7] text-text-secondary">
+                          {p.text}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+
+                  {/* 언급된 페이지 전체 보기 — 좁힌 문단만 보면 맥락 손실되니 확장 */}
+                  {pageContent === null
+                    ? pageRangeLabel && (
+                        <button
+                          type="button"
+                          onClick={expandPages}
+                          disabled={pageLoading}
+                          className="mt-4 w-full rounded-xl border border-dashed border-border-primary py-2.5 text-[0.85rem] font-semibold text-text-secondary transition-colors hover:bg-bg-secondary disabled:opacity-50"
+                        >
+                          {pageLoading
+                            ? "페이지 원문 불러오는 중…"
+                            : `📖 언급된 교재 ${pageRangeLabel} 전체 보기`}
+                        </button>
+                      )
+                    : pageContent.length > 0 && (
+                        <div className="mt-4 border-t border-border-primary pt-4">
+                          <div className="mb-2 text-[0.82rem] font-semibold text-text-tertiary">
+                            교재 {pageRangeLabel} 전체 원문
+                          </div>
+                          <div className="space-y-2.5">
+                            {pageContent.map((it, i) => (
+                              <div
+                                key={i}
+                                className="flex gap-3 rounded-xl bg-bg-secondary/30 p-3.5"
+                              >
+                                <span className="mt-0.5 h-fit shrink-0 rounded bg-text-tertiary/10 px-1.5 py-0.5 text-[0.7rem] font-semibold text-text-tertiary">
+                                  {it.page}쪽
+                                </span>
+                                <div className="whitespace-pre-wrap break-keep text-[0.88rem] leading-[1.7] text-text-secondary">
+                                  {it.text.replace(/!\[[^\]]*\]\([^)]*\)/g, "").trim()}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                </>
               ) : (
                 <div className="py-10 text-center text-text-tertiary">
                   원문을 불러오지 못했어요.

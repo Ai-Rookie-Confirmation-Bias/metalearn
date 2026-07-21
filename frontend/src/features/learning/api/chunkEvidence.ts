@@ -7,15 +7,36 @@ export type EvidencePassage = {
   text: string;
   page: number | null;
 };
+export type ChunkEvidence = {
+  passages: EvidencePassage[];
+  documentId: string | null;
+  pageFrom: number | null;
+  pageTo: number | null;
+};
 
 export async function getChunkEvidence(
   chunkIds: string[],
   blockId?: string,
-): Promise<EvidencePassage[]> {
-  if (chunkIds.length === 0) return [];
-  const { data } = await apiClient.get<{ passages: EvidencePassage[] }>(
-    "/api/chunks/evidence",
-    { params: { ids: chunkIds.join(","), ...(blockId ? { blockId } : {}) } },
+): Promise<ChunkEvidence> {
+  if (chunkIds.length === 0)
+    return { passages: [], documentId: null, pageFrom: null, pageTo: null };
+  const { data } = await apiClient.get<ChunkEvidence>("/api/chunks/evidence", {
+    params: { ids: chunkIds.join(","), ...(blockId ? { blockId } : {}) },
+  });
+  return data;
+}
+
+export type PageContentItem = { page: number; text: string };
+
+// 언급된 페이지의 교재 원문 전체(맥락 확장) — refined_elements 페이지 경계 기준.
+export async function getPageContent(
+  documentId: string,
+  pageFrom: number,
+  pageTo: number,
+): Promise<PageContentItem[]> {
+  const { data } = await apiClient.get<{ items: PageContentItem[] }>(
+    "/api/documents/page-content",
+    { params: { documentId, pageFrom, pageTo } },
   );
-  return data.passages;
+  return data.items;
 }

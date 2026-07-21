@@ -74,6 +74,37 @@ def get_chunks_by_ids(db: Session, chunk_ids: list[uuid.UUID]) -> list[DocChunk]
     return [rows[i] for i in chunk_ids if i in rows]
 
 
+# 페이지 전체 보기에서 뺄 반복성/비본문 요소 — 머리말·꼬리말·페이지번호 등.
+_PAGE_SKIP_CATEGORIES = {"header", "footer", "footnote", "index"}
+
+
+def get_page_content(
+    db: Session, document_id: uuid.UUID, page_from: int, page_to: int
+) -> list[tuple[int, str]]:
+    """문서의 페이지 범위 원문 전체(refined_elements 기반) — 근거 맥락 확장.
+
+    파싱 시 저장한 요소별 page로 정확히 자른다(청크 경계가 아니라 페이지 경계).
+    머리말·꼬리말 등 반복성 요소는 제외. 반환: (page, text) 순서대로.
+    """
+    doc = db.get(Document, document_id)
+    if doc is None or not doc.refined_elements:
+        return []
+    out: list[tuple[int, str]] = []
+    for e in doc.refined_elements.get("elements") or []:
+        if not isinstance(e, dict) or e.get("removed"):
+            continue
+        pg = e.get("page")
+        if not isinstance(pg, int) or pg < page_from or pg > page_to:
+            continue
+        if e.get("category") in _PAGE_SKIP_CATEGORIES:
+            continue
+        content = e.get("content") or {}
+        text = str(content.get("markdown") or content.get("text") or "").strip()
+        if text:
+            out.append((pg, text))
+    return out
+
+
 def get_concept_anchor_pages(
     db: Session, concept_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[int]]:

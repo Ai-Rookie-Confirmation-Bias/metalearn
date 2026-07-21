@@ -404,10 +404,25 @@ class ChunkEvidenceResponse(_CamelModel):
     """GET /chunks/evidence — 블록이 근거로 삼은 교재 원문 구절(추적 가능한 AI).
 
     blockId를 주면 청크 전체가 아니라 그 블록과 관련된 문단만 추려서 준다
-    (청크가 섹션 단위로 커서 전체를 보이면 범위가 넓음).
+    (청크가 섹션 단위로 커서 전체를 보이면 범위가 넓음). documentId·pageFrom·
+    pageTo는 "언급된 페이지 전체 보기"(맥락 확장)에서 쓴다.
     """
 
     passages: list[EvidencePassage] = Field(default_factory=list)
+    document_id: str | None = None
+    page_from: int | None = None
+    page_to: int | None = None
+
+
+class PageContentItem(_CamelModel):
+    page: int
+    text: str
+
+
+class PageContentResponse(_CamelModel):
+    """GET /documents/page-content — 특정 페이지 범위의 교재 원문 전체(맥락 확장)."""
+
+    items: list[PageContentItem] = Field(default_factory=list)
 
 
 class NoteSaveRequest(_CamelModel):

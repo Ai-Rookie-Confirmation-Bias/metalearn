@@ -33,6 +33,8 @@ from app.features.learning.schemas import (
     ChunkEvidenceResponse,
     EvidencePassage,
     NoteResponse,
+    PageContentItem,
+    PageContentResponse,
     NoteSaveRequest,
     OfflinePackBlock,
     OfflinePackResponse,
@@ -150,7 +152,10 @@ def get_chunk_evidence(
 
     # 청크들 → (문단, 페이지) 평탄화
     paragraphs: list[tuple[str, int | None]] = []
+    doc_id: str | None = None
     for c in chunks:
+        if doc_id is None and c.document_id:
+            doc_id = str(c.document_id)
         for para in _split_paragraphs(c.content):
             paragraphs.append((para, c.page_from))
 
@@ -164,8 +169,32 @@ def get_chunk_evidence(
             claim = _block_claim_text(block.type, block.data or {})
             paragraphs = _select_evidence(paragraphs, claim)
 
+    # "언급된 페이지"는 청크 전체 범위가 아니라 **좁힌 근거 문단들의 페이지**로.
+    pages = [p for _, p in paragraphs if p is not None]
     return ChunkEvidenceResponse(
-        passages=[EvidencePassage(text=t, page=p) for t, p in paragraphs]
+        passages=[EvidencePassage(text=t, page=p) for t, p in paragraphs],
+        document_id=doc_id,
+        page_from=min(pages) if pages else None,
+        page_to=max(pages) if pages else None,
+    )
+
+
+@router.get("/documents/page-content", response_model=PageContentResponse)
+def get_page_content(
+    documentId: str,
+    pageFrom: int,
+    pageTo: int,
+    db: Session = Depends(get_db),
+    user_id: uuid.UUID = Depends(get_current_user_id),
+) -> PageContentResponse:
+    """언급된 페이지 전체 보기 — 근거 맥락 확장(refined_elements 페이지 경계)."""
+    try:
+        doc_uuid = uuid.UUID(documentId)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="invalid documentId")
+    items = repo.get_page_content(db, doc_uuid, pageFrom, pageTo)
+    return PageContentResponse(
+        items=[PageContentItem(page=pg, text=t) for pg, t in items]
     )
 
 
