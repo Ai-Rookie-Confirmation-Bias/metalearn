@@ -26,6 +26,7 @@ export function EvidenceBadge({ block }: { block: LearningBlock }) {
   const pages = block.sourcePages ?? [];
   const refs = block.externalRefs ?? [];
   const chunkIds = block.sourceChunkIds ?? [];
+  // 페이지 라벨은 좁을 때만(정확할 때만 주장) — 넓으면 페이지 없이 원문 보기만.
   const PAGE_MAX = 5;
   const pageLabel =
     pages.length > 0 && pages.length <= PAGE_MAX
@@ -33,8 +34,11 @@ export function EvidenceBadge({ block }: { block: LearningBlock }) {
         ? `${pages[0]}쪽`
         : `${pages[0]}–${pages[pages.length - 1]}쪽`
       : null;
+  // 원문 보기는 book 블록에 근거 청크가 있으면 항상 — 페이지가 넓어 라벨을
+  // 못 붙이는 절(청크가 큼)에서도 근거 추적이 가능하게(교재 원문 그대로).
+  const canShowSource = block.source === "book" && chunkIds.length > 0;
 
-  if (!pageLabel && refs.length === 0) return null;
+  if (!pageLabel && !canShowSource && refs.length === 0) return null;
 
   const openEvidence = async () => {
     setOpen(true);
@@ -53,18 +57,22 @@ export function EvidenceBadge({ block }: { block: LearningBlock }) {
     <div className="mt-5 flex flex-wrap items-center gap-2 border-t border-border-primary pt-3 text-[0.78rem]">
       <span className="font-semibold text-text-tertiary">근거</span>
 
-      {/* book — 교재 페이지. 클릭하면 원문 청크 팝업(근거 보기) */}
-      {pageLabel && (
+      {/* book — 교재 근거. 클릭하면 원문 청크 팝업(근거 보기). 페이지는 좁을 때만. */}
+      {canShowSource && (
         <button
           type="button"
           onClick={openEvidence}
-          disabled={chunkIds.length === 0}
-          className="inline-flex items-center gap-1.5 rounded-full bg-[#6366f1]/10 px-2.5 py-1 font-medium text-[#4f46e5] transition-colors hover:bg-[#6366f1]/20 disabled:cursor-default disabled:hover:bg-[#6366f1]/10"
-          title={chunkIds.length ? "교재 원문 보기" : undefined}
+          className="inline-flex items-center gap-1.5 rounded-full bg-[#6366f1]/10 px-2.5 py-1 font-medium text-[#4f46e5] transition-colors hover:bg-[#6366f1]/20"
+          title="교재 원문 보기"
         >
           <BookOpenIcon weight="fill" />
-          교재 {pageLabel}
-          {chunkIds.length > 0 && <span className="opacity-60">· 원문 보기</span>}
+          {pageLabel ? (
+            <>
+              교재 {pageLabel} <span className="opacity-60">· 원문 보기</span>
+            </>
+          ) : (
+            "교재 원문 보기"
+          )}
         </button>
       )}
 
