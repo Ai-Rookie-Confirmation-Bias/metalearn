@@ -5,6 +5,26 @@
 
 ---
 
+## 2026-07-22 (세션39) — Claude CLI — [병합] learning-visuals-grading 통합 (그림설명=소민섭 방식, 슬러그픽스 유지)
+
+### 배경
+- 소민섭 `feat/learning-visuals-grading`가 **내 근거보기(3e530bf)에서 분기** — 내 Layer 2+ 그림설명(e4320c4)·C9 슬러그픽스(839e796)를 못 받고 **그림 설명을 독립 구현**. divergent(FF 불가).
+
+### 병합 결정 (사용자 지시)
+- **그림 설명 = 소민섭 방식으로 통일**: 소민섭이 더 정밀 — 그림 **요소 주변 창**(`get_figure_context`, element 앞4/뒤1) + **related 판단**(주변이 그림 안 받치면 생략). 내 방식(페이지 전체 근거, ingest 시 `_describe_figures`, `doc_figures.description`)은 폐기.
+- **C9 슬러그픽스는 유지**(소민섭에 없음 — 다중 PDF 버그).
+
+### 충돌 해소
+- `ImageData.explanation`/`ImageBlockData.explanation` 채택(내 `description` 제거). `ImageBlock`은 소민섭 렌더(그림 아래 "이 그림은" 콜아웃)만.
+- `learning/service._attach_section_figures`: 내 `description` 부착 제거, 소민섭 `explanation` 유지.
+- `documents/service`: 내 `_describe_figures`/`_page_text`/`_figure_desc_prompt` 제거(ingest 그림설명 생성 삭제). figure **저장**은 유지. (`doc_figures.description` 컬럼·`set_figure_description`은 미사용 dead — 후속 정리 여지.)
+- `WORK_LOG`: 양쪽 세션 블록 보존.
+
+### 소민섭 순수 추가분(검증 대상) — 안 겹침
+- 서답형 순서무관 채점, 온보딩 UX(정오답 표시+제출전 확인), concept 시각화(steps·오해 대비카드).
+
+---
+
 ## 에이전트 규칙 (Cursor / Claude CLI 공통)
 
 작업 **시작 전** 반드시 읽기:
@@ -117,6 +137,81 @@
 
 ### 다음 후보
 - B(vision): Solar 미지원 → EXAONE-VL 등 검토(클라우드). "AI 해석" 배지로 A(원문근거)와 구분.
+## 2026-07-22 (세션38) — Claude CLI — 교재 그림 설명: 그림별·주변맥락 기반으로 정확도 개선
+
+### 사용자 요청 (브라우저로 정보처리기사 코스 보며 연속 대화)
+- ① 위 그림엔 설명 있는데 아래 그림(A~G 그래프)은 "덩그러니" 왜? ② 두 그림은 서로 다른 그림 아니냐(공유 설명 전제 반박) ③ 그림마다 개별 설명 생성으로 가자 ④ "바로 옆 텍스트=그 그림 설명"이라 단정 말고 LLM이 실제로 맞는지 추론하게 ⑤ 정처기 전용 아니라 범용이어야 함.
+
+### 추론 / 결정
+- **원인 규명(세션37 후속)**: `_attach_section_figures`가 `explain_figure`를 절당 1회만 호출해 **첫 그림(i==0)에만** 설명 첨부 → 2번째 그림은 항상 설명 없음. DB 검증: 같은 A~G 그림이 다른 절에선 첫 그림으로 붙어 설명을 받음 → "그림 내용" 아니라 **"절 내 위치"** 만으로 갈림.
+- **정확도 문제(사용자 지적)**: A~G는 실제 **팬인/팬아웃** 그래프인데 6쪽 원문이 "프레임워크→API→팬인/팬아웃→응집도" 다주제라, 페이지 전체를 넘기니 LLM이 맨 앞 "프레임워크"를 그림 설명으로 오인. → 그림 **바로 주변 요소**로 좁히고, **인접≠설명**이므로 LLM이 관련성까지 판단하게.
+
+### 한 일
+1. **그림별 개별 설명**: `_attach_section_figures`에서 그림마다 `explain_figure` 호출(`asyncio.gather` 동시 실행, 지연 무증가).
+2. **주변 맥락으로 좁힘**: `repository.get_figure_context(doc_id, element_id, before=4, after=1)` 신설 — `element_id`로 그림 요소를 찾아 앞 4·뒤 1 요소만 근거로. 그림 자리표시자·머리말/꼬리말 제외. 창 크기는 4/1이 노이즈 최소로 실측 튜닝.
+3. **관련성 판단**: `explain_figure` 프롬프트에 "이 텍스트는 그림 근처일 뿐 반드시 설명 아님 → 뒷받침하는지 먼저 판단, 무관하면 explanation 공백" + 출력 `{"related":bool,"explanation":str}`. `related=false`면 설명 생략(억지 라벨링 금지).
+
+### 변경 파일
+- `backend/app/features/learning/repository.py` — `get_figure_context()` 추가
+- `backend/app/features/learning/service.py` — 그림별 개별 설명 + 주변 컨텍스트 사용
+- `backend/app/features/learning/generator.py` — 관련성 판단 프롬프트
+
+### 결과
+- 커밋 `e3d5f8a`, `origin/feat/learning-visuals-grading` 푸시 완료.
+- 정처기 "소프트웨어 설계" 챕터 재생성: 4쪽 그림 → "PERT/CPM 네트워크 차트"(실제 CPM 다이어그램 정정, 이전 "아키텍처 패턴 도표"는 환각이었음), 6쪽 → "모듈 D 팬인(A,B)·팬아웃(F)" 정확.
+
+### 검증 (live Docker + 실 Solar)
+- syntax/import OK 3파일. `get_figure_context`가 팬인/팬아웃 요소(111~113)를 그림(114) 앞에서 정확히 추출.
+- explain_figure 4회 반복 → 전부 팬인/팬아웃 정확(1회 None은 비결정성). 창 4/1이 API·응집도 노이즈 제거.
+- **범용성**: 다른 document(2dd82288) 4개 그림 — CPM·**선택정렬** 정확 설명, V-모델 등 맥락 부족分은 None(관련성 가드 작동). 자료 종속 하드코딩 0 확인.
+
+### 열린 이슈
+- [ ] 관련성 판단이 보수적 → 설명 가능한 그림도 가끔 생략(예: page8 V-모델). 방향 "틀린 설명 < 설명 없음"으로 의도적. 필요 시 문턱/창 튜닝.
+- [ ] 세션37 이월: concept 시각화·그림설명은 신규 생성분부터 — 기존 절 반영하려면 재생성 필요.
+
+### 다음 액션
+1. 다른 챕터/코스도 필요 시 재생성해 신규 그림설명 반영.
+2. (선택) 관련성 문턱 완화 옵션 검토 — 설명 커버리지 vs 정확도 트레이드오프.
+
+---
+
+## 2026-07-22 (세션37) — Claude CLI — 학습 콘텐츠 시각화·서답형 채점·온보딩 UX 개선 (5건)
+
+### 사용자 요청 (연속 세션, 브라우저 테스트 기반)
+- ① 수준 파악 마지막 문항 정오답 미표시 + 오선택 방지(뒤로가기) ② 커리큘럼 본문이 텍스트 위주 → 시각화 ③ 교재 그림만 덩그러니, 설명 없음 ④ 순서 무관 나열형 서답형이 위치 고정 채점으로 오답 처리. "제일 좋은 방향으로, 페이블 급으로" 구현 요청.
+
+### 한 일 / 결정 (전부 실 Solar E2E 검증, 미커밋 대기 → 이번에 브랜치 분리 커밋)
+
+1. **온보딩 UX** (`DiagnosisPage.tsx`)
+   - 마지막 기반지식 문항 정오답이 안 보이던 버그: 백엔드는 `last_reveal`을 done 상태에도 실어 보내는데 프론트가 `phase==="quiz"`에서만 렌더 → 마지막 답 직후 done 전환으로 유실. `RevealBanner` 컴포넌트로 추출해 퀴즈·완료(프로필 카드 위) 양쪽 재사용으로 해소.
+   - **오선택 방지 = 제출 전 확인 패턴**: 성향·프로브·퀴즈(객관식) 즉시 제출 → 선택 하이라이트 후 "다음/제출" 버튼 확정으로 전환(`DispositionPanel`·`ProbePanel`·`ContinueButton`). 진짜 뒤로가기(제출 후 되돌리기)는 퀴즈 채점·BKT·문항생성이 이미 끝나 비용 큼 → 제출 전 확인이 목적(오클릭 방지·씨앗 오염 방지) 달성.
+
+2. **커리큘럼 시각화 — concept 블록** (`schemas.py`·`generator.py`·`ConceptBlock.tsx`·`types.ts`)
+   - 진단: 렌더러(table/diagram/image/analogy)는 이미 있는데 **diagram DB 0개**·table 희소 → 생성 프롬프트가 시각블록을 "선택"으로 둬 LLM이 산문으로 도망. 원인은 표현수단이 아니라 생성 편향.
+   - `_ITEM_RULES`/§3 강화: **table/diagram 적극 생성**(억지·환각 금지 유지). E2E 4개 절 전부 시각블록 생성(diagram 포함).
+   - **동작원리 → 번호 스텝플로우**(`steps: []`), **흔한 오해 → ❌ 오해/✅ 실제로는 2단 대비 카드**(`misconception`+`misconceptionReality`). 산문을 그래픽으로 전환. 기존 데이터 하위호환(필드 없으면 기존 콜아웃).
+
+3. **교재 그림 설명** (`generator.explain_figure`·`service._attach_section_figures`·`ImageData.explanation`·`ImageBlock.tsx`)
+   - **solar-pro3 비전 미지원 실측**("Image input is not allowed for this model") + 교재 캡션 0/63 → 그림을 직접 못 봄. 최선안: **지면 원문+개념을 근거로 그림 안내 설명 생성**(환각 방지: 없는 시각세부 금지). concept 없던 image-only 절도 설명 획득.
+   - `_attach_section_figures` async 전환, 대표 그림에 설명 첨부. 프론트 "이 그림은" 인디고 박스. **07:55 정보처리기사 코스 실제 재생성 검증**: PERT/CPM 그림에 근거 있는 설명 저장 확인.
+
+4. **순서 무관 서답형 채점** (`verify_grade.py`·`grading.py`) — 사용자 발견 버그
+   - "XP 5가지 핵심 가치는 ⬜,⬜,⬜,⬜,⬜" 나열형인데 위치 고정 채점 → 정답을 다른 칸에 넣으면 오답. `is_enumeration_cloze`(빈칸 사이 나열 구분자뿐이면 순서무관 판정) + `grade_cloze_set`(집합 채점, 정답 1회 소진으로 중복 방지) + `grade_cloze_set_llm`(동의어 순서무관 의미매칭). 위치형·단일빈칸은 기존 채점 유지. **이미 저장된 블록에 즉시 적용**(재생성 불필요).
+   - 실 블록 검증: 정답 2개 다른칸+오답3 → `[✅✅❌❌❌]`, 전부정답 순서섞음 → 전부 ✅, 중복 방지, 동의어 인정, 위치형 오판 없음.
+
+- **롤백**: 교재 그림 "히어로(맨 위 대형)" 배치는 사용자 요청으로 롤백(service.py·ImageBlock 원복, schemas/types 히어로 줄만 제거). 그림 설명(3번)은 유지.
+
+### 조사만 하고 코드 변경 없음 (원인 규명)
+- **커리큘럼 강의(챕터)가 안 나뉘는 문제**: 정보처리기사 같은 PDF를 3번 업로드했는데 07:55는 파트 10개 감지→강의 10개 정상, 16:13·17:21은 파트 1개만 감지→전 주제가 한 강의에 뭉침. 원인은 **파싱 단계 파트 경계 감지(정제 v1)의 비결정성**(대형 다주제 요약노트에서 앞부분 위주로 봐 뒤 파트 놓침) — 렌더·씨앗트리·최근 변경과 무관. "씨앗 트리 비결정성" 이슈의 진짜 뿌리.
+
+### 검증
+- 전 항목 실 mlv2 Docker + 실 Solar E2E. 프론트 tsc 0. backend 200.
+- **주의(운영)**: Windows 바인드 마운트에서 uvicorn `--reload`가 변경 미감지 → 백엔드 수정 시 `docker restart mlv2-backend-1` 필요(반복 확인됨).
+
+### 열린 이슈
+- [ ] 파트 감지 비결정성(강의 미분할) — 전체 헤딩 기반 파트 판정 or 파트 1개+개념 수십개면 재시도/경고 가드
+- [ ] 그림 설명 생성 LLM 콜이 저장 단계 직렬 추가(그림 있는 절만) — 느리면 병렬화
+- [ ] concept 시각화·그림설명은 신규 생성분부터 — 기존 절은 재생성 필요
 
 ---
 

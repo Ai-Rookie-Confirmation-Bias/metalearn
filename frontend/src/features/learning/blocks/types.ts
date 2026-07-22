@@ -30,8 +30,10 @@ export type ConceptBlockData = {
   title?: string;
   body: string;
   whyItMatters?: string; // 왜 중요한가 (indigo 콜아웃)
+  steps?: string[]; // 동작 원리 단계 — 번호 스텝플로우 그래픽
   example?: string; // 구체 예시 (green 박스)
-  misconception?: string; // 흔한 오해 (amber 경고 콜아웃)
+  misconception?: string; // 흔한 오해 (오해 내용)
+  misconceptionReality?: string; // 정정(실제로는) — 있으면 ❌/✅ 대비 카드
 };
 
 // ① 비교표 — LLM이 {columns, rows} JSON만 뽑고 표는 렌더러가 그린다(HTML 생성 금지)
@@ -49,7 +51,7 @@ export type ImageBlockData = {
   figureId: string;
   page?: number;
   caption?: string;
-  description?: string; // 주변 원문 근거로 생성한 AI 그림 설명(Layer 2+)
+  explanation?: string; // 그림 안내 설명(원문 근거 기반) — 그림만 덩그러니 방지
 };
 
 // ① 다이어그램 — LLM은 그래프 JSON만, mermaid 코드는 서버가 결정적 조립.

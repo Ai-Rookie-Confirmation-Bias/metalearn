@@ -105,6 +105,47 @@ def get_page_content(
     return out
 
 
+def get_figure_context(
+    db: Session,
+    document_id: uuid.UUID,
+    element_id: int,
+    *,
+    before: int = 4,
+    after: int = 1,
+) -> str:
+    """그림 요소(element_id) 주변 원문 텍스트 창 — 그림 설명 생성 근거.
+
+    페이지 전체를 넘기면 같은 지면의 딴 주제를 그림 설명으로 오인한다(실측:
+    프레임워크·팬인/팬아웃이 한 쪽에 섞임). 그림 요소 바로 앞뒤 요소만 뽑아
+    그림에 실제로 인접한 맥락으로 좁힌다. 반환 텍스트가 그림과 맞는지의 판단은
+    호출부(LLM)가 한다 — 여기선 위치 기준으로만 좁힌다.
+    """
+    doc = db.get(Document, document_id)
+    if doc is None or not doc.refined_elements:
+        return ""
+    els = doc.refined_elements.get("elements") or []
+    idx = next(
+        (i for i, e in enumerate(els) if isinstance(e, dict) and e.get("id") == element_id),
+        None,
+    )
+    if idx is None:
+        return ""
+    window = els[max(0, idx - before) : idx + after + 1]
+    parts: list[str] = []
+    for e in window:
+        if not isinstance(e, dict) or e.get("removed"):
+            continue
+        if e.get("id") == element_id:  # 그림 자리표시자(![image]…) 자체는 제외
+            continue
+        if e.get("category") in _PAGE_SKIP_CATEGORIES:
+            continue
+        content = e.get("content") or {}
+        text = str(content.get("markdown") or content.get("text") or "").strip()
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts).strip()
+
+
 def get_concept_anchor_pages(
     db: Session, concept_ids: list[uuid.UUID]
 ) -> dict[uuid.UUID, list[int]]:

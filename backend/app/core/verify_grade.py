@@ -68,6 +68,46 @@ def grade_cloze(user_input: str, blanks: list[str]) -> bool:
     return all(grade_cloze_blanks(user_input, blanks))
 
 
+# 빈칸 사이 텍스트가 나열 구분자뿐이면 순서 무관(집합) 문항으로 본다.
+_LIST_SEP_RE = re.compile(r"^(?:[\s,，、·/]|및|그리고|또는|and|or)*$", re.IGNORECASE)
+
+
+def is_enumeration_cloze(text: str, blank_count: int) -> bool:
+    """빈칸들이 순서 무관 나열(A, B, C…)인지 — 빈칸 사이가 나열 구분자뿐이면 True.
+
+    예: "핵심 가치는 {{blank}}, {{blank}}, {{blank}}이다" → True(순서 무관).
+    빈칸끼리 실제 문장(서로 다른 역할)로 나뉘면 False(위치 채점 유지).
+    """
+    if blank_count < 2:
+        return False
+    parts = text.split("{{blank}}")
+    if len(parts) != blank_count + 1:
+        return False
+    return all(_LIST_SEP_RE.match(seg.strip()) for seg in parts[1:-1])
+
+
+def grade_cloze_set(user_input: object, blanks: list[str]) -> tuple[list[bool], list[str]]:
+    """순서 무관 정규화 채점 — 각 입력이 미소진 정답과 정규화 일치하면 True.
+
+    각 정답은 1회만 소진한다(같은 답을 여러 칸에 써서 중복 득점 방지).
+    반환: (입력 칸별 정오, 매칭되지 않고 남은 정답 목록 — LLM 의미 채점용).
+    """
+    parts = cloze_parts(user_input, len(blanks))
+    remaining = list(blanks)
+    remaining_norm = [normalize_text(b) for b in blanks]
+    out: list[bool] = []
+    for p in parts:
+        np = normalize_text(p)
+        if np and np in remaining_norm:
+            k = remaining_norm.index(np)
+            remaining_norm.pop(k)
+            remaining.pop(k)
+            out.append(True)
+        else:
+            out.append(False)
+    return out, remaining
+
+
 @dataclass(frozen=True)
 class ExplainBackGrade:
     score: float

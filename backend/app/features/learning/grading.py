@@ -20,8 +20,10 @@ from app.core.verify_grade import (
     ExplainBackGrade,
     cloze_parts,
     grade_cloze_blanks,
+    grade_cloze_set,
     grade_explain_back_rubric,
     grade_mcq,
+    is_enumeration_cloze,
 )
 
 logger = logging.getLogger(__name__)
@@ -173,6 +175,48 @@ async def grade_cloze_llm_blanks(
         return [False] * len(blanks)
 
 
+async def grade_cloze_set_llm(
+    llm: LLMClient, *, text: str, parts: list[str], candidates: list[str]
+) -> list[int | None]:
+    """순서 무관 문항의 LLM 의미 채점 — 각 학습자 답이 남은 정답 중 무엇과 같은지.
+
+    정확일치가 놓친 동의어·표기차이를 순서 무관하게 잡는다(예: '의사소통'을
+    '커뮤니케이션'으로 쓰고 다른 칸에 넣은 경우). 반환: parts별 매칭된 candidate
+    인덱스(없으면 None). 소진 관리는 호출측이 한다. 실패 시 전부 None."""
+    if not candidates or not any(p.strip() for p in parts):
+        return [None] * len(parts)
+    cand_list = "\n".join(f"{j}. \"{c}\"" for j, c in enumerate(candidates))
+    ans_list = "\n".join(f"{i}. \"{parts[i]}\"" for i in range(len(parts)))
+    prompt = (
+        "너는 빈칸 채점관이다. 이 문항은 여러 항목을 **순서 상관없이** 나열하는 "
+        "문제다. 각 학습자 답이 아래 '남은 정답' 중 하나와 의미상 같은지 판정하라.\n"
+        f"문장: {text}\n"
+        f"[남은 정답]\n{cand_list}\n"
+        f"[학습자 답]\n{ans_list}\n"
+        "표기 차이(공백·기호)·동의어는 같은 것으로 인정. 각 학습자 답에 대해 "
+        "일치하는 정답의 번호를, 없으면 null을 매겨라.\n"
+        '출력 JSON: {"matches": [{"answer": 0, "candidate": 정답번호 또는 null}, ...]}'
+    )
+    try:
+        raw = await llm.generate(prompt, json_mode=True)
+        cleaned = raw.strip()
+        fence = re.search(r"```(?:json)?\s*(.+?)\s*```", cleaned, re.DOTALL)
+        if fence:
+            cleaned = fence.group(1).strip()
+        start, end = cleaned.find("{"), cleaned.rfind("}")
+        payload = json.loads(cleaned[start : end + 1])
+        result: list[int | None] = [None] * len(parts)
+        for m in payload.get("matches") or []:
+            i = m.get("answer")
+            c = m.get("candidate")
+            if isinstance(i, int) and 0 <= i < len(parts) and isinstance(c, int) and 0 <= c < len(candidates):
+                result[i] = c
+        return result
+    except Exception:
+        logger.exception("순서무관 cloze LLM 채점 실패 — 정확일치 결과 유지")
+        return [None] * len(parts)
+
+
 async def grade_block(
     llm: LLMClient, *, block_type: str, block_data: dict, user_input: object
 ) -> GradeResult:
@@ -190,15 +234,30 @@ async def grade_block(
         blanks = [str(b) for b in (block_data.get("blanks") or [])]
         if not blanks:
             raise ValueError("cloze 블록에 정답 데이터가 없습니다")
+        text = str(block_data.get("text") or "")
         parts = cloze_parts(user_input, len(blanks))
-        # 빠른 경로: 빈칸별 정규화 정확일치. 실패한 빈칸만 LLM 의미 채점(비용 절약).
+
+        # 순서 무관 나열형("핵심 가치는 __, __, __이다")은 집합 채점 —
+        # 정답을 다른 칸에 넣어도 맞음(위치 고정 채점이 정답을 오답 처리하던 버그).
+        if is_enumeration_cloze(text, len(blanks)):
+            per_blank, remaining = grade_cloze_set(parts, blanks)
+            # 정확일치가 놓친 동의어를 남은 정답과 순서 무관 의미 매칭(소진 관리)
+            if not all(per_blank) and remaining:
+                matches = await grade_cloze_set_llm(
+                    llm, text=text, parts=parts, candidates=remaining
+                )
+                used: set[int] = set()
+                for i, cand in enumerate(matches):
+                    if not per_blank[i] and cand is not None and cand not in used:
+                        per_blank[i] = True
+                        used.add(cand)
+            return GradeResult(correct=all(per_blank), blank_results=per_blank)
+
+        # 위치 채점: 빈칸별 정규화 정확일치 → 실패한 빈칸만 LLM 의미 채점(비용 절약).
         per_blank = grade_cloze_blanks(parts, blanks)
         if not all(per_blank):
             llm_res = await grade_cloze_llm_blanks(
-                llm,
-                text=str(block_data.get("text") or ""),
-                blanks=blanks,
-                parts=parts,
+                llm, text=text, blanks=blanks, parts=parts
             )
             per_blank = [e or l for e, l in zip(per_blank, llm_res, strict=True)]
         return GradeResult(correct=all(per_blank), blank_results=per_blank)

@@ -139,34 +139,6 @@ def _normalize_name(name: str) -> str:
     return re.sub(r"\s+", "", base).lower()
 
 
-_FIG_SKIP_CATS = {"header", "footer", "footnote", "index"}
-
-
-def _page_text(refined: dict, page: int) -> str:
-    """refined_elements에서 특정 페이지의 본문 텍스트(그림 설명의 근거)."""
-    texts: list[str] = []
-    for e in (refined or {}).get("elements") or []:
-        if not isinstance(e, dict) or e.get("removed"):
-            continue
-        if e.get("page") != page or e.get("category") in _FIG_SKIP_CATS:
-            continue
-        c = e.get("content") or {}
-        t = str(c.get("markdown") or c.get("text") or "").strip()
-        t = re.sub(r"!\[[^\]]*\]\([^)]*\)", "", t).strip()
-        if t:
-            texts.append(t)
-    return "\n".join(texts)
-
-
-def _figure_desc_prompt(page: int, context: str) -> str:
-    return (
-        f"다음은 교재 {page}쪽에 있는 그림의 주변 원문이다. 이 그림이 학습에서 "
-        "무엇을 보여주는지 학습자가 이해하기 쉽게 1~2문장으로 설명하라. 반드시 "
-        "주변 원문에 근거하고, 원문에 없는 내용은 지어내지 마라. 설명 문장만 출력.\n\n"
-        f"[주변 원문]\n{context[:1500]}\n\n그림 설명(1~2문장):"
-    )
-
-
 def _extract_figures(elements: list[dict]) -> list[dict]:
     """DP elements에서 figure/chart 크롭(base64)을 뽑아 저장용 dict로.
 
@@ -302,10 +274,8 @@ class DocumentService:
         document.profile = profile
         self.db.commit()
 
-        # Layer 2+: 그림 AI 설명 — 주변 원문(refined 같은 페이지) 근거로 생성.
-        # vision 없이 "이 그림이 뭘 보여주는지"를 원문에 접지해 설명(환각 억제).
-        if fig_rows:
-            await self._describe_figures(document, fig_rows)
+        # 그림 설명은 절 생성 시(learning._attach_section_figures)에 그림 요소
+        # 주변 원문으로 개별 생성한다 — ingest 단계에서 만들지 않는다.
 
         stage("chunking")
         chunks = sectioning.chunk_elements(
@@ -329,33 +299,6 @@ class DocumentService:
             await self._persist_graph(
                 course_id, extractions, chunk_ids=[row.id for row in chunk_rows]
             )
-
-    async def _describe_figures(self, document, fig_rows: list) -> None:
-        """그림별 AI 설명 생성(Layer 2+) — 주변 원문 근거, LLM 병렬·저장 순차.
-
-        생성(순수)은 gather로 병렬, DB 쓰기는 순차(sync Session 태스크 공유 금지).
-        주변 원문이 비면 설명을 건너뛴다(근거 없으면 지어내지 않음).
-        """
-        refined = document.refined_elements or {}
-
-        async def gen(fig) -> tuple[uuid.UUID, str | None]:
-            ctx = _page_text(refined, fig.page)
-            if not ctx.strip():
-                return fig.id, None
-            try:
-                desc = await solar_client.generate(_figure_desc_prompt(fig.page, ctx))
-            except Exception:  # noqa: BLE001 — 설명 실패는 그림만(이미지는 남음)
-                return fig.id, None
-            return fig.id, desc.strip()[:800] or None
-
-        results = await asyncio.gather(*(gen(f) for f in fig_rows))
-        n = 0
-        for fig_id, desc in results:
-            if desc:
-                self.repo.set_figure_description(figure_id=fig_id, description=desc)
-                n += 1
-        self.db.commit()
-        _log.info("그림 설명 생성: %d/%d개", n, len(fig_rows))
 
     async def _ingest_link(self, *, document, url: str) -> None:
         """링크 보조자료 1건: fetch→텍스트→청킹→임베딩. 항상 RAG 근거 전용.

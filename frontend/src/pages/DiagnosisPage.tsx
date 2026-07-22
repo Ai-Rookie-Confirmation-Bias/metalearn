@@ -21,7 +21,15 @@ import {
   startOnboarding,
 } from "@/features/diagnostic/api/onboardingApi";
 import { getCourses } from "@/features/library/api/getCourses";
-import type { OnboardingResult, OnboardingState, QuestionOut, QuestionType } from "@/features/diagnostic/types";
+import type {
+  DispositionItemOut,
+  OnboardingResult,
+  OnboardingReveal,
+  OnboardingState,
+  ProbeOut,
+  QuestionOut,
+  QuestionType,
+} from "@/features/diagnostic/types";
 
 const QTYPE_LABEL: Record<QuestionType, string> = {
   mcq: "선택형",
@@ -65,6 +73,29 @@ function CenterNotice({
   );
 }
 
+// 직전 기반지식 문항의 정오답 배너 — 퀴즈 진행 중(다음 문항 위)과
+// 마지막 문항 직후(완료 화면, 프로필 카드 위) 양쪽에서 재사용한다.
+// 마지막 문항은 답하면 바로 'done'으로 넘어가 이 배너를 못 보던 버그를 이 재사용으로 해소.
+function RevealBanner({ reveal }: { reveal: OnboardingReveal }) {
+  return (
+    <div
+      className={clsx(
+        "rounded-xl border px-4 py-3 text-left text-[0.9rem]",
+        reveal.correct
+          ? "border-[#10b981]/40 bg-[#10b981]/10 text-[#047857]"
+          : "border-[#ef4444]/40 bg-[#ef4444]/10 text-[#b91c1c]",
+      )}
+    >
+      <span className="font-semibold">
+        {reveal.correct ? "✅ 정답이에요!" : "❌ 오답이에요."}
+      </span>
+      {!reveal.correct && reveal.correct_answer && (
+        <span className="ml-1 text-text-secondary">정답: {reveal.correct_answer}</span>
+      )}
+    </div>
+  );
+}
+
 function ProfileCard({ result }: { result: OnboardingResult }) {
   return (
     <div className="rounded-2xl border border-accent/20 bg-accent/[0.04] p-8 text-left">
@@ -104,6 +135,125 @@ function ProfileCard({ result }: { result: OnboardingResult }) {
   );
 }
 
+// 공용 "다음/제출" 확정 버튼 — 선택 즉시 제출하던 것을 "선택 → 확인 후 제출"로
+// 바꿔 오클릭이 그대로 넘어가(=BKT 씨앗 오염) 버리는 것을 막는다.
+function ContinueButton({
+  disabled,
+  onClick,
+  label = "다음",
+}: {
+  disabled: boolean;
+  onClick: () => void;
+  label?: string;
+}) {
+  return (
+    <button
+      type="button"
+      disabled={disabled}
+      onClick={onClick}
+      className="mt-6 w-full rounded-xl bg-primary px-6 py-3.5 text-[0.95rem] font-semibold text-white transition-colors hover:bg-primary-hover disabled:cursor-not-allowed disabled:opacity-50"
+    >
+      {label}
+    </button>
+  );
+}
+
+// 성향 문항 — 선택 하이라이트 후 "다음"으로 확정(즉시 제출 아님). key=item.id로
+// 새 문항 도착 시 선택 자동 리셋.
+function DispositionPanel({
+  item,
+  busy,
+  onSubmit,
+}: {
+  item: DispositionItemOut;
+  busy: boolean;
+  onSubmit: (choiceIndex: number) => void;
+}) {
+  const [selected, setSelected] = useState<number | null>(null);
+  return (
+    <>
+      <h2 className="mb-6 text-[1.15rem] font-semibold leading-relaxed text-text-primary">
+        {item.prompt}
+      </h2>
+      <div className="flex flex-col gap-3">
+        {item.options.map((opt, i) => (
+          <button
+            key={i}
+            type="button"
+            disabled={busy}
+            onClick={() => setSelected(i)}
+            className={clsx(
+              "rounded-xl border px-5 py-4 text-left text-[0.95rem] transition-all disabled:opacity-60",
+              selected === i
+                ? "border-accent bg-accent/[0.06] font-semibold text-text-primary"
+                : "border-border-primary text-text-primary hover:border-accent hover:bg-accent/[0.02]",
+            )}
+          >
+            {opt}
+          </button>
+        ))}
+      </div>
+      <ContinueButton
+        disabled={selected === null || busy}
+        onClick={() => selected !== null && onSubmit(selected)}
+      />
+    </>
+  );
+}
+
+// 스타일 프로브 — 두 설명 중 선택 하이라이트 후 "다음"으로 확정.
+function ProbePanel({
+  probe,
+  busy,
+  onSubmit,
+}: {
+  probe: ProbeOut;
+  busy: boolean;
+  onSubmit: (choiceIndex: number) => void;
+}) {
+  const [selected, setSelected] = useState<number | null>(null);
+  return (
+    <>
+      <p className="mb-2 text-[0.8rem] font-semibold text-text-tertiary">
+        {probe.concept_name} — 같은 내용, 두 가지 설명
+      </p>
+      <h2 className="mb-4 text-[1.05rem] font-semibold text-text-primary">
+        어느 쪽이 더 와닿나요?
+      </h2>
+      <div className="flex flex-col gap-4">
+        {[
+          { label: "A · 비유·예시형", text: probe.variant_a, idx: 0 },
+          { label: "B · 정의·원리형", text: probe.variant_b, idx: 1 },
+        ].map(({ label, text, idx }) => (
+          <button
+            key={idx}
+            type="button"
+            disabled={busy}
+            onClick={() => setSelected(idx)}
+            className={clsx(
+              "rounded-xl border p-5 text-left transition-all disabled:opacity-60",
+              selected === idx
+                ? "border-accent bg-accent/[0.04]"
+                : "border-border-primary hover:border-accent hover:bg-accent/[0.02]",
+            )}
+          >
+            <span className="mb-2 block text-[0.8rem] font-semibold text-accent">
+              {label}
+            </span>
+            <span className="whitespace-pre-wrap text-[0.92rem] leading-relaxed text-text-secondary">
+              {text}
+            </span>
+          </button>
+        ))}
+      </div>
+      <ContinueButton
+        disabled={selected === null || busy}
+        onClick={() => selected !== null && onSubmit(selected)}
+      />
+    </>
+  );
+}
+
 function QuizPanel({
   question,
   busy,
@@ -127,38 +277,41 @@ function QuizPanel({
         {question.question}
       </h2>
       {question.qtype === "mcq" ? (
-        <div className="flex flex-col gap-3">
-          {question.options.map((opt, i) => (
-            <button
-              key={i}
-              type="button"
-              disabled={busy}
-              onClick={() => {
-                setPicked(i);
-                void onSubmit({ selected_index: i });
-              }}
-              className={clsx(
-                "flex items-center gap-4 rounded-xl border px-5 py-4 text-left text-[0.95rem] transition-all",
-                picked === i
-                  ? "border-accent bg-accent/[0.06] font-semibold text-text-primary"
-                  : "border-border-primary bg-white text-text-primary hover:border-accent hover:bg-accent/[0.02]",
-                busy && "cursor-default",
-              )}
-            >
-              <span
+        <>
+          <div className="flex flex-col gap-3">
+            {question.options.map((opt, i) => (
+              <button
+                key={i}
+                type="button"
+                disabled={busy}
+                onClick={() => setPicked(i)}
                 className={clsx(
-                  "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[0.8rem] font-bold",
+                  "flex items-center gap-4 rounded-xl border px-5 py-4 text-left text-[0.95rem] transition-all disabled:opacity-60",
                   picked === i
-                    ? "border-accent bg-accent text-white"
-                    : "border-border-primary text-text-tertiary",
+                    ? "border-accent bg-accent/[0.06] font-semibold text-text-primary"
+                    : "border-border-primary bg-white text-text-primary hover:border-accent hover:bg-accent/[0.02]",
                 )}
               >
-                {String.fromCharCode(65 + i)}
-              </span>
-              <span>{opt}</span>
-            </button>
-          ))}
-        </div>
+                <span
+                  className={clsx(
+                    "flex h-6 w-6 shrink-0 items-center justify-center rounded-full border text-[0.8rem] font-bold",
+                    picked === i
+                      ? "border-accent bg-accent text-white"
+                      : "border-border-primary text-text-tertiary",
+                  )}
+                >
+                  {String.fromCharCode(65 + i)}
+                </span>
+                <span>{opt}</span>
+              </button>
+            ))}
+          </div>
+          <ContinueButton
+            disabled={picked === null || busy}
+            onClick={() => picked !== null && onSubmit({ selected_index: picked })}
+            label="제출"
+          />
+        </>
       ) : (
         <form
           onSubmit={(e) => {
@@ -341,6 +494,7 @@ export function DiagnosisPage() {
             desc=""
             action={
               <div className="w-full max-w-[520px] space-y-6">
+                {state.last_reveal && <RevealBanner reveal={state.last_reveal} />}
                 <ProfileCard result={state.result} />
                 <button
                   onClick={() => navigate("/library")}
@@ -371,75 +525,26 @@ export function DiagnosisPage() {
             </div>
 
             {state.phase === "disposition" && state.disposition && (
-              <>
-                <h2 className="mb-6 text-[1.15rem] font-semibold leading-relaxed text-text-primary">
-                  {state.disposition.prompt}
-                </h2>
-                <div className="flex flex-col gap-3">
-                  {state.disposition.options.map((opt, i) => (
-                    <button
-                      key={i}
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void submitAnswer({ choice_index: i })}
-                      className="rounded-xl border border-border-primary px-5 py-4 text-left text-[0.95rem] text-text-primary transition-all hover:border-accent hover:bg-accent/[0.02] disabled:opacity-60"
-                    >
-                      {opt}
-                    </button>
-                  ))}
-                </div>
-              </>
+              <DispositionPanel
+                key={state.disposition.id}
+                item={state.disposition}
+                busy={busy}
+                onSubmit={(choice_index) => void submitAnswer({ choice_index })}
+              />
             )}
 
             {state.phase === "probe" && state.probe && (
-              <>
-                <p className="mb-2 text-[0.8rem] font-semibold text-text-tertiary">
-                  {state.probe.concept_name} — 같은 내용, 두 가지 설명
-                </p>
-                <h2 className="mb-4 text-[1.05rem] font-semibold text-text-primary">
-                  어느 쪽이 더 와닿나요?
-                </h2>
-                <div className="flex flex-col gap-4">
-                  {[
-                    { label: "A · 비유·예시형", text: state.probe.variant_a, idx: 0 },
-                    { label: "B · 정의·원리형", text: state.probe.variant_b, idx: 1 },
-                  ].map(({ label, text, idx }) => (
-                    <button
-                      key={idx}
-                      type="button"
-                      disabled={busy}
-                      onClick={() => void submitAnswer({ choice_index: idx })}
-                      className="rounded-xl border border-border-primary p-5 text-left transition-all hover:border-accent hover:bg-accent/[0.02] disabled:opacity-60"
-                    >
-                      <span className="mb-2 block text-[0.8rem] font-semibold text-accent">
-                        {label}
-                      </span>
-                      <span className="whitespace-pre-wrap text-[0.92rem] leading-relaxed text-text-secondary">
-                        {text}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </>
+              <ProbePanel
+                key={state.probe.concept_id}
+                probe={state.probe}
+                busy={busy}
+                onSubmit={(choice_index) => void submitAnswer({ choice_index })}
+              />
             )}
 
             {state.phase === "quiz" && state.last_reveal && (
-              <div
-                className={clsx(
-                  "mb-6 rounded-xl border px-4 py-3 text-[0.9rem]",
-                  state.last_reveal.correct
-                    ? "border-[#10b981]/40 bg-[#10b981]/10 text-[#047857]"
-                    : "border-[#ef4444]/40 bg-[#ef4444]/10 text-[#b91c1c]",
-                )}
-              >
-                <span className="font-semibold">
-                  {state.last_reveal.correct ? "✅ 정답이에요!" : "❌ 오답이에요."}
-                </span>
-                {!state.last_reveal.correct && state.last_reveal.correct_answer && (
-                  <span className="ml-1 text-text-secondary">
-                    정답: {state.last_reveal.correct_answer}
-                  </span>
-                )}
+              <div className="mb-6">
+                <RevealBanner reveal={state.last_reveal} />
               </div>
             )}
 
