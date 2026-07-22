@@ -691,16 +691,6 @@ class DocumentService:
         """
         by_norm: dict[str, uuid.UUID] = {}  # 정규화 이름 → concept_id
         edges: set[tuple[uuid.UUID, uuid.UUID]] = set()
-        # 코스 내 슬러그 유니크 가드. 다중 PDF: 이전 문서가 이미 만든 슬러그를
-        # DB에서 미리 로드해 문서 간 충돌(예: 두 PDF의 'protocol')을 막는다.
-        # 충돌 슬러그는 None으로 두고 dedup/seed 폴백에 맡긴다(NULL은 유니크 예외).
-        used_keys: set[str] = set(
-            self.db.scalars(
-                select(Concept.key).where(
-                    Concept.course_id == course_id, Concept.key.isnot(None)
-                )
-            )
-        )
         embed_cache = await self._embed_all(extractions)
         ids = chunk_ids or [None] * len(extractions)
 
@@ -724,13 +714,10 @@ class DocumentService:
                 cid = near[0].id
                 self._merge_concept(cid, node, depth_level, source, anchor, chunk_id)
             else:
-                # 슬러그 동시 산출: 코스 내 중복이면 None으로 두고 seed가 채운다
-                # (UniqueConstraint(course_id, key) 위반 방지).
-                slug = _sanitize_slug(node.key)
-                if slug and slug in used_keys:
-                    slug = None
-                if slug:
-                    used_keys.add(slug)
+                # 슬러그는 여기서 부여하지 않는다(key=None). 문서 병렬 ingest(C9)에서
+                # 독립 세션이 서로의 미커밋 슬러그를 못 봐 코스 유니크가 깨진다
+                # (uq_concepts_course_key 위반). build_tree의 _fill_keys(순차)가
+                # 코스 전체에 부여한다 — NULL은 유니크 제약 예외라 병렬 저장 안전.
                 concept = self.repo.add_concept(
                     course_id=course_id,
                     name=node.name,
@@ -740,7 +727,7 @@ class DocumentService:
                     source=source,
                     source_anchor=anchor,
                     source_chunk_id=chunk_id,
-                    key=slug,
+                    key=None,
                 )
                 cid = concept.id
             by_norm[norm] = cid

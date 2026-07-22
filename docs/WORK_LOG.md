@@ -81,6 +81,22 @@
 
 ---
 
+## 2026-07-22 (세션38) — Claude CLI — [버그픽스] C9 회귀: 다중 PDF 슬러그 충돌(uq 위반)
+
+### 증상
+- 2개 PDF 배치 업로드 실패 — `IntegrityError: duplicate key uq_concepts_course_key`. 배치 ingest 백그라운드 실패.
+
+### 원인 (C9 문서 병렬 ingest 회귀)
+- `_persist_graph`의 슬러그 유니크 가드(`used_keys` = 코스 슬러그 DB 조회)는 **순차 ingest 전제** 설계 — "이전 문서가 만든 슬러그를 보고 회피". C9(세션32)가 문서를 **독립 세션 병렬**로 돌리면서, 두 문서가 서로의 **미커밋 슬러그를 못 봐** 같은 슬러그("protocol" 등) 생성 → 커밋 시 uq 충돌.
+
+### 해결
+- 슬러그를 병렬 구간(`_persist_graph`)에서 **부여하지 않음**(`key=None`) → `build_tree`의 `_fill_keys`(순차, 코스 전체 대상)가 유니크 부여. NULL은 uq 제약 예외라 병렬 저장 안전. C9 병렬 이점(속도) 유지하면서 슬러그 유니크 회복.
+
+### 검증
+- 실패했던 것과 동형인 2-PDF 배치 재업로드 → **ready**(이전 failed). concepts 61개 전부 key 부여·distinct 61·**슬러그 중복 0**. 검증 코스 삭제로 정리.
+
+---
+
 ## 2026-07-22 (세션37) — Claude CLI — Layer 2+: 교재 그림 AI 설명("설명 + 이미지")
 
 ### 사용자 요청
