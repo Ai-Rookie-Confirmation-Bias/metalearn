@@ -104,8 +104,10 @@ class DocumentRepository:
         self.db.flush()
         return rows
 
-    def add_figures(self, *, document_id: uuid.UUID, figures: list[dict]) -> int:
-        """DP 크롭 이미지(figure/chart)를 doc_figures로 영속화(Layer 2).
+    def add_figures(
+        self, *, document_id: uuid.UUID, figures: list[dict]
+    ) -> list[DocFigure]:
+        """DP 크롭 이미지(figure/chart)를 doc_figures로 영속화(Layer 2). 저장 행 반환.
 
         figures: [{"page","element_id","category","mime","data"(bytes)}].
         같은 문서 재섭취 시 중복 방지를 위해 기존 행을 비우고 다시 넣는다(멱등).
@@ -113,19 +115,28 @@ class DocumentRepository:
         from sqlalchemy import delete
 
         self.db.execute(delete(DocFigure).where(DocFigure.document_id == document_id))
+        rows: list[DocFigure] = []
         for f in figures:
-            self.db.add(
-                DocFigure(
-                    document_id=document_id,
-                    page=f["page"],
-                    element_id=f["element_id"],
-                    category=f.get("category") or "figure",
-                    mime=f.get("mime") or "image/png",
-                    data=f["data"],
-                )
+            row = DocFigure(
+                document_id=document_id,
+                page=f["page"],
+                element_id=f["element_id"],
+                category=f.get("category") or "figure",
+                mime=f.get("mime") or "image/png",
+                data=f["data"],
             )
+            self.db.add(row)
+            rows.append(row)
         self.db.flush()
-        return len(figures)
+        return rows
+
+    def set_figure_description(
+        self, *, figure_id: uuid.UUID, description: str
+    ) -> None:
+        """그림 AI 설명 저장(mig 0023) — ingest 시 주변 원문 근거로 1회 생성."""
+        fig = self.db.get(DocFigure, figure_id)
+        if fig is not None:
+            fig.description = description
 
     def get_figure(self, figure_id: uuid.UUID) -> DocFigure | None:
         return self.db.get(DocFigure, figure_id)

@@ -81,6 +81,29 @@
 
 ---
 
+## 2026-07-22 (세션37) — Claude CLI — Layer 2+: 교재 그림 AI 설명("설명 + 이미지")
+
+### 사용자 요청
+- Layer 2는 원문 그림을 그대로만 가져옴 → AI로 "이해하기 쉬운 설명 + 이미지"로 커리큘럼 생성. (Solar vision 없음 확인 → 접근 A: 주변 원문 근거 설명부터.)
+
+### 추론 / 결정
+- **vision 없이 접근 A**: 교재는 그림 근처에 설명이 있음 → figure의 **같은 페이지 원문(refined_elements)**을 근거로 LLM이 "이 그림이 뭘 보여주는지" 설명. 근거 접지라 환각 억제(우리 원칙 유지). 이미지 자체 해석(B, vision)은 Solar 미지원이라 보류.
+- **품질 선검증**(파이프라인 전): 발표자료 figure(caption 없음)의 주변 원문만으로 "이 그림은 LTE/5G 전파가 터널·콘크리트·금속에 차폐/감쇠되는 현상… 엘리베이터 Wi-Fi 끊김과 같은 원리" — 쓸만한 설명 확인 후 착수.
+
+### 한 일
+- **mig 0023**: `doc_figures.description`(AI 그림 설명). 모델 필드 추가.
+- ingest(`_ingest_document`): figure 저장(rows 반환) → refining 후 **`_describe_figures`**로 그림별 설명 생성(주변 원문 근거, LLM **생성 병렬·DB 저장 순차** — sync Session 안전). 주변 원문 없으면 설명 스킵(지어내지 않음).
+- `_attach_section_figures`: image 블록 data에 description 포함. `ImageData`/`ImageBlockData` 스키마 + `ImageBlock` 렌더(그림 위 accent 콜아웃으로 설명 먼저).
+
+### 검증 (실 PDF·실 Solar)
+- 발표자료 업로드 → figure 3개 → 설명 생성 3/3(2쪽 전파장애물 정확). 챕터 generate → 절 image 블록에 **description 부착 확인**(봉투로 서빙). mig 0023, tsc 0, 계약 additive.
+- **한계(정직)**: vision 없어 주변 텍스트 의존 → 텍스트 풍부한 자료(발표·요약)는 좋고, 그림만 있고 주변 설명 없으면 약함. 5쪽 그림 설명은 주변 텍스트 기반이라 실제 그림과 다를 여지(원문 근거는 유지). 정밀은 vision(B)가 정공.
+
+### 다음 후보
+- B(vision): Solar 미지원 → EXAONE-VL 등 검토(클라우드). "AI 해석" 배지로 A(원문근거)와 구분.
+
+---
+
 ## 2026-07-21 (세션36) — Claude CLI — 근거 보기(추적 가능한 AI): 배지 클릭 → 교재 원문 팝업
 
 ### 사용자 요청 / 맥락

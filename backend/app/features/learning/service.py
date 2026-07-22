@@ -257,6 +257,7 @@ def _attach_section_figures(
             data={
                 "figureId": str(f.id),
                 "page": f.page,
+                **({"description": f.description} if f.description else {}),
                 **({"caption": f.caption} if f.caption else {}),
             },
             meta={"difficulty": "mid", "version": 1, "order": 0},

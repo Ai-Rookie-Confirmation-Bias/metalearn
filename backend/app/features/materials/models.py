@@ -130,6 +130,8 @@ class DocFigure(Base):
         String(32), nullable=False, server_default="figure"
     )
     caption: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # AI 그림 설명(mig 0023) — 주변 원문 근거로 생성한 "이 그림이 뭘 보여주는지".
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
     mime: Mapped[str] = mapped_column(
         String(64), nullable=False, server_default="image/png"
     )

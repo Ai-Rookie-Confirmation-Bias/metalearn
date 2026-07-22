@@ -49,6 +49,7 @@ export type ImageBlockData = {
   figureId: string;
   page?: number;
   caption?: string;
+  description?: string; // 주변 원문 근거로 생성한 AI 그림 설명(Layer 2+)
 };
 
 // ① 다이어그램 — LLM은 그래프 JSON만, mermaid 코드는 서버가 결정적 조립.

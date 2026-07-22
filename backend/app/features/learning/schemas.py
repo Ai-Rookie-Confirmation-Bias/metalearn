@@ -88,6 +88,7 @@ class ImageData(_CamelModel):
     figure_id: str
     page: int | None = None
     caption: str | None = None
+    description: str | None = None  # 주변 원문 근거로 생성한 AI 그림 설명(Layer 2+)
 
 
 class TableData(_CamelModel):
