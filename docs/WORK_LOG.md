@@ -5,6 +5,27 @@
 
 ---
 
+## 2026-07-24 (세션43) — Claude CLI — [검증·배포] Tier 2 ①②③ 독립 검증 + 개인 브랜치 push
+
+### 사용자 요청
+- 세션40~42에서 직접 구현한 Tier 2 3커밋(형식오류 422·그림캐싱·정답유출)을 "어떤지 체크" → 검증 후 개인 브랜치(feat/yoonhs-work)에 push, 문서 기록.
+
+### 한 일 (검증)
+- **정합**: `app.api` import OK(3커밋 얹은 뒤 순환/시그니처 깨짐 없음).
+- **① 형식오류 422**: `record_attempt` 진입부(service.py:727)에서 `validate_user_input` 채점 전 호출 확인. 실 API로 mcq에 `[0,1]`·`{dict}` → **422**, 정상 `0` → **200**. cloze str(레거시 콤마)·빈답 통과=과잉거부 없음 확인.
+- **③ 정답유출**: 순수 로직 직접 호출 3/3 — 개념명=정답 cloze→폐기(None), 정상 cloze→유지, mcq 정답=개념명→유출 감지. 부분포함·오답보기 유지=과잉폐기 없음 재확인.
+- **② 그림캐싱**: `_attach_section_figures._explain` 캐시히트(`if f.description: return`)+gather 밖 순차 저장 로직 정합. work가 소민섭 `explain_figure`(related·주변맥락)에 내 `doc_figures.description` 캐싱을 얹은 **하이브리드** 확인 → 그림설명만 보면 work가 integration보다 앞섬(캐싱 미반영분).
+
+### 결과 / 배포
+- `git push origin HEAD:feat/yoonhs-work`: **cfc8652..934e74e** 반영, origin 대비 ahead 0. Tier 2 ①②③ 데모 안전장치 원격 백업 완료.
+- integration은 미변경(분리 유지) — work의 그림캐싱 개선은 추후 work→integration 병합 시 반영 대상.
+
+### 다음 액션
+1. (선택) ② figure PDF로 "두 절 같은 그림 일관 설명" E2E 실증
+2. (멘토링 후) 골든 벤치 / 데모 전 챕터 워밍
+
+---
+
 ## 2026-07-24 (세션42) — Claude CLI — [버그픽스] 문항 정답 유출 방어 — 개념명=정답 폐기 (Tier 2 ③)
 
 ### 사용자 요청
