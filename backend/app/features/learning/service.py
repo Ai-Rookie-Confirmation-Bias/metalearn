@@ -257,6 +257,11 @@ async def _attach_section_figures(
         return drafts
 
     async def _explain(f) -> str | None:
+        # 캐시 재사용: 이전에 성공한 설명이 있으면 그대로 쓴다(LLM 콜 0). related
+        # 판정을 절마다 다시 하면 같은 그림이 절마다 있기/없기 들쭉날쭉해지는데,
+        # 한번 성공한 설명을 재사용해 일관성을 준다(mig 0023 description 캐시).
+        if f.description:
+            return f.description
         # 그림 '바로 주변' 원문으로 설명 생성 — 페이지 전체는 딴 주제를 그림
         # 설명으로 오인하므로 인접 요소만 좁힌다. 주변 텍스트가 없으면 설명 생략.
         excerpt = repo.get_figure_context(db, f.document_id, f.element_id)
@@ -270,6 +275,14 @@ async def _attach_section_figures(
         )
 
     explanations = await asyncio.gather(*(_explain(f) for f in figures))
+
+    # 새로 생성된 설명을 그림에 캐싱 — 이후 절·재생성에서 재사용돼 설명 공백/불일치
+    # 해소. 저장은 gather 밖에서(sync Session 병렬 쓰기 금지, 커밋은 저장 루프 끝).
+    # 트레이드오프: 첫 성공 절의 개념 프레이밍이 굳으나, 그림 자체를 안내하는 설명이라
+    # 무해하고 '절마다 빈 그림'보다 낫다.
+    for f, expl in zip(figures, explanations):
+        if expl and not f.description:
+            f.description = expl
     image_drafts = [
         BlockDraft(
             type="image",
