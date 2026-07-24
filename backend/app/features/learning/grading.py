@@ -35,6 +35,36 @@ GRADABLE_TYPES = {"mcq", "cloze", "explainBack", "reviewGate"}
 PASS_SCORE = 0.6
 
 
+def validate_user_input(block_type: str, user_input: object) -> None:
+    """제출 답안의 '형식'을 검증한다 — 형식오류와 오답을 구분(ISSUE-005 후속).
+
+    형식이 블록 타입과 맞지 않으면 ValueError를 던진다(라우터가 422로 거부).
+    잘못된 구조의 입력이 '조용한 오답'으로 채점돼 학습자 모델(BKT·복습·선행삽입)을
+    오염시키던 문제를 막는다 — 채점·기록 이전에 거른다. '빈 답'·'틀린 답'은 정상
+    오답이므로 여기서 막지 않는다.
+
+    정상 형식(프론트 계약): mcq=보기 인덱스(int) · cloze=빈칸별 배열(list[str]) 또는
+    콤마 문자열(레거시) · explainBack/reviewGate=텍스트(str).
+    """
+    if block_type == "mcq":
+        # 보기 번호(정수)만. None·bool·비정수 문자열·리스트·dict 등은 형식오류.
+        if user_input is None or isinstance(user_input, bool):
+            raise ValueError("객관식 답안은 보기 번호여야 합니다.")
+        try:
+            int(user_input)  # "2" 같은 문자열 인덱스도 허용
+        except (TypeError, ValueError):
+            raise ValueError("객관식 답안 형식이 올바르지 않습니다.") from None
+    elif block_type == "cloze":
+        # 빈칸별 배열 또는 문자열만. bool·숫자·dict·None 등은 형식오류.
+        # (빈 배열·빈 문자열은 정상 오답이므로 통과시킨다.)
+        if isinstance(user_input, bool) or not isinstance(user_input, (list, tuple, str)):
+            raise ValueError("빈칸 답안 형식이 올바르지 않습니다.")
+    elif block_type in ("explainBack", "reviewGate"):
+        # 서술형은 텍스트만. 빈 문자열은 정상 오답이지만 리스트·dict·None은 형식오류.
+        if not isinstance(user_input, str):
+            raise ValueError("서술형 답안 형식이 올바르지 않습니다.")
+
+
 @dataclass(frozen=True)
 class GradeResult:
     """채점 결과. boolean형은 correct만, 서술형은 score/feedback까지."""

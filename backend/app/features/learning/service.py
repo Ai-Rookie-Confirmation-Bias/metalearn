@@ -42,6 +42,7 @@ from app.features.learning.grading import (
     PASS_SCORE,
     GradeResult,
     grade_block,
+    validate_user_input,
 )
 from app.features.learning.localization import Cause, PrereqState, localize
 from app.features.learning.policy import policy_of
@@ -707,6 +708,10 @@ async def record_attempt(
         raise LookupError("block not found")
     if block.type not in GRADABLE_TYPES:
         raise ValueError(f"채점 대상 블록이 아닙니다: {block.type}")
+
+    # 형식 검증 — 채점·기록·숙련도 갱신 이전에. 형식오류(잘못된 구조)는 422로
+    # 거부해, '조용한 오답'으로 학습자 모델을 오염시키지 않는다(빈 답·틀린 답은 통과).
+    validate_user_input(block.type, req.user_input)
 
     concept_id = block.concept_id or (
         uuid.UUID(req.concept_id) if req.concept_id else None

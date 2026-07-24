@@ -5,6 +5,31 @@
 
 ---
 
+## 2026-07-24 (세션40) — Claude CLI — [버그픽스] 형식오류 답안 422 방어 (조용한 오답 오염 차단, Tier 2 ①)
+
+### 사용자 요청
+- 멘토링(데모 자문) 전까지 데모 안 깨지게 Tier 2 버그픽스부터. 1순위 = 형식오류 userInput이 조용한 오답으로 처리되는 문제.
+
+### 추론 / 결정
+- 베타에서 실증된 결함이 현재 코드(cfc8652)에도 잔존: `verify_grade.grade_mcq`가 비정상 입력을 `False`로, `cloze_parts`가 부족분을 빈칸으로 채워 **형식오류를 조용한 오답으로 채점** → 가짜 오답이 BKT·복습·**선행 삽입까지 오발동**(학습자 모델 오염).
+- 프론트 계약 확인: mcq=int 인덱스 / cloze=list[str] 배열 / explainBack=str. 이 셋만 정상, 나머지 형식은 거부.
+- **과잉 거부 절대 금지**(정상 오답을 422로 막으면 데모가 더 크게 깨짐): '빈 답'·'틀린 답'은 정상 오답이므로 통과, **명백히 잘못된 구조만** 거부.
+
+### 한 일
+- `grading.py`에 순수 함수 `validate_user_input(block_type, user_input)` 추가 — mcq(int/숫자문자열만), cloze(list/tuple/str만), explainBack/reviewGate(str만), 그 외 형식은 `ValueError`.
+- `service.record_attempt` 맨 앞(채점·mastery·insert_attempt **이전**)에서 호출 → 형식오류는 부작용 0으로 422 거부(라우터가 ValueError→422 변환). 빈 답/틀린 답은 정상 채점.
+- 유닛 테스트 `tests/test_grading_validation.py`(정상 10 + 형식오류 13 케이스).
+
+### 검증
+- 실 API E2E(데모 코스, dev user): 형식오류 6건(mcq `["a"]`/`{}`, cloze `{}`/`5`, explainBack `[..]`/`{}`) → **전부 422 거부** ✅ / 정상 오답 3건(mcq 99, cloze `["절대아닌답"]`, explainBack "모르겠습니다") → **전부 200 채점** ✅(과잉 거부 없음).
+- 순수 로직 standalone 23케이스 ALL PASS. (dev user id는 `...0001`, `...0000`은 users 미존재로 FK 500 — 테스트 아티팩트였음.)
+
+### 다음 액션
+1. Tier 2 ② 그림 설명 채움률(캐싱 하이브리드) · ③ 문항 정답유출
+2. (멘토링 후) 골든 벤치 — 프롬프트 다듬을 때 나침반
+
+---
+
 ## 2026-07-22 (세션39) — Claude CLI — [병합] learning-visuals-grading 통합 (그림설명=소민섭 방식, 슬러그픽스 유지)
 
 ### 배경
