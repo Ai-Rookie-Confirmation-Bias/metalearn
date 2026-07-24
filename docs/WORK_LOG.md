@@ -5,6 +5,32 @@
 
 ---
 
+## 2026-07-24 (세션42) — Claude CLI — [버그픽스] 문항 정답 유출 방어 — 개념명=정답 폐기 (Tier 2 ③)
+
+### 사용자 요청
+- Tier 2 ③ — 베타에서 재현된 "concept_name=정답 유출"(X.400 등). 개념명이 절/블록 제목으로 노출되는데 정답이 곧 개념명이면 지문 없이 풀림.
+
+### 추론 / 결정
+- 기존 `check_cloze_deterministic`는 **본문(text)** 자기참조만 검사 → 정답이 본문엔 없고 **제목(개념명)**에만 있는 유출을 놓침. mcq는 유출 검사 자체가 없었음.
+- 처방: 개념명을 '보이는 텍스트'로 취급 — 정답이 개념명에 **통째로 포함**되면 폐기. **과잉폐기 금지**: 부분 포함(개념명⊂정답, 힌트 수준)·오답 보기가 개념명인 경우는 유지.
+
+### 한 일 (generator.py)
+- `check_cloze_deterministic(data, concept_name)`: 빈칸 정답이 개념명에 포함되면 None(폐기). `_mcq_answer_leaked(data, concept_name)` 신설: 정답 보기가 개념명에 포함되면 True.
+- 3개 생성 경로 전부 적용: 주 생성(`_drop_unsolvable_cloze` — mcq 폐기도 추가) / 페어 재생성(`_regen_pair_problem`) / 복습(`generate_retrieval_blocks`는 `_drop_unsolvable_cloze` 재사용이라 자동 커버).
+- 유닛 테스트 `tests/test_item_leak.py`.
+
+### 검증
+- 순수 로직 유닛 10케이스 PASS(유출 폐기 + 부분포함·오답보기 유지=과잉폐기 없음).
+- `_drop_unsolvable_cloze` 결정론 테스트: 유출 cloze+mcq 폐기, 정상 mcq 유지 → **주·복습 경로 공통 필터 실증**.
+- 실 regen: 학습 절 문항 클린(예: '병목'·'물리적/논리적', '셀 용량' 유출 없음).
+- ⚠️ 스테일 데이터: 데모 코스 review 섹션에 **수정 전(세션41 figure regen) 생성된 유출 2건 잔존** — review는 due 개념 있을 때만 재빌드라 안 덮임. 코드는 정상, 해당 코스 재생성(또는 삭제) 시 소멸. 신규 생성분은 유출 0.
+
+### 다음 액션
+1. work push(ahead 3: 422방어·그림캐싱·유출방어) → Tier 2 완료
+2. (멘토링 후) 골든 벤치
+
+---
+
 ## 2026-07-24 (세션41) — Claude CLI — [개선] 그림 설명 채움률 — 캐싱 하이브리드 (Tier 2 ②)
 
 ### 사용자 요청

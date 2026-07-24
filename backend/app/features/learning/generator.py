@@ -564,11 +564,13 @@ def _norm_tight(s: str) -> str:
     return normalize_text(s).replace(" ", "")
 
 
-def check_cloze_deterministic(data: dict) -> dict | None:
+def check_cloze_deterministic(data: dict, concept_name: str = "") -> dict | None:
     """LLM 없이 잡히는 결정적 결함 검사.
 
     - 자기참조(빈칸 정답이 문제 본문에 그대로 등장): 검수 LLM은 '잘 풀리는
       문제'로 오판해 통과시키므로 코드가 잡는다 → None(폐기).
+    - 개념명 유출(빈칸 정답이 개념명에 통째로 담김): 개념명은 절 제목·블록
+      제목으로 화면에 노출되므로 정답이 그대로 보인다 → None(폐기).
     - 힌트에 정답 노출: 문항은 살리고 힌트만 소거해 반환.
     """
     text = str(data.get("text") or "")
@@ -576,35 +578,67 @@ def check_cloze_deterministic(data: dict) -> dict | None:
     if not blanks:
         return None
     body = _norm_tight(text.replace("{{blank}}", " "))
-    if any(_norm_tight(b) and _norm_tight(b) in body for b in blanks):
-        return None  # 자기참조 — 문장 안에 정답이 이미 있다
+    concept = _norm_tight(concept_name)
+    for b in blanks:
+        nb = _norm_tight(b)
+        if not nb:
+            continue
+        if nb in body:
+            return None  # 자기참조 — 문장 안에 정답이 이미 있다
+        if concept and nb in concept:
+            return None  # 개념명 유출 — 정답이 절/블록 제목에 노출됨
     hint = _norm_tight(str(data.get("hint") or ""))
     if hint and any(_norm_tight(b) in hint for b in blanks):
         return {**data, "hint": ""}  # 힌트가 정답을 말해줌 → 힌트만 제거
     return data
 
 
+def _mcq_answer_leaked(data: dict, concept_name: str) -> bool:
+    """mcq 정답 보기가 개념명(제목 노출)에 통째로 담기면 유출 — True면 폐기.
+
+    개념명은 절 제목·블록 제목으로 보이므로, 정답 보기가 개념명 안에 그대로
+    있으면 학습자가 지문 없이도 답을 안다(부분 포함은 힌트 수준이라 살린다).
+    """
+    opts = data.get("options") or []
+    ai = data.get("answerIndex")
+    if not isinstance(ai, int) or not (0 <= ai < len(opts)):
+        return False
+    ans = _norm_tight(str(opts[ai]))
+    concept = _norm_tight(concept_name)
+    return bool(ans and concept and ans in concept)
+
+
 async def _drop_unsolvable_cloze(
     llm: LLMClient, drafts: list[BlockDraft], *, context: str, concept_name: str
 ) -> list[BlockDraft]:
-    """드래프트 중 cloze의 결함을 걸러낸 목록을 반환.
+    """드래프트 중 cloze·mcq의 결함을 걸러낸 목록을 반환.
 
-    [3a] 결정적 검사(자기참조 폐기·힌트 정답 소거) → [3b] 검수 LLM 풀이 검증.
+    [3a] 결정적 검사(cloze 자기참조·개념명 유출 폐기·힌트 소거, mcq 개념명
+    유출 폐기) → [3b] cloze 검수 LLM 풀이 검증.
     """
     kept: list[BlockDraft] = []
     det_dropped = 0
+    mcq_dropped = 0
     for d in drafts:
+        # mcq 정답 보기가 개념명(제목 노출)에 통째로 담기면 폐기(정답 유출).
+        if d.type == "mcq" and _mcq_answer_leaked(d.data, concept_name):
+            mcq_dropped += 1
+            continue
         if d.type != "cloze":
             kept.append(d)
             continue
-        fixed = check_cloze_deterministic(d.data)
+        fixed = check_cloze_deterministic(d.data, concept_name)
         if fixed is None:
             det_dropped += 1
             continue
         kept.append(d if fixed is d.data else replace(d, data=fixed))
     if det_dropped:
         logger.info(
-            "cloze 자기참조 폐기 %d건: concept=%s", det_dropped, concept_name
+            "cloze 자기참조·개념명유출 폐기 %d건: concept=%s", det_dropped, concept_name
+        )
+    if mcq_dropped:
+        logger.info(
+            "mcq 개념명유출 폐기 %d건: concept=%s", mcq_dropped, concept_name
         )
 
     cloze_pos = [i for i, d in enumerate(kept) if d.type == "cloze"]
@@ -734,8 +768,10 @@ async def _regen_pair_problem(
         return None
     if not await check_faithfulness(llm, btype=btype, data=data, evidence=evidence):
         return None
+    if btype == "mcq" and _mcq_answer_leaked(data, inp.concept_name):
+        return None  # 정답 보기가 개념명(제목)에 노출 — 폐기
     if btype == "cloze":
-        fixed = check_cloze_deterministic(data)
+        fixed = check_cloze_deterministic(data, inp.concept_name)
         if fixed is None:
             return None
         data = fixed
