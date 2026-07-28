@@ -24,9 +24,10 @@ export const router = createBrowserRouter([
       { path: "login", element: <AuthPage /> },
       // 첫 로그인 후 프로필 설정 (지금은 디자인 확인용 라우팅 — 실제 진입은 OAuth 붙을 때)
       { path: "welcome", element: <ProfileSetupPage /> },
-      { path: "learning", element: <LearningPage /> },
     ],
   },
+  // 학습 화면 — 자체 헤더를 가진 전체화면 3컬럼 (셸 밖)
+  { path: "/learning", element: <LearningPage /> },
   {
     // 로그인 후 셸: 좌측 사이드바 + 본문
     element: <AppLayout />,

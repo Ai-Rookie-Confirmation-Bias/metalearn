@@ -12,6 +12,7 @@ __pycache__/
 node_modules/
 .pnpm-store/
 dist/
+.vite/
 
 # os / editor
 .DS_Store
