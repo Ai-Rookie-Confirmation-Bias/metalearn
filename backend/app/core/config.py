@@ -15,6 +15,9 @@ class Settings(BaseSettings):
     # 외부 LLM
     UPSTAGE_API_KEY: str = ""
     SOLAR_BASE_URL: str = "https://api.upstage.ai/v1"
+    # 기본 생성 모델 — 하드코딩 대신 여기서 관리(materials·learning·review·seed
+    # 전 기능이 공유). 호출측이 model= kwarg로 개별 override 가능.
+    SOLAR_MODEL: str = "solar-pro3"
 
     # CORS (프론트 dev 서버)
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
