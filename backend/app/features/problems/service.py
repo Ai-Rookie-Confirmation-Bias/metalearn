@@ -16,7 +16,12 @@ from app.core.llm.base import LLMClient
 from app.core.llm.solar import solar_client
 from app.features.problems.grounding import evidence_in_source, normalize
 from app.features.problems.prompts import build_generation_prompt
-from app.features.problems.quality import is_free_response_style
+from app.features.problems.quality import (
+    answer_leaked_in_title,
+    is_free_response_style,
+    strip_option_label,
+)
+from app.features.problems import solve_check
 from app.features.problems.schemas import (
     ConceptInput,
     ConceptProblems,
@@ -108,6 +113,14 @@ class ProblemGeneratorService:
             fresh, dropped, reasons = self._validate_problems(
                 data.get("problems", []), concept
             )
+            # [게이트4] 검수 LLM이 직접 풀어 정답 비유일·풀이불가를 걸러낸다.
+            # 기계 게이트를 통과한 것만 넘겨 검수 호출을 아낀다.
+            if fresh:
+                fresh, solve_reasons = await solve_check.verify_problems(
+                    self.llm, fresh, concept.source_text
+                )
+                dropped += len(solve_reasons)
+                reasons.extend(solve_reasons)
             total_dropped += dropped
             for p in fresh:
                 lv = int(p.level)
@@ -146,7 +159,7 @@ class ProblemGeneratorService:
         source = concept.source_text
         for item in rawitems if isinstance(rawitems, list) else []:
             try:
-                p = Problem.model_validate(item)
+                p = Problem.model_validate(_normalize_options(item))
             except ValidationError:
                 reasons.append("정답이 보기와 불일치하거나 필드 누락")
                 continue
@@ -154,12 +167,32 @@ class ProblemGeneratorService:
             if is_free_response_style(p.question):
                 reasons.append("지문이 서술형('~하시오') — 객관식 선택형이어야 함")
                 continue
+            # 개념명이 화면에 노출되므로 정답이 제목에 통째로 담기면 유출이다.
+            if answer_leaked_in_title(p.answer, concept.title):
+                reasons.append("정답이 개념명에 그대로 노출됨(정답 유출)")
+                continue
             # 근거가 원문에 실재하는지 기계 확인(자기검증 아님, grounding 모듈).
             if not evidence_in_source(p.source_evidence, source):
                 reasons.append("source_evidence가 원문에 없음(창작 의심)")
                 continue
             problems.append(p)
         return problems, len(reasons), reasons
+
+
+def _normalize_options(item: object) -> object:
+    """보기·정답 앞에 LLM이 붙인 자체 라벨("A. ", "1) ")을 제거한다.
+
+    라벨이 남으면 화면에서 "A) A. FIFO"로 겹쳐 보이고, answer와 options의
+    글자 일치가 깨져 멀쩡한 문항이 검증에서 폐기된다.
+    """
+    if not isinstance(item, dict):
+        return item
+    out = dict(item)
+    if isinstance(out.get("options"), list):
+        out["options"] = [strip_option_label(str(o)) for o in out["options"]]
+    if isinstance(out.get("answer"), str):
+        out["answer"] = strip_option_label(out["answer"])
+    return out
 
 
 def _build_feedback(deficit: dict[int, int], reasons: list[str]) -> str:

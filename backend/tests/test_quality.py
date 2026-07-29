@@ -10,7 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.features.problems.quality import is_free_response_style  # noqa: E402
+from app.features.problems.quality import (  # noqa: E402
+    answer_leaked_in_title,
+    is_free_response_style,
+    strip_option_label,
+)
 
 
 def test_free_response_endings_rejected():
@@ -45,6 +49,32 @@ def test_selection_style_passes():
 def test_noun_form_not_confused():
     # '설명'이 명사로 쓰인 경우를 서술형으로 오판하면 안 된다.
     assert not is_free_response_style("다음 설명 중 옳지 않은 것은?")
+
+
+def test_option_label_stripped():
+    # LLM이 보기에 자체 라벨을 붙이는 경우 — 제거해야 화면 라벨과 겹치지 않는다.
+    assert strip_option_label("A. FIFO") == "FIFO"
+    assert strip_option_label("1) 최초 적합") == "최초 적합"
+    assert strip_option_label("  c) LRU") == "LRU"
+
+
+def test_option_label_keeps_normal_text():
+    # 라벨이 아닌 정상 보기는 그대로 둔다(숫자로 시작하는 보기 오손상 방지).
+    assert strip_option_label("FIFO") == "FIFO"
+    assert strip_option_label("1024바이트 페이지") == "1024바이트 페이지"
+
+
+def test_answer_leaked_in_title():
+    # 정답이 개념명에 통째로 들어있으면 유출.
+    assert answer_leaked_in_title("세그먼테이션", "세그먼테이션 기법")
+    assert answer_leaked_in_title("페이지 교체", "페이지 교체 알고리즘")
+
+
+def test_answer_not_leaked():
+    # 개념명과 무관한 정답은 통과.
+    assert not answer_leaked_in_title("OPT", "페이지 교체 알고리즘")
+    assert not answer_leaked_in_title("내부 단편화", "페이지 분할 기법")
+    assert not answer_leaked_in_title("", "페이지 분할 기법")
 
 
 def _main() -> int:
