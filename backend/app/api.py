@@ -6,6 +6,7 @@ from app.features.seed.router import router as seed_router
 from app.features.materials.router import router as materials_router
 from app.features.learning.router import router as learning_router
 from app.features.review.router import router as review_router
+from app.features.problems.router import router as problems_router
 
 api_router = APIRouter()
 api_router.include_router(auth_router, prefix="/auth", tags=["auth"])
@@ -13,3 +14,6 @@ api_router.include_router(seed_router, prefix="/seed", tags=["seed"])
 api_router.include_router(materials_router, prefix="/materials", tags=["materials"])
 api_router.include_router(learning_router, prefix="/learning", tags=["learning"])
 api_router.include_router(review_router, prefix="/review", tags=["review"])
+api_router.include_router(
+    problems_router, prefix="/agents/problems", tags=["problems"]
+)
