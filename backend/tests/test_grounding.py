@@ -1,0 +1,124 @@
+"""grounding.evidence_in_source 단위 테스트.
+
+문제 생성 에이전트의 1차 방어선(원문 대조) 회귀 방지. 순수 로직이라
+외부 의존이 없어 pytest 없이도 `python3 tests/test_grounding.py`로 돈다.
+핵심 회귀 케이스: 원문 곳곳의 단어를 긁어모아 만든 '창작' 근거는 폐기돼야 한다
+(구 폴백은 앞 12자만 맞으면 통과시켜 이 경계가 뚫려 있었다).
+"""
+import sys
+from pathlib import Path
+
+# backend/ 를 import 경로에 올린다(pytest·직접실행 모두 대응).
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.features.problems.grounding import evidence_in_source  # noqa: E402
+
+# 실제 파싱 출력을 모사한 표 마크다운 원문(불릿·파이프 포함).
+SOURCE = """## 페이지 교체 전략
+
+| 전략 | 종류 | 설명 |
+| --- | --- | --- |
+| FIFO | 큐 | 가장 먼저 적재된 페이지를 먼저 교체한다 |
+| LRU | 스택 | 가장 오래 참조되지 않은 페이지를 교체한다 |
+
+- 벨레이디의 역설: FIFO에서 프레임 수를 늘려도 페이지 폴트가 늘 수 있다.
+"""
+
+
+def test_exact_quote_passes():
+    assert evidence_in_source("가장 오래 참조되지 않은 페이지를 교체한다", SOURCE)
+
+
+def test_bulleted_quote_passes():
+    # 불릿 기호가 붙은 원문을, 기호 없이 인용해도 통과해야 한다.
+    assert evidence_in_source(
+        "벨레이디의 역설: FIFO에서 프레임 수를 늘려도 페이지 폴트가 늘 수 있다.",
+        SOURCE,
+    )
+
+
+def test_table_cell_quote_passes():
+    # 파이프로 둘러싸인 표 셀 내용을 인용해도 정규화 후 통과.
+    assert evidence_in_source("가장 먼저 적재된 페이지를 먼저 교체한다", SOURCE)
+
+
+def test_scattered_fabrication_rejected():
+    # 원문 단어들을 흩어 모아 만든 거짓 주장 — 반드시 폐기.
+    assert not evidence_in_source(
+        "LRU는 가장 먼저 적재된 페이지를 먼저 교체한다", SOURCE
+    )
+
+
+def test_out_of_source_claim_rejected():
+    # 원문에 없는 내용 — 폐기.
+    assert not evidence_in_source(
+        "클럭 알고리즘은 참조 비트를 사용해 페이지를 교체한다", SOURCE
+    )
+
+
+def test_too_short_rejected():
+    # 근거 구실 못 하는 짧은 조각은 폐기.
+    assert not evidence_in_source("FIFO", SOURCE)
+
+
+def test_empty_rejected():
+    assert not evidence_in_source("", SOURCE)
+    assert not evidence_in_source("아무 내용", "")
+
+
+# ── L3(비교·종합) 회귀 — 원문 두 곳을 이어 인용하는 경우 ──────────────
+# 셀·불릿 내용이 마침표로 끝나지 않아, 문장 분리를 마침표에만 의존하던
+# 구현에서는 조각이 1개로 남아 전량 폐기됐다(실측 L3 0/2).
+MULTI_SOURCE = """### ■ 페이지 분할 기법
+
+**1) 페이징 기법 (Paging)**
+
+- 프로그램을 동일 크기로 분할 (내부 단편화 발생 가능성 존재)
+
+**2) 세그먼테이션 기법 (Segmentation)**
+
+- 프로그램을 다양한 크기의 논리적 단위로 분할 (외부 단편화 발생 가능성 존재)
+"""
+
+
+def test_multi_location_quote_passes():
+    # 떨어진 두 곳을 줄바꿈으로 구분해 인용 — 조각 전부 실재하므로 통과.
+    assert evidence_in_source(
+        "프로그램을 동일 크기로 분할 (내부 단편화 발생 가능성 존재)\n"
+        "프로그램을 다양한 크기의 논리적 단위로 분할 (외부 단편화 발생 가능성 존재)",
+        MULTI_SOURCE,
+    )
+
+
+def test_multi_location_with_fabricated_half_rejected():
+    # 두 조각 중 하나가 창작이면 폐기 — 조각 전수 검사가 살아있는지 확인.
+    assert not evidence_in_source(
+        "프로그램을 동일 크기로 분할 (내부 단편화 발생 가능성 존재)\n"
+        "세그먼테이션 기법은 내부 단편화가 발생한다",
+        MULTI_SOURCE,
+    )
+
+
+def test_table_row_quote_passes():
+    # 표 한 행을 파이프째 인용 — 셀 경계로 쪼개 조각별 대조.
+    assert evidence_in_source(
+        "| LRU | 스택 | 가장 오래 참조되지 않은 페이지를 교체한다 |", SOURCE
+    )
+
+
+def _main() -> int:
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"PASS {t.__name__}")
+        except AssertionError:
+            failed += 1
+            print(f"FAIL {t.__name__}")
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())
