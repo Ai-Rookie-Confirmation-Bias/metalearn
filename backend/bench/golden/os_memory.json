@@ -1,0 +1,288 @@
+{
+  "_about": "골든셋 — 게이트 정확도 측정용 라벨 문항. label이 정답이고 게이트가 그것을 재현하는지 본다. 대부분 실제 생성 출력에서 가져왔고(observed), 일부는 결함을 재현하려 손으로 만들었다(crafted).",
+  "concept": {
+    "concept_id": "g_os_mem",
+    "title": "기억장치 관리 전략",
+    "chapter_id": "ch_3",
+    "chapter_title": "운영체제",
+    "keywords": ["반입 전략", "배치 전략", "교체 전략"],
+    "source_page": 9,
+    "source_text": "### ■ 기억장치 관리 전략\n\n| **전략** | **종류** | **설명** |\n| --- | --- | --- |\n| **반입 전략**\n\n(Fetch) | 요구 반입 | 특정 프로그램/데이터의 참조를 '요구'할 때 적재 |\n|  | 예상 반입 | 미래의 참조가 '예상'되는 데이터를 미리 적재 |\n| **배치 전략**\n\n(Placement) | **최초 적합**\n\n(First Fit) | 사용 가능한 '첫 번째' 분할 영역에 데이터 배치 |\n|  | **최적 적합**\n\n(Best Fit) | 단편화를 '최소화'하는 분할 영역에 데이터 배치 |\n|  | **최악 적합**\n\n(Worst Fit) | 단편화를 '최대화'하는 분할 영역에 데이터 배치 |\n| **교체 전략**\n\n(Replacement) | - | 새로운 데이터를 배치하고자 할 때 기존 사용 중 데이터를 교체\n\nex. FIFO, OPT, LRU, LFU, NUR ··· |"
+  },
+  "items": [
+    {
+      "id": "g01",
+      "label": "pass",
+      "origin": "observed",
+      "note": "정상 L1 — 유일 정답, 근거 실재, 오답은 같은 표의 다른 항목",
+      "problem": {
+        "level": 1,
+        "type": "mcq",
+        "question": "반입 전략(Fetch)에서 '요구 반입'은 어떤 상황에서 데이터를 적재하는가?",
+        "options": [
+          "특정 프로그램/데이터의 참조를 '요구'할 때 적재",
+          "미래의 참조가 '예상'되는 데이터를 미리 적재",
+          "사용 가능한 '첫 번째' 분할 영역에 데이터 배치",
+          "단편화를 '최소화'하는 분할 영역에 데이터 배치"
+        ],
+        "answer": "특정 프로그램/데이터의 참조를 '요구'할 때 적재",
+        "explanation": "요구 반입은 참조가 실제로 요구되는 시점에 적재한다.",
+        "source_evidence": "특정 프로그램/데이터의 참조를 '요구'할 때 적재"
+      }
+    },
+    {
+      "id": "g02",
+      "label": "pass",
+      "origin": "observed",
+      "note": "정상 L1 — 예상 반입",
+      "problem": {
+        "level": 1,
+        "type": "mcq",
+        "question": "반입 전략의 종류 중 '예상 반입'에 대한 설명으로 옳은 것은?",
+        "options": [
+          "특정 프로그램/데이터의 참조를 '요구'할 때 적재",
+          "미래의 참조가 '예상'되는 데이터를 미리 적재",
+          "사용 가능한 '첫 번째' 분할 영역에 데이터 배치",
+          "단편화를 '최대화'하는 분할 영역에 데이터 배치"
+        ],
+        "answer": "미래의 참조가 '예상'되는 데이터를 미리 적재",
+        "explanation": "예상 반입은 앞으로 필요할 것을 예측해 미리 적재한다.",
+        "source_evidence": "미래의 참조가 '예상'되는 데이터를 미리 적재"
+      }
+    },
+    {
+      "id": "g03",
+      "label": "pass",
+      "origin": "observed",
+      "note": "정상 L2 — Best Fit 적용",
+      "problem": {
+        "level": 2,
+        "type": "mcq",
+        "question": "배치 전략 중 단편화를 최소화하는 방식은 무엇인가?",
+        "options": ["First Fit", "Best Fit", "Worst Fit", "예상 반입"],
+        "answer": "Best Fit",
+        "explanation": "최적 적합(Best Fit)이 단편화를 최소화한다.",
+        "source_evidence": "단편화를 '최소화'하는 분할 영역에 데이터 배치"
+      }
+    },
+    {
+      "id": "g04",
+      "label": "pass",
+      "origin": "observed",
+      "note": "정상 — Worst Fit. 단편화 최대/최소 대비가 명확",
+      "problem": {
+        "level": 2,
+        "type": "mcq",
+        "question": "배치 전략 중 단편화를 최대화하는 방식은 무엇인가?",
+        "options": ["First Fit", "Best Fit", "Worst Fit", "요구 반입"],
+        "answer": "Worst Fit",
+        "explanation": "최악 적합(Worst Fit)은 단편화를 최대화한다.",
+        "source_evidence": "단편화를 '최대화'하는 분할 영역에 데이터 배치"
+      }
+    },
+    {
+      "id": "g05",
+      "label": "pass",
+      "origin": "crafted",
+      "note": "여러 곳 인용(줄바꿈 구분) — 조각 대조 경로가 살아있는지 확인",
+      "problem": {
+        "level": 3,
+        "type": "mcq",
+        "question": "최초 적합과 최적 적합의 배치 기준 차이로 옳은 것은?",
+        "options": [
+          "최초 적합은 첫 번째 영역, 최적 적합은 단편화 최소 영역에 배치",
+          "최초 적합은 단편화 최소 영역, 최적 적합은 첫 번째 영역에 배치",
+          "둘 다 첫 번째 영역에 배치",
+          "둘 다 단편화를 최대화하는 영역에 배치"
+        ],
+        "answer": "최초 적합은 첫 번째 영역, 최적 적합은 단편화 최소 영역에 배치",
+        "explanation": "원문의 두 항목을 대조하면 알 수 있다.",
+        "source_evidence": "사용 가능한 '첫 번째' 분할 영역에 데이터 배치\n단편화를 '최소화'하는 분할 영역에 데이터 배치"
+      }
+    },
+    {
+      "id": "g06",
+      "label": "pass",
+      "origin": "crafted",
+      "note": "보기에 자체 라벨('A. ') 부착 — 정규화가 없으면 answer 불일치로 오폐기된다",
+      "problem": {
+        "level": 1,
+        "type": "mcq",
+        "question": "교체 전략에 대한 설명으로 옳은 것은?",
+        "options": [
+          "A. 새로운 데이터를 배치하고자 할 때 기존 사용 중 데이터를 교체",
+          "B. 미래의 참조가 '예상'되는 데이터를 미리 적재",
+          "C. 사용 가능한 '첫 번째' 분할 영역에 데이터 배치",
+          "D. 단편화를 '최소화'하는 분할 영역에 데이터 배치"
+        ],
+        "answer": "새로운 데이터를 배치하고자 할 때 기존 사용 중 데이터를 교체",
+        "explanation": "교체 전략의 정의다.",
+        "source_evidence": "새로운 데이터를 배치하고자 할 때 기존 사용 중 데이터를 교체"
+      }
+    },
+    {
+      "id": "g07",
+      "label": "drop",
+      "expected_gate": "solve_check",
+      "origin": "observed",
+      "note": "정답 비유일 — 원문이 FIFO·OPT·LRU·LFU를 모두 예시로 나열해 보기 전부가 정답. 기계 게이트로는 못 잡는다(의미 판정)",
+      "problem": {
+        "level": 2,
+        "type": "mcq",
+        "question": "교체 전략의 예시로 제시된 것은?",
+        "options": ["FIFO", "OPT", "LRU", "LFU"],
+        "answer": "FIFO",
+        "explanation": "원문에 예시로 나열되어 있다.",
+        "source_evidence": "ex. FIFO, OPT, LRU, LFU, NUR ···"
+      }
+    },
+    {
+      "id": "g08",
+      "label": "drop",
+      "expected_gate": "quality",
+      "origin": "observed",
+      "note": "서술형 지시문 — 보기 4개를 주면서 서술을 요구하는 형식 모순",
+      "problem": {
+        "level": 3,
+        "type": "mcq",
+        "question": "최초 적합과 최적 적합의 배치 기준을 비교하여 설명하시오.",
+        "options": [
+          "최초 적합은 첫 번째 영역에 배치",
+          "최적 적합은 단편화 최소 영역에 배치",
+          "둘 다 같은 기준이다",
+          "둘 다 교체 전략이다"
+        ],
+        "answer": "최초 적합은 첫 번째 영역에 배치",
+        "explanation": "서술형 어투 위반 사례.",
+        "source_evidence": "사용 가능한 '첫 번째' 분할 영역에 데이터 배치"
+      }
+    },
+    {
+      "id": "g09",
+      "label": "drop",
+      "expected_gate": "grounding",
+      "origin": "crafted",
+      "note": "근거 창작 — 원문에 없는 알고리즘(클럭)을 지어냈다",
+      "problem": {
+        "level": 1,
+        "type": "mcq",
+        "question": "참조 비트를 사용해 페이지를 교체하는 알고리즘은?",
+        "options": ["클럭 알고리즘", "FIFO", "LRU", "LFU"],
+        "answer": "클럭 알고리즘",
+        "explanation": "원문에 없는 내용.",
+        "source_evidence": "클럭 알고리즘은 참조 비트를 사용해 페이지를 교체한다"
+      }
+    },
+    {
+      "id": "g10",
+      "label": "drop",
+      "expected_gate": "grounding",
+      "origin": "crafted",
+      "note": "짜깁기 — 원문 단어를 섞어 한 문장으로 만든 거짓 주장(최악 적합에 최소화 설명을 붙임)",
+      "problem": {
+        "level": 2,
+        "type": "mcq",
+        "question": "최악 적합(Worst Fit)의 배치 기준은?",
+        "options": [
+          "단편화를 '최소화'하는 분할 영역",
+          "사용 가능한 '첫 번째' 분할 영역",
+          "단편화를 '최대화'하는 분할 영역",
+          "예상되는 데이터를 미리 적재"
+        ],
+        "answer": "단편화를 '최소화'하는 분할 영역",
+        "explanation": "잘못된 짝짓기.",
+        "source_evidence": "최악 적합은 단편화를 '최소화'하는 분할 영역에 데이터 배치"
+      }
+    },
+    {
+      "id": "g11",
+      "label": "drop",
+      "expected_gate": "quality",
+      "origin": "crafted",
+      "note": "정답 유출 — 정답이 개념명('기억장치 관리 전략')에 통째로 담겨 지문 없이도 답이 보인다",
+      "problem": {
+        "level": 1,
+        "type": "mcq",
+        "question": "주기억장치에 언제·어디에·어떻게 적재할지를 정하는 기법의 이름은?",
+        "options": [
+          "기억장치 관리",
+          "페이지 교체 알고리즘",
+          "세그먼테이션 기법",
+          "워킹 셋"
+        ],
+        "answer": "기억장치 관리",
+        "explanation": "개념명이 곧 정답.",
+        "source_evidence": "새로운 데이터를 배치하고자 할 때 기존 사용 중 데이터를 교체"
+      }
+    },
+    {
+      "id": "g12",
+      "label": "drop",
+      "expected_gate": "schema",
+      "origin": "crafted",
+      "note": "정답이 보기 목록에 없음 — 스키마 단계에서 걸려야 한다",
+      "problem": {
+        "level": 1,
+        "type": "mcq",
+        "question": "반입 전략의 종류가 아닌 것은?",
+        "options": ["요구 반입", "예상 반입", "최초 적합", "최적 적합"],
+        "answer": "C",
+        "explanation": "보기 텍스트가 아니라 라벨로 답했다.",
+        "source_evidence": "미래의 참조가 '예상'되는 데이터를 미리 적재"
+      }
+    },
+    {
+      "id": "g13",
+      "label": "drop",
+      "expected_gate": "grounding",
+      "origin": "crafted",
+      "note": "근거가 너무 짧아 근거 구실을 못 한다",
+      "problem": {
+        "level": 1,
+        "type": "mcq",
+        "question": "배치 전략에 속하는 것은?",
+        "options": ["최초 적합", "요구 반입", "예상 반입", "FIFO"],
+        "answer": "최초 적합",
+        "explanation": "근거가 단어 하나.",
+        "source_evidence": "배치"
+      }
+    },
+    {
+      "id": "g14",
+      "label": "drop",
+      "expected_gate": "grounding",
+      "origin": "crafted",
+      "note": "여러 곳 인용인데 한쪽이 창작 — 조각 전수 검사가 살아있어야 걸린다",
+      "problem": {
+        "level": 3,
+        "type": "mcq",
+        "question": "반입 전략과 배치 전략의 차이로 옳은 것은?",
+        "options": [
+          "반입은 시점, 배치는 위치를 정한다",
+          "반입은 위치, 배치는 시점을 정한다",
+          "둘 다 시점을 정한다",
+          "둘 다 위치를 정한다"
+        ],
+        "answer": "반입은 시점, 배치는 위치를 정한다",
+        "explanation": "두 번째 인용이 원문에 없다.",
+        "source_evidence": "특정 프로그램/데이터의 참조를 '요구'할 때 적재\n배치 전략은 데이터를 어느 위치에 둘지 결정하는 기법이다"
+      }
+    },
+    {
+      "id": "g15",
+      "label": "drop",
+      "expected_gate": "solve_check",
+      "origin": "crafted",
+      "note": "원문만으로는 답을 특정할 수 없다 — 원문에 성능 비교가 없다",
+      "problem": {
+        "level": 3,
+        "type": "mcq",
+        "question": "배치 전략 중 실제 시스템에서 가장 성능이 우수한 것은?",
+        "options": ["First Fit", "Best Fit", "Worst Fit", "Next Fit"],
+        "answer": "Best Fit",
+        "explanation": "원문에 성능 우열 근거가 없다.",
+        "source_evidence": "단편화를 '최소화'하는 분할 영역에 데이터 배치"
+      }
+    }
+  ]
+}

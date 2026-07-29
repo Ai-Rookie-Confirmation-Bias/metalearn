@@ -58,6 +58,16 @@ def test_multi_answer_rejected():
     assert "비유일" in reasons[0]
 
 
+def test_answer_listing_all_options_rejected():
+    # 검수가 also_correct를 비워둔 채 answer에 보기를 나열해 "다 정답"을 표현하는
+    # 실측 사례. 관대 비교(포함 관계)가 이를 동의로 오인하던 회귀를 막는다.
+    passed, reasons = _run(
+        {"items": [{"id": 0, "answer": "FIFO, OPT, LRU, LFU", "also_correct": []}]},
+        [_problem()],
+    )
+    assert passed == [] and "비유일" in reasons[0]
+
+
 def test_reviewer_picked_different_answer_rejected():
     passed, reasons = _run(
         {"items": [{"id": 0, "answer": "LRU", "also_correct": []}]}, [_problem()]

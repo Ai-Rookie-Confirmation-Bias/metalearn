@@ -118,6 +118,13 @@ async def verify_problems(
             continue
 
         got = str(row.get("answer") or "")
+        # 검수가 also_correct를 비워둔 채 answer에 여러 보기를 한꺼번에 적는
+        # 형태로 "다 정답"을 표현하는 경우가 있다(실측: "FIFO, OPT, LRU, LFU").
+        # answers_match는 약어↔풀네임을 살리려고 포함 관계를 인정하므로, 이런
+        # 나열형 답을 그대로 대조하면 출제 정답과 일치한다고 오판한다.
+        if got and len([o for o in p.options if answers_match(o, got)]) >= 2:
+            reasons.append("검수 답이 여러 보기를 동시에 지목 — 정답 비유일")
+            continue
         if got and not answers_match(p.answer, got):
             reasons.append("검수자가 출제 정답과 다른 보기를 고름")
             continue
