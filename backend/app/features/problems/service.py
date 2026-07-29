@@ -21,7 +21,7 @@ from app.features.problems.quality import (
     is_free_response_style,
     strip_option_label,
 )
-from app.features.problems import solve_check
+from app.features.problems import coverage, solve_check
 from app.features.problems.schemas import (
     ConceptInput,
     ConceptProblems,
@@ -35,6 +35,13 @@ logger = logging.getLogger(__name__)
 # 최초 1회 + 재시도 횟수. 부족/폐기분을 사유와 함께 재요청한다.
 MAX_RETRIES = 2
 _LEVELS: tuple[int, ...] = (1, 2, 3)
+# 원문 중 문항이 근거로 삼은 분량의 목표 비율. 100%를 요구하면 약어 풀이·표
+# 파편처럼 출제 근거가 되기 어려운 줄 때문에 영원히 재시도하므로 선을 둔다.
+COVERAGE_TARGET = 0.7
+# **커버리지만을 이유로** 도는 재시도 상한. 레벨 미달과 예산을 나눠 쓰면
+# 매번 재시도를 소진해 생성 시간이 몇 배가 된다(실측 23초→140초).
+# 커버리지는 "채우면 좋은" 목표이지 레벨 목표만큼 강한 제약은 아니다.
+COVERAGE_MAX_RETRIES = 1
 
 
 def _extract_json_object(raw: str) -> dict:
@@ -81,13 +88,30 @@ class ProblemGeneratorService:
         by_level: dict[int, list[Problem]] = {lv: [] for lv in _LEVELS}
         seen: set[str] = set()  # 중복 문항 차단(정규화 질문 기준)
         total_dropped = 0
-        feedback: str | None = None
+        last_reasons: list[str] = []
+        report = coverage.analyze([], concept.source_text)
+        coverage_retries = 0
 
         for attempt in range(MAX_RETRIES + 1):
             deficit = {lv: per_level - len(by_level[lv]) for lv in _LEVELS}
-            if all(n <= 0 for n in deficit.values()):
-                break
+            levels_ok = all(n <= 0 for n in deficit.values())
+            report = coverage.analyze(_evidences(by_level), concept.source_text)
+            # 레벨 목표와 원문 커버리지를 함께 본다. 문항 수만 채우고 원문
+            # 한구석만 파면 "이 개념을 다 공부했다"가 성립하지 않기 때문이다.
+            # 단 커버리지는 예산을 제한한다(위 COVERAGE_MAX_RETRIES 주석 참조).
+            if levels_ok:
+                if report.ratio >= COVERAGE_TARGET:
+                    break
+                if coverage_retries >= COVERAGE_MAX_RETRIES:
+                    break
+                coverage_retries += 1
 
+            # 레벨은 찼는데 커버리지만 모자란 경우, 미커버 구간 문항을 담을
+            # 여유를 둔다(문제은행에서 문항이 조금 더 많은 건 손해가 아니다).
+            cap = per_level + 1 if levels_ok else per_level
+            feedback = (
+                _build_feedback(deficit, last_reasons, report) if attempt else None
+            )
             prompt = build_generation_prompt(
                 subject, concept, per_level, feedback=feedback
             )
@@ -104,10 +128,10 @@ class ProblemGeneratorService:
                     concept.concept_id,
                     attempt,
                 )
-                feedback = (
-                    "직전 응답이 JSON으로 파싱되지 않았다. "
-                    "코드펜스·설명 없이 JSON 객체 하나만 출력하라."
-                )
+                last_reasons = [
+                    "직전 응답이 JSON으로 파싱되지 않음 — 코드펜스·설명 없이 "
+                    "JSON 객체 하나만 출력할 것"
+                ]
                 continue
 
             fresh, dropped, reasons = self._validate_problems(
@@ -125,25 +149,25 @@ class ProblemGeneratorService:
             for p in fresh:
                 lv = int(p.level)
                 key = normalize(p.question)
-                if key in seen or len(by_level[lv]) >= per_level:
-                    continue  # 중복이거나 이미 목표를 채운 레벨은 버린다
+                if key in seen or len(by_level[lv]) >= cap:
+                    continue  # 중복이거나 이미 상한을 채운 레벨은 버린다
                 seen.add(key)
                 by_level[lv].append(p)
-
-            deficit = {lv: per_level - len(by_level[lv]) for lv in _LEVELS}
-            if all(n <= 0 for n in deficit.values()):
-                break
-            feedback = _build_feedback(deficit, reasons)
+            last_reasons = reasons
 
         problems = [p for lv in _LEVELS for p in by_level[lv]]
+        # 루프 변수 report는 마지막 시도에서 채운 문항이 빠진 값일 수 있다
+        # (재시도 예산을 다 쓰고 빠져나온 경로). 노트는 최종 결과로 다시 센다.
+        report = coverage.analyze(_evidences(by_level), concept.source_text)
         return ConceptProblems(
             concept_id=concept.concept_id,
             title=concept.title,
             chapter_id=concept.chapter_id,
             chapter_title=concept.chapter_title,
             problems=problems,
-            coverage_note=_coverage_note(by_level, per_level, total_dropped),
+            coverage_note=_coverage_note(by_level, per_level, total_dropped, report),
         )
+
 
     @staticmethod
     def _validate_problems(
@@ -179,6 +203,11 @@ class ProblemGeneratorService:
         return problems, len(reasons), reasons
 
 
+def _evidences(by_level: dict[int, list[Problem]]) -> list[str]:
+    """누적된 문항의 근거 목록 — 커버리지 계산 입력."""
+    return [p.source_evidence for lv in _LEVELS for p in by_level[lv]]
+
+
 def _normalize_options(item: object) -> object:
     """보기·정답 앞에 LLM이 붙인 자체 라벨("A. ", "1) ")을 제거한다.
 
@@ -195,14 +224,21 @@ def _normalize_options(item: object) -> object:
     return out
 
 
-def _build_feedback(deficit: dict[int, int], reasons: list[str]) -> str:
-    """부족 레벨과 폐기 사유를 다음 시도 프롬프트용 지시로 정리."""
+def _build_feedback(
+    deficit: dict[int, int],
+    reasons: list[str],
+    report: coverage.CoverageReport,
+) -> str:
+    """부족 레벨·폐기 사유·미커버 구간을 다음 시도 프롬프트용 지시로 정리."""
     short = [f"level {lv} {n}문항" for lv, n in deficit.items() if n > 0]
     lines: list[str] = []
     if short:
         lines.append("아직 부족한 레벨을 이만큼 더 만들어라: " + ", ".join(short) + ".")
     if reasons:
         lines.append("직전 폐기 사유: " + " / ".join(sorted(set(reasons))) + ".")
+    # 미커버 원문 구간을 그대로 실어 "안 다룬 곳에서 출제"하도록 유도한다.
+    if (cov := coverage.feedback_text(report)) :
+        lines.append(cov)
     lines.append(
         "이미 만든 문항과 중복되지 않게, 원문 근거를 그대로 인용해 출제하라."
     )
@@ -210,21 +246,26 @@ def _build_feedback(deficit: dict[int, int], reasons: list[str]) -> str:
 
 
 def _coverage_note(
-    by_level: dict[int, list[Problem]], per_level: int, total_dropped: int
+    by_level: dict[int, list[Problem]],
+    per_level: int,
+    total_dropped: int,
+    report: coverage.CoverageReport,
 ) -> str:
-    """코드가 요청수 대비 실제수를 세어 노트를 만든다(LLM 자진신고 대체)."""
+    """코드가 요청수 대비 실제수를 세어 노트를 만든다(LLM 자진신고 대체).
+
+    이 노트는 진도 엔진의 입력이기도 하다 — "이 개념엔 L3가 없다"를 알아야
+    L2 통과를 완료로 처리할 수 있고, 커버리지는 학습 완료 판정의 신뢰도다.
+    """
     short = [
         f"L{lv} {len(by_level[lv])}/{per_level}"
         for lv in _LEVELS
         if len(by_level[lv]) < per_level
     ]
-    parts: list[str] = []
+    parts: list[str] = [f"원문 커버리지 {report.percent}%"]
     if short:
         parts.append("목표 미달(재시도 후): " + ", ".join(short))
+    else:
+        parts.append(f"레벨별 목표({per_level}문항) 충족")
     if total_dropped:
-        parts.append(
-            f"검증 실패로 누적 {total_dropped}문항 폐기(원문 근거 불일치/정답 형식 오류)"
-        )
-    if not parts:
-        return f"레벨별 목표({per_level}문항) 충족."
+        parts.append(f"검증 실패로 누적 {total_dropped}문항 폐기")
     return ". ".join(parts) + "."
