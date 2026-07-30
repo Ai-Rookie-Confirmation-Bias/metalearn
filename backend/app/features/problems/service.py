@@ -21,7 +21,7 @@ from app.features.problems.quality import (
     is_free_response_style,
     strip_option_label,
 )
-from app.features.problems import coverage, solve_check
+from app.features.problems import coverage, levels, solve_check
 from app.features.problems.schemas import (
     ConceptInput,
     ConceptProblems,
@@ -91,6 +91,7 @@ class ProblemGeneratorService:
         last_reasons: list[str] = []
         report = coverage.analyze([], concept.source_text)
         coverage_retries = 0
+        call_failures = 0
 
         for attempt in range(MAX_RETRIES + 1):
             deficit = {lv: per_level - len(by_level[lv]) for lv in _LEVELS}
@@ -133,24 +134,44 @@ class ProblemGeneratorService:
                     "JSON 객체 하나만 출력할 것"
                 ]
                 continue
+            except Exception as exc:  # noqa: BLE001 — 호출 실패로 전체를 죽이지 않는다
+                # 타임아웃·네트워크 오류 등. 개념들을 gather로 병렬 생성하므로
+                # 여기서 예외가 새면 한 섹션의 실패가 요청 전체를 500으로 만든다.
+                logger.warning(
+                    "concept %s attempt %d: 생성 호출 실패 (%s)",
+                    concept.concept_id,
+                    attempt,
+                    type(exc).__name__,
+                )
+                call_failures += 1
+                continue
 
-            fresh, dropped, reasons = self._validate_problems(
+            fresh, reasons, downgrades = self._validate_problems(
                 data.get("problems", []), concept
             )
             # [게이트4] 검수 LLM이 직접 풀어 정답 비유일·풀이불가를 걸러낸다.
             # 기계 게이트를 통과한 것만 넘겨 검수 호출을 아낀다.
             if fresh:
-                fresh, solve_reasons = await solve_check.verify_problems(
-                    self.llm, fresh, concept.source_text
+                kept, solve_reasons = await solve_check.verify_problems(
+                    self.llm, [p for p, _ in fresh], concept.source_text
                 )
-                dropped += len(solve_reasons)
+                kept_ids = {id(p) for p in kept}
+                fresh = [(p, lv) for p, lv in fresh if id(p) in kept_ids]
                 reasons.extend(solve_reasons)
-            total_dropped += dropped
-            for p in fresh:
-                lv = int(p.level)
+            total_dropped += len(reasons)
+            # 강등은 폐기가 아니므로 집계에서 빼되, 다음 시도 지시에는 싣는다.
+            reasons = reasons + downgrades
+            for p, requested in fresh:
                 key = normalize(p.question)
-                if key in seen or len(by_level[lv]) >= cap:
-                    continue  # 중복이거나 이미 상한을 채운 레벨은 버린다
+                if key in seen:
+                    continue
+                lv = int(p.level)
+                # 강등된 문항은 하위 레벨의 목표 몫을 놓고 경쟁시키지 않는다.
+                # 요청 몫을 채운 뒤 강등분까지 버리면 "라벨만 고치고 버리는" 꼴이
+                # 되어 문항 수만 줄고 재시도를 태운다(실측 18→10문항).
+                limit = cap * 2 if lv < requested else cap
+                if len(by_level[lv]) >= limit:
+                    continue
                 seen.add(key)
                 by_level[lv].append(p)
             last_reasons = reasons
@@ -165,21 +186,28 @@ class ProblemGeneratorService:
             chapter_id=concept.chapter_id,
             chapter_title=concept.chapter_title,
             problems=problems,
-            coverage_note=_coverage_note(by_level, per_level, total_dropped, report),
+            coverage_note=_coverage_note(
+                by_level, per_level, total_dropped, report, call_failures
+            ),
         )
 
 
     @staticmethod
     def _validate_problems(
         rawitems: object, concept: ConceptInput
-    ) -> tuple[list[Problem], int, list[str]]:
+    ) -> tuple[list[Problem], list[str], list[str]]:
         """개별 문항을 검증 — 한 문항이 깨져도 나머지는 살린다.
 
         게이트: ① Pydantic(정답=보기 일치 등) ② 지문 형식(객관식다움)
-        ③ source_evidence 원문 실재. 폐기 사유는 재시도 프롬프트의 피드백이 된다.
+        ③ source_evidence 원문 실재. 이후 레벨 라벨이 실제 난이도와 맞는지 보고
+        과대 태깅이면 **강등**한다(폐기가 아니다 — 문항 자체는 멀쩡하다).
+
+        반환 (통과 문항, 폐기 사유, 강등 기록). 폐기와 강등을 나눠 돌려주는
+        이유는 폐기 수만 세어야 coverage_note의 폐기 집계가 부풀지 않기 때문이다.
         """
-        problems: list[Problem] = []
+        problems: list[tuple[Problem, int]] = []
         reasons: list[str] = []
+        downgrades: list[str] = []
         source = concept.source_text
         for item in rawitems if isinstance(rawitems, list) else []:
             try:
@@ -199,8 +227,17 @@ class ProblemGeneratorService:
             if not evidence_in_source(p.source_evidence, source):
                 reasons.append("source_evidence가 원문에 없음(창작 의심)")
                 continue
-            problems.append(p)
-        return problems, len(reasons), reasons
+            # 레벨 과대 태깅은 강등해 살린다. 라벨만 틀렸을 뿐 문항은 쓸 수 있고,
+            # 버리면 문항 수만 줄고 재시도를 태운다.
+            requested = int(p.level)
+            actual = levels.assess(p.answer, p.source_evidence, source)
+            if actual < requested:
+                downgrades.append(f"L{requested}로 낸 문항이 실제 L{actual} 수준")
+                p = p.model_copy(update={"level": actual})
+            # 요청 레벨을 함께 돌려준다 — 슬롯은 "무엇을 요청했나" 기준으로 세야
+            # 강등된 문항이 이미 찬 하위 레벨 슬롯과 경쟁해 버려지지 않는다.
+            problems.append((p, requested))
+        return problems, reasons, downgrades
 
 
 def _evidences(by_level: dict[int, list[Problem]]) -> list[str]:
@@ -250,6 +287,7 @@ def _coverage_note(
     per_level: int,
     total_dropped: int,
     report: coverage.CoverageReport,
+    call_failures: int = 0,
 ) -> str:
     """코드가 요청수 대비 실제수를 세어 노트를 만든다(LLM 자진신고 대체).
 
@@ -268,4 +306,8 @@ def _coverage_note(
         parts.append(f"레벨별 목표({per_level}문항) 충족")
     if total_dropped:
         parts.append(f"검증 실패로 누적 {total_dropped}문항 폐기")
+    if call_failures:
+        # 부분 실패를 조용히 넘기지 않는다 — 문항이 적은 이유가 원문 탓인지
+        # 호출 실패 탓인지 구분되어야 재생성 여부를 판단할 수 있다.
+        parts.append(f"생성 호출 {call_failures}회 실패(타임아웃 등)")
     return ". ".join(parts) + "."

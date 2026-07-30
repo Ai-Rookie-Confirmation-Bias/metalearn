@@ -72,6 +72,24 @@ def _segments(evidence: str) -> list[str]:
     return out
 
 
+def citation_spans(evidence: str, source: str) -> int:
+    """근거가 원문의 **서로 다른 몇 곳**을 인용했는지 센다.
+
+    레벨 판정의 입력이다. 한 곳을 통째로 인용했으면 1, 떨어진 두 곳을 이어
+    인용했으면 2 이상. 비교·종합(L3)은 본질적으로 여러 곳을 필요로 하므로,
+    이 수가 1이면 그 문항이 정말 L3인지 의심할 근거가 된다.
+
+    근거가 원문에 실재한다는 전제(evidence_in_source 통과)에서 호출한다.
+    """
+    norm_evidence, norm_source = normalize(evidence), normalize(source)
+    if not norm_evidence or not norm_source:
+        return 0
+    if norm_evidence in norm_source:
+        return 1
+    segments = _segments(evidence)
+    return sum(1 for seg in segments if seg in norm_source)
+
+
 def evidence_in_source(evidence: str, source: str) -> bool:
     """근거 문구가 원문에 실재하면 True.
 

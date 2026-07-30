@@ -25,7 +25,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from pydantic import ValidationError  # noqa: E402
 
-from app.features.problems import solve_check  # noqa: E402
+from app.features.problems import levels, solve_check  # noqa: E402
 from app.features.problems.grounding import evidence_in_source  # noqa: E402
 from app.features.problems.quality import (  # noqa: E402
     answer_leaked_in_title,
@@ -103,6 +103,7 @@ async def main() -> int:
 
     print(f"{'ID':<5} {'라벨':<5} {'판정':<12} {'결과'}")
     print("-" * 62)
+    level_wrong: list[tuple[dict, int]] = []
     for it in items:
         gid, label = it["id"], it["label"]
         v = verdicts[gid]
@@ -117,7 +118,21 @@ async def main() -> int:
         if dropped:
             by_gate[v] = by_gate.get(v, 0) + 1
         mark = "OK" if ok else ("누락" if label == "drop" else "과폐기")
-        print(f"{gid:<5} {label:<5} {v:<12} {mark}")
+
+        # 통과 문항에 한해 레벨 판정도 채점한다(강등은 폐기가 아니므로 별도 집계).
+        extra = ""
+        if not dropped and "expected_level" in it:
+            p = it["problem"]
+            actual = levels.assess(
+                p["answer"], p["source_evidence"], concept.source_text
+            )
+            actual = min(actual, p["level"])  # service와 동일: 강등만, 승격 없음
+            if actual != it["expected_level"]:
+                level_wrong.append((it, actual))
+                extra = f"  ← 레벨 {actual} (기대 {it['expected_level']})"
+            else:
+                extra = f"  레벨 {actual} OK"
+        print(f"{gid:<5} {label:<5} {v:<12} {mark}{extra}")
 
     n = len(items)
     n_drop = sum(1 for i in items if i["label"] == "drop")
@@ -128,11 +143,20 @@ async def main() -> int:
     if by_gate:
         print("게이트별 폐기: " + ", ".join(f"{g} {c}" for g, c in sorted(by_gate.items())))
 
+    n_leveled = sum(1 for i in items if "expected_level" in i and verdicts[i["id"]] == "pass")
+    if n_leveled:
+        print(f"레벨 판정 {n_leveled - len(level_wrong)}/{n_leveled}")
+
     for it in misses:
         exp = it.get("expected_gate", "?")
         print(f"  [누락] {it['id']} — {it['note']}  (기대 게이트: {exp})")
     for it in over:
         print(f"  [과폐기] {it['id']} — {it['note']}  (실제 폐기: {verdicts[it['id']]})")
+    for it, actual in level_wrong:
+        print(
+            f"  [레벨오판] {it['id']} — 판정 L{actual}, 기대 L{it['expected_level']}"
+            f"  · {it['note']}"
+        )
 
     if not args.solve_check:
         pending = [i["id"] for i in misses if i.get("expected_gate") == "solve_check"]
@@ -141,7 +165,7 @@ async def main() -> int:
                 f"\n※ {', '.join(pending)}는 검수 LLM 게이트가 담당한다 — "
                 "--solve-check 로 다시 실행하면 잡히는지 확인할 수 있다."
             )
-    return 1 if (misses or over) else 0
+    return 1 if (misses or over or level_wrong) else 0
 
 
 if __name__ == "__main__":
