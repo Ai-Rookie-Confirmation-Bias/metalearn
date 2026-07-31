@@ -67,6 +67,123 @@ _OUTPUT_SCHEMA = """반드시 아래 JSON 객체 하나만 출력한다(설명·
 }"""
 
 
+# span 프롬프트는 짧아야 하므로 유형 규칙도 압축본을 쓴다(반례는 유지 — 실측에서
+# "각각 무엇인가"식 multi와 원문 등장 순서를 묻는 order가 반복해서 나왔다).
+_TYPE_GUIDE_SHORT = """유형:
+- "mcq": options 4개, answer는 그중 하나(문자열).
+- "multi": options 4~6개, answer는 정답 배열(2개 이상, 전체 미만).
+  "…에 해당하는 것을 모두 고르시오" 한 기준으로만 묻는다.
+  (X) "A인 것과 B인 것은 각각 무엇인가?" — 짝을 표시할 수 없다.
+- "ox": options는 빈 배열, answer는 "O"|"X". 거짓 문장은 원문 서술에서
+  핵심 한 곳만 비튼다(예: '최소화'→'최대화'). 없는 내용을 지어내지 마라.
+- "order": 절차·인과의 흐름이 원문에 명시된 경우에만. options는 섞은 항목,
+  answer는 보기 전체의 올바른 순열.
+  (X) "원문에 나온 순서대로" — 문서 암기이지 이해가 아니다.
+  (X) 나란히 나열된 항목(최초/최적/최악 적합)을 배열시키기 — 순서가 없다."""
+
+
+# ── span 단위 프롬프트 ────────────────────────────────────────────────
+# 원문 전체 대신 구간 하나(또는 둘)만 주므로 프롬프트가 짧다. 볼륨 실측에서
+# 큰 요청이 수율 붕괴(83%→47%)와 상시 타임아웃을 만든 것에 대한 대응이다.
+_SPAN_RULES = """[규칙]
+1. 아래 <구간>에 적힌 내용만으로 출제한다. 구간 밖의 사실·용어를 지어내지 마라.
+   (제목은 맥락일 뿐이다. 제목을 근거로 인용하지 마라.)
+2. source_evidence는 <구간>에 **그대로 존재하는 문구**여야 한다(요약·의역 금지).
+3. answer는 options 중 하나와 글자까지 동일해야 한다.
+4. 오답 보기는 같은 구간·같은 맥락의 다른 항목으로 만들어 그럴듯하게 한다.
+5. 개념명이 곧 정답이 되는 문항을 만들지 마라.
+6. 선택형 지문만 쓴다. "설명하시오/서술하시오" 같은 서술 요구는 금지."""
+
+_SPAN_OUTPUT = """아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
+{"problems": [{"level": <1|2>, "type": "mcq"|"ox"|"multi",
+  "question": "...", "options": [...],
+  "answer": "mcq는 문자열, ox는 \\"O\\"/\\"X\\", multi는 배열",
+  "explanation": "...", "source_evidence": "구간에 그대로 있는 문구"}]}
+구간이 얇아 문항을 만들 수 없으면 problems를 빈 배열로 두어라 — 억지로 만들지 마라."""
+
+_PAIR_OUTPUT = """아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
+{"problems": [{"level": 3, "type": "mcq"|"multi"|"order",
+  "question": "...", "options": [...],
+  "answer": "mcq는 문자열, multi·order는 배열",
+  "explanation": "...",
+  "source_evidence": "구간A 인용\\n구간B 인용  ← 각각 원문 그대로, 줄바꿈으로 구분"}]}
+두 구간에 공통된 축이 전혀 없을 때만 problems를 빈 배열로 두어라."""
+
+
+def build_span_prompt(
+    subject: str,
+    concept_title: str,
+    span_heading: str,
+    span_text: str,
+    count: int,
+    feedback: str | None = None,
+) -> str:
+    """구간 하나로 L1·L2 문항을 만든다(재인·적용)."""
+    head = f"[직전 시도 피드백 — 반드시 반영]\n{feedback}\n\n" if feedback else ""
+    context = f"(이 구간은 '{span_heading}' 아래에 있다)\n" if span_heading else ""
+    # 유형 지시가 없으면 모델이 전부 mcq로 낸다(실측: span 전환 직후 13문항 전원 mcq).
+    # 구간 하나는 표의 한 행인 경우가 많아 "용어↔설명"이 가장 쉬운 길이기 때문이다.
+    mix = (
+        "\n두 개 이상 만든다면 **서로 다른 유형**으로 만들어라. 구간 하나에서는\n"
+        "보통 mcq 1개 + ox 1개가 자연스럽다. 같은 유형만 반복하지 마라."
+        if count >= 2
+        else ""
+    )
+    return f"""{head}너는 검증된 문제은행의 출제 에이전트다. 과목 "{subject}", 개념 "{concept_title}".
+아래 <구간> **하나**만 보고 문항을 최대 {count}개 만든다.{mix}
+
+{_SPAN_RULES}
+
+레벨:
+- level 1 (암기): 구간의 용어·정의를 그대로 재인출. 정답이 근거 문구와 같아도 된다.
+- level 2 (적용): **정답 보기가 근거 문구를 그대로 옮긴 것이면 안 된다.**
+  용어↔설명을 매핑하거나 상황에 적용해야 풀리게 하라.
+  (O) 근거 "단편화를 '최소화'하는 …" → 정답 "Best Fit"
+  (X) 같은 근거 → 정답 "단편화를 최소화"   ← 읽으면 바로 보이므로 L1이다
+
+{_TYPE_GUIDE_SHORT}
+
+{context}<구간>
+{span_text}
+</구간>
+
+{_SPAN_OUTPUT}"""
+
+
+def build_pair_prompt(
+    subject: str,
+    concept_title: str,
+    span_a: str,
+    span_b: str,
+    feedback: str | None = None,
+) -> str:
+    """서로 다른 두 구간을 종합해야 풀리는 L3 문항을 만든다."""
+    head = f"[직전 시도 피드백 — 반드시 반영]\n{feedback}\n\n" if feedback else ""
+    return f"""{head}너는 검증된 문제은행의 출제 에이전트다. 과목 "{subject}", 개념 "{concept_title}".
+아래 **두 구간을 모두 써야 풀리는** 심화(level 3) 문항을 1개 만든다.
+한 구간만으로 답이 나오는 문항은 L3가 아니다 — 그런 문항은 만들지 마라.
+
+두 구간은 같은 표의 이웃한 항목이다. 아래 중 하나를 골라 쓰면 거의 항상 만들 수 있다:
+- 구분: "다음 설명에 해당하는 것은?"에 두 구간의 항목을 모두 보기로 넣는다.
+- 대조: 두 항목의 차이를 묻는다(무엇을 기준으로 갈리는가).
+- 모두 고르기(multi): 두 구간의 항목 중 한 조건을 만족하는 것을 모두 고르게 한다.
+"두 구간이 관련 없다"는 판단은 마지막 수단이다 — 같은 표에 있다면 공통 축이 있다.
+
+{_SPAN_RULES}
+
+{_TYPE_GUIDE_SHORT}
+
+<구간 A>
+{span_a}
+</구간 A>
+
+<구간 B>
+{span_b}
+</구간 B>
+
+{_PAIR_OUTPUT}"""
+
+
 def build_generation_prompt(
     subject: str,
     concept: ConceptInput,

@@ -60,8 +60,9 @@ class ConceptInput(BaseModel):
 class GenerateProblemsRequest(BaseModel):
     subject: str
     concepts: list[ConceptInput] = Field(min_length=1)
-    # 레벨별 문항 수 (데모 튜닝값 — 추후 유형 배분과 함께 조정)
-    per_level: int = Field(default=2, ge=1, le=10)
+    # 레벨별 목표 문항 수. 레벨 게이트(정답률 80%)가 의미를 가지려면 실제로는
+    # 10~15가 필요하다 — 5문항이면 1개만 틀려도 통과가 무너진다.
+    per_level: int = Field(default=2, ge=1, le=20)
 
 
 # ── 출력 계약 (생성 → 검증/DB) ──────────────────────────────────────
