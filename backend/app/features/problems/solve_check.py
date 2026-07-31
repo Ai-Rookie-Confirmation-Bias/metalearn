@@ -23,7 +23,7 @@ import logging
 import re
 
 from app.core.llm.base import LLMClient
-from app.features.problems.schemas import Problem
+from app.features.problems.schemas import Problem, ProblemType
 
 logger = logging.getLogger(__name__)
 
@@ -37,26 +37,72 @@ def _tight(s: str) -> str:
 
 
 def answers_match(expected: str, got: str) -> bool:
-    """출제 정답 vs 검수 답 — 정규화 후 동등하거나 한쪽이 다른 쪽을 포함하면 일치."""
+    """출제 정답 vs 검수 답(항목 하나) — 정규화 후 동등하거나 포함 관계면 일치."""
     e, g = _tight(expected), _tight(got)
     return bool(e) and bool(g) and (e == g or e in g or g in e)
+
+
+def as_list(value: object) -> list[str]:
+    """검수 응답을 항상 목록으로 — 유형에 따라 문자열/배열이 섞여 온다."""
+    if isinstance(value, list):
+        return [str(v).strip() for v in value if str(v).strip()]
+    text = str(value or "").strip()
+    return [text] if text else []
+
+
+def answers_equivalent(kind: ProblemType, expected: list[str], got: list[str]) -> bool:
+    """유형별로 출제 정답과 검수 답이 같은지 판정한다.
+
+    order는 **순서까지**, multi는 **구성(집합)만**, mcq·ox는 항목 하나를 본다.
+    """
+    if not expected or not got:
+        return False
+    if kind is ProblemType.ORDER:
+        return len(expected) == len(got) and all(
+            answers_match(e, g) for e, g in zip(expected, got)
+        )
+    if kind is ProblemType.MULTI:
+        if len(expected) != len(got):
+            return False
+        remaining = list(got)
+        for e in expected:
+            hit = next((g for g in remaining if answers_match(e, g)), None)
+            if hit is None:
+                return False
+            remaining.remove(hit)
+        return True
+    return answers_match(expected[0], got[0])
+
+
+# 유형별로 검수자에게 요구할 답의 형태가 다르다.
+_ASK = {
+    ProblemType.MCQ: "정답 보기의 텍스트 하나",
+    ProblemType.MULTI: "정답인 보기 텍스트를 **모두** 담은 배열",
+    ProblemType.OX: '"O" 또는 "X"',
+    ProblemType.ORDER: "보기 전체를 올바른 순서로 배열한 배열",
+}
 
 
 def build_prompt(problems: list[Problem], source_text: str) -> str:
     """정답을 **숨기고** 문제만 제시한다 — 검수가 진짜로 풀어야 의미가 있다."""
     blocks = []
     for i, p in enumerate(problems):
-        opts = "\n".join(f"   - {o}" for o in p.options)
-        blocks.append(f"[문항 {i}] {p.question}\n{opts}")
+        head = f"[문항 {i}] ({p.type}) {p.question}"
+        if p.options:
+            head += "\n" + "\n".join(f"   - {o}" for o in p.options)
+        head += f"\n   → 답 형식: {_ASK[p.type]}"
+        blocks.append(head)
     joined = "\n\n".join(blocks)
     return f"""너는 학습 문항 검수자다. 아래 [원문]만 읽은 학습자가 각 문제를 푼다고 하자.
 
 각 문항에 대해:
-1) answer — 네가 고른 정답 보기의 텍스트를 그대로 적어라.
-2) also_correct — 원문에 비추어 **정답으로 인정될 수 있는 다른 보기**를 적극적으로 찾아
+1) answer — 네가 고른 답. **문항마다 표시된 '답 형식'을 그대로 따르라**
+   (하나면 문자열, 여럿이면 배열).
+2) also_correct — 원문에 비추어 **정답으로 인정될 수 있는 다른 답**을 적극적으로 찾아
    나열하라. 좋은 문항은 정답이 유일하다 — 하나라도 있으면 그 문항은 결함이다.
    (예: 원문이 "ex. FIFO, OPT, LRU, LFU"처럼 나열했는데 보기가 그 목록에서 나왔다면
-    보기 전부가 정답이므로 모두 여기에 적어라.)
+    보기 전부가 정답이므로 모두 여기에 적어라. 순서 배열 문항이라면 원문 근거로는
+    다르게 배열해도 말이 되는 순서를 여기에 적어라.)
 3) unanswerable — 원문만으로는 정답을 특정할 수 없으면 true.
 
 [원문]
@@ -66,7 +112,7 @@ def build_prompt(problems: list[Problem], source_text: str) -> str:
 {joined}
 
 출력은 아래 JSON 객체 하나만(설명·코드펜스 금지):
-{{"items": [{{"id": 0, "answer": "고른 보기 텍스트", "also_correct": [], "unanswerable": false}}]}}"""
+{{"items": [{{"id": 0, "answer": "고른 답(형식에 맞춰)", "also_correct": [], "unanswerable": false}}]}}"""
 
 
 async def verify_problems(
@@ -107,26 +153,41 @@ async def verify_problems(
             reasons.append("원문만으로 정답을 특정할 수 없음")
             continue
 
-        # 출제 정답 외에 '정답 가능'으로 지목된 보기가 실재하면 정답 비유일.
-        others = [
-            str(o)
-            for o in (row.get("also_correct") or [])
-            if str(o).strip() and not answers_match(p.answer, str(o))
-        ]
-        if others:
-            reasons.append(f"정답 비유일 — 다른 보기도 정답 가능({len(others)}개)")
-            continue
+        expected = p.answer_texts
+        alts = row.get("also_correct") or []
 
-        got = str(row.get("answer") or "")
+        if p.type is ProblemType.ORDER:
+            # 순서 문항은 "다른 순서도 성립"이 곧 정답 비유일이다.
+            if alts:
+                reasons.append("정답 비유일 — 다른 순서로도 성립")
+                continue
+        else:
+            # 출제 정답에 없는 답이 '정답 가능'으로 지목되면 정답 비유일.
+            others = [
+                str(o)
+                for o in alts
+                if str(o).strip()
+                and not any(answers_match(e, str(o)) for e in expected)
+            ]
+            if others:
+                reasons.append(f"정답 비유일 — 다른 보기도 정답 가능({len(others)}개)")
+                continue
+
+        got = as_list(row.get("answer"))
         # 검수가 also_correct를 비워둔 채 answer에 여러 보기를 한꺼번에 적는
         # 형태로 "다 정답"을 표현하는 경우가 있다(실측: "FIFO, OPT, LRU, LFU").
         # answers_match는 약어↔풀네임을 살리려고 포함 관계를 인정하므로, 이런
         # 나열형 답을 그대로 대조하면 출제 정답과 일치한다고 오판한다.
-        if got and len([o for o in p.options if answers_match(o, got)]) >= 2:
+        # 정답이 원래 하나인 유형에서만 의미가 있다.
+        if (
+            p.type is ProblemType.MCQ
+            and got
+            and len([o for o in p.options if answers_match(o, got[0])]) >= 2
+        ):
             reasons.append("검수 답이 여러 보기를 동시에 지목 — 정답 비유일")
             continue
-        if got and not answers_match(p.answer, got):
-            reasons.append("검수자가 출제 정답과 다른 보기를 고름")
+        if got and not answers_equivalent(p.type, expected, got):
+            reasons.append("검수자가 출제 정답과 다른 답을 냄")
             continue
 
         passed.append(p)

@@ -23,6 +23,7 @@ DB·LLM 비의존. 게이트 ①~④가 "결함이 없는가"를 보고 ⑤가 "
 import re
 
 from app.features.problems.grounding import citation_spans, normalize
+from app.features.problems.schemas import ProblemType
 
 _TIGHT_RE = re.compile(r"[\s.,·'\"()\[\]]+")
 
@@ -31,25 +32,45 @@ def _tight(s: str) -> str:
     return _TIGHT_RE.sub("", normalize(s))
 
 
-def answer_visible_in_evidence(answer: str, evidence: str) -> bool:
-    """정답 보기가 근거 문구에 그대로 담겨 있으면 True(= 재인 수준).
+def answer_visible_in_evidence(answers: str | list[str], evidence: str) -> bool:
+    """정답이 근거 문구에 그대로 담겨 있으면 True(= 재인 수준).
 
     예) 근거 "단편화를 '최대화'하는 분할 영역에 데이터 배치"
         정답 "단편화를 최대화"  → True (근거를 읽으면 답이 보인다)
     반례) 근거 "단편화를 '최소화'하는 분할 영역에 데이터 배치"
         정답 "Best Fit"       → False (용어↔설명 매핑이 필요하다)
+
+    정답이 여럿인 유형(multi·order)은 **전부** 근거에 그대로 있을 때만 재인으로
+    본다. 하나라도 근거 밖에 있으면 그것을 찾는 판단이 필요하기 때문이다.
+    O/X는 정답 문자열("O"·"X")이 내용을 담지 않으므로 이 신호를 쓸 수 없다.
     """
-    a, e = _tight(answer), _tight(evidence)
-    return bool(a) and bool(e) and a in e
+    items = [answers] if isinstance(answers, str) else list(answers)
+    if not items or all(x in ("O", "X") for x in items):
+        return False
+    e = _tight(evidence)
+    if not e:
+        return False
+    return all((a := _tight(x)) and a in e for x in items)
 
 
-def assess(answer: str, evidence: str, source: str) -> int:
+def assess(
+    kind: ProblemType, answers: str | list[str], evidence: str, source: str
+) -> int:
     """이 문항이 실제로 요구하는 레벨(1~3)을 추정한다.
 
     보수적으로 판정한다 — 애매하면 낮은 쪽이 아니라 **요청한 레벨을 유지**할 수
     있도록, 여기서는 '확실히 쉬운 경우'만 낮게 잡는다. 강등은 service가
     요청 레벨과 비교해 결정한다.
+
+    유형을 함께 보는 이유: multi·order는 **정답 항목이 모두 원문에 있어도**
+    쉬운 문항이 아니다. 어느 것을 고를지(분류)·어떤 차례인지(배열)를 판단해야
+    하므로, 재인만으로는 풀리지 않는다. 실측에서 "배치 전략에 해당하는 것을
+    모두 고르시오"가 항목이 전부 원문에 있다는 이유로 L1으로 강등됐는데,
+    범주 판단이 필요하므로 적용(L2) 이상으로 보는 것이 맞다.
     """
-    if answer_visible_in_evidence(answer, evidence):
+    deep = citation_spans(evidence, source) >= 2
+    if kind in (ProblemType.MULTI, ProblemType.ORDER):
+        return 3 if deep else 2
+    if answer_visible_in_evidence(answers, evidence):
         return 1  # 근거를 읽으면 답이 보인다 — 종합도 적용도 필요 없다
-    return 3 if citation_spans(evidence, source) >= 2 else 2
+    return 3 if deep else 2

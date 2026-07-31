@@ -3,9 +3,9 @@
 입력 = 파싱 에이전트 → 생성 에이전트 (개념 구간 + 원문).
 출력 = 생성 에이전트 → 검증 에이전트 / DB (문항 + 근거).
 """
-from enum import IntEnum
+from enum import IntEnum, StrEnum
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, model_validator
 
 
 class Level(IntEnum):
@@ -14,6 +14,24 @@ class Level(IntEnum):
     RECALL = 1
     APPLY = 2
     DEEP = 3
+
+
+class ProblemType(StrEnum):
+    """문항 유형 — 모두 **서버가 규칙으로 채점 가능한** 형태만 둔다.
+
+    문제은행이 한 가지 유형뿐이면 20문제만 풀어도 지겹고, 추측으로 뚫린다.
+    유형마다 정답의 자료형이 다르므로(str / list) answer를 유니온으로 두고
+    타입별 규칙은 Problem.validate에서 검사한다.
+    """
+
+    MCQ = "mcq"  # 4지선다 — 정답 1개
+    MULTI = "multi"  # 다중 정답 — "모두 고르시오". 추측이 어렵다
+    OX = "ox"  # 참/거짓 — 단독으론 약하나(추측률 50%) 개념 확인에 빠르다
+    ORDER = "order"  # 순서 배열 — 절차·단계가 있는 원문에서만 성립
+
+
+# 유형별 정답 자료형: str 하나 / 문자열 목록
+Answer = str | list[str]
 
 
 # ── 입력 계약 (파싱 → 생성) ─────────────────────────────────────────
@@ -49,23 +67,66 @@ class GenerateProblemsRequest(BaseModel):
 # ── 출력 계약 (생성 → 검증/DB) ──────────────────────────────────────
 class Problem(BaseModel):
     level: Level
-    type: str = "mcq"  # v1 = mcq. 규칙채점형(order/match/classify…)은 확장.
+    type: ProblemType = ProblemType.MCQ
     question: str
-    options: list[str] = Field(min_length=2)
-    # 정답: 옵션 원문과 정확히 일치해야 함 (서빙 시 스트립·채점 대조 기준).
-    answer: str
+    # ox는 보기가 없다(정답이 O/X 고정). 나머지 유형은 아래 검증에서 개수를 본다.
+    options: list[str] = Field(default_factory=list)
+    # 정답 자료형이 유형마다 다르다 — mcq/ox는 문자열, multi/order는 문자열 목록.
+    # 보기 원문과 글자까지 일치해야 한다(서빙 시 스트립·채점 대조 기준).
+    answer: Answer
     explanation: str
     # ★ 검증 에이전트 v1의 입력 — 원문에 실재하는 근거 문구.
     source_evidence: str
 
-    @field_validator("answer")
-    @classmethod
-    def _answer_in_options(cls, v: str, info: object) -> str:
-        # answer가 options 안에 있는지 보장 (LLM이 라벨/번호로 답하는 사고 차단).
-        options = getattr(info, "data", {}).get("options") or []
-        if options and v not in options:
-            raise ValueError(f"answer '{v}' must match one of options {options}")
-        return v
+    @property
+    def answer_texts(self) -> list[str]:
+        """정답을 항상 목록으로 — 게이트들이 유형에 상관없이 다룰 수 있게."""
+        return list(self.answer) if isinstance(self.answer, list) else [self.answer]
+
+    @model_validator(mode="after")
+    def _check_by_type(self) -> "Problem":
+        """유형별 규칙 검사.
+
+        LLM이 라벨("C")로 답하거나, 다중정답인데 하나만 주거나, 순서 배열인데
+        보기 일부만 나열하는 사고가 실제로 잦다. 형식 단계에서 확정 차단한다.
+        """
+        opts, ans = self.options, self.answer
+
+        if self.type is ProblemType.OX:
+            if not isinstance(ans, str) or ans not in ("O", "X"):
+                raise ValueError("ox 문항의 answer는 'O' 또는 'X'여야 한다")
+            # 보기를 채워 보내와도 무의미하므로 버린다(화면은 O/X 고정 렌더).
+            object.__setattr__(self, "options", [])
+            return self
+
+        if len(opts) < 2:
+            raise ValueError(f"{self.type} 문항은 보기가 2개 이상이어야 한다")
+        if len(set(opts)) != len(opts):
+            raise ValueError("보기에 중복이 있다")
+
+        if self.type is ProblemType.MCQ:
+            if not isinstance(ans, str):
+                raise ValueError("mcq 문항의 answer는 문자열 1개여야 한다")
+            if ans not in opts:
+                raise ValueError(f"answer '{ans}'가 보기에 없다")
+            return self
+
+        if not isinstance(ans, list):
+            raise ValueError(f"{self.type} 문항의 answer는 목록이어야 한다")
+        missing = [a for a in ans if a not in opts]
+        if missing:
+            raise ValueError(f"answer 항목이 보기에 없다: {missing}")
+
+        if self.type is ProblemType.MULTI:
+            # 정답이 1개면 mcq이고, 전부면 고를 것이 없다 — 둘 다 결함 문항이다.
+            if not 2 <= len(ans) < len(opts):
+                raise ValueError("multi 문항의 정답은 2개 이상, 보기 전체 미만이어야 한다")
+            if len(set(ans)) != len(ans):
+                raise ValueError("multi 문항의 정답에 중복이 있다")
+        else:  # ORDER — 보기 전체를 빠짐없이 한 번씩 배열해야 한다
+            if sorted(ans) != sorted(opts):
+                raise ValueError("order 문항의 answer는 보기 전체의 순열이어야 한다")
+        return self
 
 
 class ConceptProblems(BaseModel):

@@ -14,7 +14,11 @@ from pydantic import ValidationError
 
 from app.core.llm.base import LLMClient
 from app.core.llm.solar import solar_client
-from app.features.problems.grounding import evidence_in_source, normalize
+from app.features.problems.grounding import (
+    evidence_in_source,
+    items_not_in_source,
+    normalize,
+)
 from app.features.problems.prompts import build_generation_prompt
 from app.features.problems.quality import (
     answer_leaked_in_title,
@@ -28,6 +32,7 @@ from app.features.problems.schemas import (
     GenerateProblemsRequest,
     GenerateProblemsResponse,
     Problem,
+    ProblemType,
 )
 
 logger = logging.getLogger(__name__)
@@ -227,10 +232,23 @@ class ProblemGeneratorService:
             if not evidence_in_source(p.source_evidence, source):
                 reasons.append("source_evidence가 원문에 없음(창작 의심)")
                 continue
+            # 근거만 대조하면 **보기의 창작**이 빠져나간다. 순서 배열은 보기 전체가,
+            # 다중 정답은 정답 항목이 원문에 실재해야 한다(실측: 원문에 없는 단계를
+            # 지어내 배열시킨 문항이 게이트를 통과했다).
+            checked = (
+                p.options
+                if p.type is ProblemType.ORDER
+                else p.answer_texts
+                if p.type is ProblemType.MULTI
+                else []
+            )
+            if missing := items_not_in_source(checked, source):
+                reasons.append(f"보기가 원문에 없음(창작): {', '.join(missing[:2])}")
+                continue
             # 레벨 과대 태깅은 강등해 살린다. 라벨만 틀렸을 뿐 문항은 쓸 수 있고,
             # 버리면 문항 수만 줄고 재시도를 태운다.
             requested = int(p.level)
-            actual = levels.assess(p.answer, p.source_evidence, source)
+            actual = levels.assess(p.type, p.answer, p.source_evidence, source)
             if actual < requested:
                 downgrades.append(f"L{requested}로 낸 문항이 실제 L{actual} 수준")
                 p = p.model_copy(update={"level": actual})
@@ -250,14 +268,18 @@ def _normalize_options(item: object) -> object:
 
     라벨이 남으면 화면에서 "A) A. FIFO"로 겹쳐 보이고, answer와 options의
     글자 일치가 깨져 멀쩡한 문항이 검증에서 폐기된다.
+    정답은 유형에 따라 문자열이거나 배열이므로 둘 다 처리한다.
     """
     if not isinstance(item, dict):
         return item
     out = dict(item)
     if isinstance(out.get("options"), list):
         out["options"] = [strip_option_label(str(o)) for o in out["options"]]
-    if isinstance(out.get("answer"), str):
-        out["answer"] = strip_option_label(out["answer"])
+    answer = out.get("answer")
+    if isinstance(answer, str):
+        out["answer"] = strip_option_label(answer)
+    elif isinstance(answer, list):
+        out["answer"] = [strip_option_label(str(a)) for a in answer]
     return out
 
 

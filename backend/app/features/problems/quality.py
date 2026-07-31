@@ -61,12 +61,20 @@ def _tight(s: str) -> str:
     return re.sub(r"[\s.,·'\"()\[\]]+", "", s)
 
 
-def answer_leaked_in_title(answer: str, concept_title: str) -> bool:
-    """정답 보기가 개념명 안에 통째로 들어있으면 유출(→ 폐기).
+def answer_leaked_in_title(answers: str | list[str], concept_title: str) -> bool:
+    """정답이 개념명 안에 통째로 들어있으면 유출(→ 폐기).
 
     개념명은 화면에 절 제목으로 노출되므로, 정답이 제목에 그대로 있으면
     학습자가 지문을 읽지 않고도 답을 안다. 부분 포함은 힌트 수준이라 살린다.
     (integration learning/generator.py `_mcq_answer_leaked` 이식)
+
+    다중 정답·순서 배열은 정답이 여러 개다. **하나라도** 제목에 노출되면
+    그만큼 추측이 쉬워지므로 유출로 본다. O/X("O"·"X")는 판정 대상이 아니다.
     """
-    a, t = _tight(answer), _tight(concept_title)
-    return bool(a) and bool(t) and a in t
+    items = [answers] if isinstance(answers, str) else answers
+    t = _tight(concept_title)
+    if not t:
+        return False
+    return any(
+        (a := _tight(x)) and a not in ("O", "X") and a in t for x in items
+    )

@@ -10,6 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.features.problems import levels  # noqa: E402
+from app.features.problems.schemas import ProblemType  # noqa: E402
 
 SOURCE = """### ■ 기억장치 관리 전략
 
@@ -29,6 +30,7 @@ def test_answer_verbatim_in_evidence_is_level1():
     # 실측 오분류 사례 — 근거를 읽으면 답이 그대로 보인다.
     assert (
         levels.assess(
+            ProblemType.MCQ,
             "단편화를 최대화",
             "단편화를 '최대화'하는 분할 영역에 데이터 배치",
             SOURCE,
@@ -41,6 +43,7 @@ def test_term_to_description_mapping_is_level2():
     # 용어↔설명 매핑이 필요하면 단순 재인이 아니다.
     assert (
         levels.assess(
+            ProblemType.MCQ,
             "Best Fit",
             "단편화를 '최소화'하는 분할 영역에 데이터 배치",
             SOURCE,
@@ -53,6 +56,7 @@ def test_two_location_synthesis_is_level3():
     # 서로 다른 두 곳을 종합해야 풀리는 문항.
     assert (
         levels.assess(
+            ProblemType.MCQ,
             "최초 적합은 첫 번째 영역, 최적 적합은 단편화 최소 영역에 배치",
             "사용 가능한 '첫 번째' 분할 영역에 데이터 배치\n"
             "단편화를 '최소화'하는 분할 영역에 데이터 배치",
@@ -66,6 +70,7 @@ def test_two_locations_but_answer_visible_is_level1():
     # 두 곳을 인용했어도 정답이 근거에 그대로 있으면 종합이 아니다.
     assert (
         levels.assess(
+            ProblemType.MCQ,
             "단편화를 최소화하는 분할 영역에 데이터 배치",
             "사용 가능한 '첫 번째' 분할 영역에 데이터 배치\n"
             "단편화를 '최소화'하는 분할 영역에 데이터 배치",
@@ -87,6 +92,32 @@ def test_answer_visible_helper():
         "Best Fit", "단편화를 '최소화'하는 분할 영역에 데이터 배치"
     )
     assert not levels.answer_visible_in_evidence("", "아무 근거")
+
+
+def test_multi_is_not_downgraded_to_level1():
+    # 실측 회귀: "배치 전략에 해당하는 것을 모두 고르시오"가 정답 항목이 전부
+    # 원문에 있다는 이유로 L1으로 강등됐다. 범주 판단이 필요하므로 L2 이상이다.
+    assert (
+        levels.assess(
+            ProblemType.MULTI,
+            ["최초 적합", "최적 적합", "최악 적합"],
+            "최초 적합\n최적 적합\n최악 적합",
+            SOURCE,
+        )
+        >= 2
+    )
+
+
+def test_order_is_not_downgraded_to_level1():
+    assert (
+        levels.assess(
+            ProblemType.ORDER,
+            ["최초 적합", "최적 적합"],
+            "사용 가능한 '첫 번째' 분할 영역에 데이터 배치",
+            SOURCE,
+        )
+        >= 2
+    )
 
 
 def _main() -> int:

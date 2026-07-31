@@ -72,7 +72,7 @@ def test_reviewer_picked_different_answer_rejected():
     passed, reasons = _run(
         {"items": [{"id": 0, "answer": "LRU", "also_correct": []}]}, [_problem()]
     )
-    assert passed == [] and "다른 보기" in reasons[0]
+    assert passed == [] and "다른 답" in reasons[0]
 
 
 def test_unanswerable_rejected():
@@ -115,9 +115,104 @@ def test_missing_row_passes():
 
 def test_answer_hidden_from_reviewer():
     # 프롬프트에 출제 정답·해설이 새면 검수가 그대로 베껴 검증이 무의미해진다.
-    prompt = solve_check.build_prompt([_problem()], SOURCE)
-    assert "원문에 예시로 나열됨" not in prompt  # explanation 미노출
-    assert "정답" not in prompt.split("[문항들]")[1]  # 문항부에 정답 표기 없음
+    # 보기 자체는 보여야 하므로("FIFO"는 등장), **어느 것이 정답인지 표시**가
+    # 없다는 것과 해설이 빠졌다는 것을 확인한다.
+    p = _problem()
+    prompt = solve_check.build_prompt([p], SOURCE)
+    assert p.explanation not in prompt
+    assert f"정답: {p.answer}" not in prompt
+    assert "▶" not in prompt and "answer:" not in prompt.split("[문항들]")[1]
+
+
+# ── 신규 유형(multi·ox·order) 검수 ────────────────────────────────────
+def _multi() -> Problem:
+    return Problem(
+        level=2,
+        type="multi",
+        question="교체 전략의 예시에 해당하는 것을 모두 고르시오",
+        options=["FIFO", "OPT", "요구 반입", "최초 적합"],
+        answer=["FIFO", "OPT"],
+        explanation="원문에 교체 전략 예시로 나열됨",
+        source_evidence="ex. FIFO, OPT, LRU, LFU, NUR",
+    )
+
+
+def _order() -> Problem:
+    return Problem(
+        level=3,
+        type="order",
+        question="기억장치 관리 전략의 결정 순서를 배열하시오",
+        options=["반입", "배치", "교체"],
+        answer=["반입", "배치", "교체"],
+        explanation="언제→어디에→무엇을 교체",
+        source_evidence="ex. FIFO, OPT, LRU, LFU, NUR",
+    )
+
+
+def test_multi_set_match_passes():
+    # 순서가 달라도 구성이 같으면 통과해야 한다(multi는 집합 비교).
+    passed, _ = _run(
+        {"items": [{"id": 0, "answer": ["OPT", "FIFO"], "also_correct": []}]},
+        [_multi()],
+    )
+    assert len(passed) == 1
+
+
+def test_multi_missing_item_rejected():
+    passed, reasons = _run(
+        {"items": [{"id": 0, "answer": ["FIFO"], "also_correct": []}]}, [_multi()]
+    )
+    assert passed == [] and "다른 답" in reasons[0]
+
+
+def test_multi_extra_correct_rejected():
+    # 검수가 추가 정답을 지목 → 정답 비유일.
+    passed, reasons = _run(
+        {"items": [{"id": 0, "answer": ["FIFO", "OPT"], "also_correct": ["요구 반입"]}]},
+        [_multi()],
+    )
+    assert passed == [] and "비유일" in reasons[0]
+
+
+def test_order_sequence_must_match():
+    # 순서가 다르면 폐기(order는 순서까지 본다).
+    passed, reasons = _run(
+        {"items": [{"id": 0, "answer": ["배치", "반입", "교체"], "also_correct": []}]},
+        [_order()],
+    )
+    assert passed == [] and "다른 답" in reasons[0]
+
+
+def test_order_alternative_ordering_rejected():
+    # "다른 순서로도 성립"은 곧 정답 비유일이다.
+    passed, reasons = _run(
+        {
+            "items": [
+                {
+                    "id": 0,
+                    "answer": ["반입", "배치", "교체"],
+                    "also_correct": [["배치", "반입", "교체"]],
+                }
+            ]
+        },
+        [_order()],
+    )
+    assert passed == [] and "비유일" in reasons[0]
+
+
+def test_order_exact_sequence_passes():
+    passed, _ = _run(
+        {"items": [{"id": 0, "answer": ["반입", "배치", "교체"], "also_correct": []}]},
+        [_order()],
+    )
+    assert len(passed) == 1
+
+
+def test_prompt_shows_answer_format_per_type():
+    # 유형마다 답 형식을 알려줘야 검수가 배열/문자열을 맞춰 준다.
+    prompt = solve_check.build_prompt([_problem(), _multi(), _order()], SOURCE)
+    assert "(mcq)" in prompt and "(multi)" in prompt and "(order)" in prompt
+    assert "배열" in prompt
 
 
 def _main() -> int:

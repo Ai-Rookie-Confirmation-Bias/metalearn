@@ -72,6 +72,20 @@ def _segments(evidence: str) -> list[str]:
     return out
 
 
+def items_not_in_source(items: list[str], source: str) -> list[str]:
+    """원문에 실재하지 않는 항목만 골라 돌려준다(빈 목록이면 전부 실재).
+
+    보기(option)처럼 짧은 문구용이라 MIN_EVIDENCE_CHARS를 적용하지 않는다.
+
+    왜 필요한가(실측): 순서 배열 문항이 근거로는 원문 한 줄을 인용하면서
+    보기에는 원문에 없는 단계("페이지 참조·교체 전략 선택·페이지 적재")를
+    지어내 게이트를 통과했다. source_evidence만 대조하면 **보기의 창작**은
+    잡히지 않는다 — 학습자가 실제로 읽는 것은 보기인데도.
+    """
+    norm_source = normalize(source)
+    return [i for i in items if normalize(i) and normalize(i) not in norm_source]
+
+
 def citation_spans(evidence: str, source: str) -> int:
     """근거가 원문의 **서로 다른 몇 곳**을 인용했는지 센다.
 

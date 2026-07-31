@@ -32,7 +32,11 @@ from app.features.problems.quality import (  # noqa: E402
     is_free_response_style,
     strip_option_label,
 )
-from app.features.problems.schemas import ConceptInput, Problem  # noqa: E402
+from app.features.problems.schemas import (  # noqa: E402
+    ConceptInput,
+    Problem,
+    ProblemType,
+)
 
 GOLDEN_DIR = Path(__file__).parent / "golden"
 
@@ -124,7 +128,10 @@ async def main() -> int:
         if not dropped and "expected_level" in it:
             p = it["problem"]
             actual = levels.assess(
-                p["answer"], p["source_evidence"], concept.source_text
+                ProblemType(p.get("type", "mcq")),
+                p["answer"],
+                p["source_evidence"],
+                concept.source_text,
             )
             actual = min(actual, p["level"])  # service와 동일: 강등만, 승격 없음
             if actual != it["expected_level"]:

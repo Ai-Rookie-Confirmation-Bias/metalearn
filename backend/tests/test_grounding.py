@@ -11,7 +11,10 @@ from pathlib import Path
 # backend/ 를 import 경로에 올린다(pytest·직접실행 모두 대응).
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from app.features.problems.grounding import evidence_in_source  # noqa: E402
+from app.features.problems.grounding import (  # noqa: E402
+    evidence_in_source,
+    items_not_in_source,
+)
 
 # 실제 파싱 출력을 모사한 표 마크다운 원문(불릿·파이프 포함).
 SOURCE = """## 페이지 교체 전략
@@ -104,6 +107,32 @@ def test_table_row_quote_passes():
     assert evidence_in_source(
         "| LRU | 스택 | 가장 오래 참조되지 않은 페이지를 교체한다 |", SOURCE
     )
+
+
+# ── 보기 창작 차단 — 근거만 대조하면 놓치는 구멍 ────────────────────
+def test_fabricated_options_detected():
+    """실측 회귀: 근거는 원문 한 줄을 인용하면서 보기에는 원문에 없는 단계를
+    지어내 배열시킨 순서 문항이 게이트를 통과했다.
+
+    부분 문자열 판정이라 짧고 일반적인 문구("페이지 교체")는 원문의 다른 맥락
+    (제목 "페이지 교체 전략")에 우연히 포함될 수 있다. 그래도 **하나라도**
+    창작이 잡히면 문항 전체가 폐기되므로 방어는 성립한다.
+    """
+    missing = items_not_in_source(
+        ["페이지 참조", "교체 전략 선택", "페이지 교체", "페이지 적재"], SOURCE
+    )
+    assert "페이지 참조" in missing and "교체 전략 선택" in missing
+    assert missing  # 비어 있지 않음 → 그 문항은 폐기된다
+
+
+def test_real_options_pass():
+    # 원문에 실재하는 짧은 보기는 통과해야 한다(근거보다 짧아도 허용).
+    assert items_not_in_source(["FIFO", "LRU", "벨레이디의 역설"], SOURCE) == []
+
+
+def test_partially_fabricated_options():
+    missing = items_not_in_source(["FIFO", "클럭 알고리즘"], SOURCE)
+    assert missing == ["클럭 알고리즘"]
 
 
 def _main() -> int:
