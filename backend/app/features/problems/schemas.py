@@ -34,6 +34,26 @@ class ProblemType(StrEnum):
 Answer = str | list[str]
 
 
+class Distractor(BaseModel):
+    """오답 보기 하나와, 그것을 고르는 이유.
+
+    두 가지를 한꺼번에 해결한다.
+
+    ① **오답 화면의 데이터** — 학습자가 틀렸을 때 "왜 그 답을 골랐는지"를
+       그 자리에서 보여준다. 푸는 시점에 LLM으로 추론하면 느리고 흔들리므로
+       생성 시점에 미리 만들어 둔다.
+    ② **오답 품질** — 실측에서 mcq 7문항 중 3문항이 "정답만 원문에 있고 오답은
+       전부 창작"이었다. 원문을 한 번 본 사람은 읽어본 문장 하나만 고르면 된다.
+       `confused_with`를 원문에서 가져오게 강제하면 이 결함이 구조적으로 막힌다.
+    """
+
+    text: str  # options 중 하나 (정답이 아닌 것)
+    # 원문의 **어느 항목과** 헷갈리게 만든 것인지. 원문 실재 검사 대상이다.
+    confused_with: str
+    # 학습자에게 보여줄 한 줄 — 정답과 무엇이 갈리는지.
+    note: str
+
+
 # ── 입력 계약 (파싱 → 생성) ─────────────────────────────────────────
 class ConceptInput(BaseModel):
     """파싱이 넘기는 개념 구간 = **소제목 단위**(챕터 통째 아님).
@@ -78,6 +98,9 @@ class Problem(BaseModel):
     explanation: str
     # ★ 검증 에이전트 v1의 입력 — 원문에 실재하는 근거 문구.
     source_evidence: str
+    # 오답 화면의 재료. 지금은 **선택**이다 — 필수로 걸면 이것 하나 빠졌다고
+    # 멀쩡한 문항이 폐기되어 수율이 무너진다. 실측으로 산출률을 본 뒤 강화한다.
+    distractors: list[Distractor] = Field(default_factory=list)
 
     @property
     def answer_texts(self) -> list[str]:
@@ -127,6 +150,27 @@ class Problem(BaseModel):
         else:  # ORDER — 보기 전체를 빠짐없이 한 번씩 배열해야 한다
             if sorted(ans) != sorted(opts):
                 raise ValueError("order 문항의 answer는 보기 전체의 순열이어야 한다")
+        return self
+
+    @model_validator(mode="after")
+    def _clean_distractors(self) -> "Problem":
+        """오답 메모를 정리한다 — 깨진 항목은 **문항을 죽이지 않고 버린다.**
+
+        보기에 없는 텍스트를 적거나 정답을 오답이라고 적는 사고가 난다.
+        그렇다고 문항 전체를 폐기하면 부가 정보 하나 때문에 본체를 잃는다.
+        (`_check_by_type` 다음에 돌므로 ox의 options는 이미 비워져 있다.)
+        """
+        if self.type is ProblemType.OX or not self.distractors:
+            object.__setattr__(self, "distractors", [])
+            return self
+        answers = set(self.answer_texts)
+        kept: list[Distractor] = []
+        seen: set[str] = set()
+        for d in self.distractors:
+            if d.text in self.options and d.text not in answers and d.text not in seen:
+                seen.add(d.text)
+                kept.append(d)
+        object.__setattr__(self, "distractors", kept)
         return self
 
 

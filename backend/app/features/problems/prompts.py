@@ -90,23 +90,41 @@ _SPAN_RULES = """[규칙]
    (제목은 맥락일 뿐이다. 제목을 근거로 인용하지 마라.)
 2. source_evidence는 <구간>에 **그대로 존재하는 문구**여야 한다(요약·의역 금지).
 3. answer는 options 중 하나와 글자까지 동일해야 한다.
-4. 오답 보기는 같은 구간·같은 맥락의 다른 항목으로 만들어 그럴듯하게 한다.
-5. 개념명이 곧 정답이 되는 문항을 만들지 마라.
-6. 선택형 지문만 쓴다. "설명하시오/서술하시오" 같은 서술 요구는 금지."""
+4. ★ **오답 보기는 구간 안의 다른 항목에서 가져온다.** 없는 말을 지어내지 마라.
+   오답을 지어내면 원문을 한 번이라도 읽은 사람은 "읽어본 문장" 하나만 고르면
+   되어 문제가 무의미해진다. 실제로 이런 문항이 절반 가까이 나왔다.
+   (X) 정답 "사용 가능한 '첫 번째' 분할 영역에 데이터 배치"(원문) +
+       오답 "가장 작은/가장 큰/가장 적합한 …"(전부 창작) ← 정답이 그냥 보인다
+   (O) 정답 "Best Fit" + 오답 "First Fit" "Worst Fit"(전부 원문에 있는 항목)
+5. ★ 오답마다 **왜 그것을 고르게 되는지**를 distractors에 적는다.
+   - text: 그 오답 보기 (options 중 하나, 정답이 아닌 것)
+   - confused_with: 그 오답이 **원문의 어느 항목**과 헷갈린 것인지 (원문 표기 그대로)
+   - note: 정답과 무엇이 갈리는지 한 문장. 학습자에게 그대로 보여줄 글이다.
+6. 개념명이 곧 정답이 되는 문항을 만들지 마라.
+7. 선택형 지문만 쓴다. "설명하시오/서술하시오" 같은 서술 요구는 금지."""
 
-_SPAN_OUTPUT = """아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
-{"problems": [{"level": <1|2>, "type": "mcq"|"ox"|"multi",
+# distractors는 오답 화면(틀렸을 때 "왜 그 답을 골랐는지")의 데이터원이다.
+# ox는 보기가 없으므로 빈 배열.
+_DISTRACTOR_FIELD = """  "distractors": [{"text": "오답 보기 하나",
+                   "confused_with": "원문의 어느 항목과 헷갈린 것인지(원문 표기 그대로)",
+                   "note": "정답과 무엇이 갈리는지 한 문장"}]"""
+
+_SPAN_OUTPUT = f"""아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
+{{"problems": [{{"level": <1|2>, "type": "mcq"|"ox"|"multi",
   "question": "...", "options": [...],
   "answer": "mcq는 문자열, ox는 \\"O\\"/\\"X\\", multi는 배열",
-  "explanation": "...", "source_evidence": "구간에 그대로 있는 문구"}]}
+  "explanation": "...", "source_evidence": "구간에 그대로 있는 문구",
+{_DISTRACTOR_FIELD}}}]}}
+distractors는 오답 보기 **전부**에 대해 적는다(ox는 빈 배열).
 구간이 얇아 문항을 만들 수 없으면 problems를 빈 배열로 두어라 — 억지로 만들지 마라."""
 
-_PAIR_OUTPUT = """아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
-{"problems": [{"level": 3, "type": "mcq"|"multi"|"order",
+_PAIR_OUTPUT = f"""아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
+{{"problems": [{{"level": 3, "type": "mcq"|"multi"|"order",
   "question": "...", "options": [...],
   "answer": "mcq는 문자열, multi·order는 배열",
   "explanation": "...",
-  "source_evidence": "구간A 인용\\n구간B 인용  ← 각각 원문 그대로, 줄바꿈으로 구분"}]}
+  "source_evidence": "구간A 인용\\n구간B 인용  ← 각각 원문 그대로, 줄바꿈으로 구분",
+{_DISTRACTOR_FIELD}}}]}}
 두 구간에 공통된 축이 전혀 없을 때만 problems를 빈 배열로 두어라."""
 
 

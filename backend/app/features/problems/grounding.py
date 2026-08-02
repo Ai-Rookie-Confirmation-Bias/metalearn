@@ -86,6 +86,30 @@ def items_not_in_source(items: list[str], source: str) -> list[str]:
     return [i for i in items if normalize(i) and normalize(i) not in norm_source]
 
 
+def answer_stands_out(answers: list[str], options: list[str], source: str) -> bool:
+    """정답만 원문에 있고 오답은 **전부** 원문 밖인가.
+
+    참이면 결함 문항이다 — 원문을 한 번이라도 읽은 학습자는 내용을 몰라도
+    "읽어본 적 있는 문장"만 고르면 맞힌다. 측정을 오염시키는 유형이라
+    폐기하고 다시 만드는 편이 낫다.
+
+    실측 사례:
+        Q. 참조를 '요구'할 때 적재하는 반입 전략은?
+           요구 반입 ←정답(원문)  /  예측 반입 · 선점 반입 · 지연 반입 (전부 창작)
+        원문에 "예상 반입"이라는 진짜 짝이 있는데도 쓰지 않았다.
+
+    오답을 **전부** 원문에서 가져오라고 요구하지는 않는다. 원문 서술을 비틀어
+    만든 오답("'가장 작은' 분할 영역에 배치" ← Best Fit 설명의 변형)은
+    글자로는 원문 밖이지만 학습적으로 타당하기 때문이다. 하나도 없을 때만 막는다.
+    """
+    wrong = [o for o in options if o not in answers]
+    if not wrong or not answers:
+        return False  # ox처럼 보기가 없거나 정답을 못 찾은 경우는 여기서 볼 일이 아니다
+    if items_not_in_source(answers, source):
+        return False  # 정답조차 원문 밖이면 다른 게이트가 이미 잡는다
+    return len(items_not_in_source(wrong, source)) == len(wrong)
+
+
 def citation_spans(evidence: str, source: str) -> int:
     """근거가 원문의 **서로 다른 몇 곳**을 인용했는지 센다.
 

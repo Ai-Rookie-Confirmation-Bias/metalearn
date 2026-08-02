@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from app.core.llm.base import LLMClient
 from app.core.llm.solar import solar_client
 from app.features.problems.grounding import (
+    answer_stands_out,
     evidence_in_source,
     items_not_in_source,
     normalize,
@@ -282,6 +283,13 @@ class ProblemGeneratorService:
             )
             if missing := items_not_in_source(checked, source):
                 reasons.append(f"보기가 원문에 없음(창작): {', '.join(missing[:2])}")
+                continue
+            # 정답만 원문에 있고 오답이 전부 창작이면, 원문을 읽은 학습자에게는
+            # 내용을 몰라도 답이 보인다(실측: mcq 7문항 중 3문항).
+            if answer_stands_out(p.answer_texts, p.options, source):
+                reasons.append(
+                    "정답만 원문에 있고 오답은 전부 창작 — 원문의 다른 항목으로 오답을 만들 것"
+                )
                 continue
             # 레벨 과대 태깅은 강등해 살린다. 라벨만 틀렸을 뿐 문항은 쓸 수 있고,
             # 버리면 문항 수만 줄고 재시도를 태운다.

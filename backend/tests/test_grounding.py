@@ -12,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.features.problems.grounding import (  # noqa: E402
+    answer_stands_out,
     evidence_in_source,
     items_not_in_source,
 )
@@ -133,6 +134,44 @@ def test_real_options_pass():
 def test_partially_fabricated_options():
     missing = items_not_in_source(["FIFO", "클럭 알고리즘"], SOURCE)
     assert missing == ["클럭 알고리즘"]
+
+
+def test_answer_stands_out_catches_giveaway():
+    # 실측 사례: 원문에 "예상 반입"이라는 진짜 짝이 있는데도 오답을 전부 지어냈다.
+    # 원문을 읽은 학습자는 내용을 몰라도 "읽어본 문장"만 고르면 맞힌다.
+    assert answer_stands_out(
+        ["FIFO"],
+        ["FIFO", "클럭 알고리즘", "이차 기회 알고리즘", "랜덤 교체"],
+        SOURCE,
+    )
+
+
+def test_answer_stands_out_passes_when_distractors_are_real():
+    # 오답이 원문의 다른 항목이면 정상 문항이다.
+    assert not answer_stands_out(["FIFO"], ["FIFO", "LRU"], SOURCE)
+
+
+def test_answer_stands_out_needs_only_one_real_distractor():
+    # 원문 서술을 비틀어 만든 오답은 글자로는 원문 밖이지만 학습적으로 타당하다.
+    # 하나라도 진짜가 섞여 있으면 통과시킨다.
+    assert not answer_stands_out(
+        ["FIFO"], ["FIFO", "LRU", "클럭 알고리즘", "랜덤 교체"], SOURCE
+    )
+
+
+def test_answer_stands_out_ignores_optionless_and_fabricated_answer():
+    assert not answer_stands_out(["O"], [], SOURCE)  # ox — 볼 보기가 없다
+    # 정답조차 원문 밖이면 이 게이트가 아니라 근거 대조가 잡을 일이다.
+    assert not answer_stands_out(
+        ["클럭 알고리즘"], ["클럭 알고리즘", "이차 기회"], SOURCE
+    )
+
+
+def test_answer_stands_out_handles_multi():
+    # 정답이 여럿이어도 같은 규칙 — 오답 전부가 창작이면 결함이다.
+    assert answer_stands_out(
+        ["FIFO", "LRU"], ["FIFO", "LRU", "클럭 알고리즘", "랜덤 교체"], SOURCE
+    )
 
 
 def _main() -> int:

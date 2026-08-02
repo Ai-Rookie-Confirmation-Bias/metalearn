@@ -119,6 +119,48 @@ def test_order_unknown_item_rejected():
         _make(type="order", answer=["Best Fit", "Worst Fit", "First Fit", "Next Fit"])
 
 
+def test_distractors_kept_when_valid():
+    p = _make(
+        type=ProblemType.MCQ,
+        answer="Best Fit",
+        distractors=[
+            {"text": "First Fit", "confused_with": "최초 적합", "note": "첫 영역"},
+            {"text": "Worst Fit", "confused_with": "최악 적합", "note": "가장 큰 영역"},
+        ],
+    )
+    assert [d.text for d in p.distractors] == ["First Fit", "Worst Fit"]
+
+
+def test_broken_distractors_dropped_not_fatal():
+    # 부가 정보 하나가 깨졌다고 문항 본체를 잃으면 안 된다 — 버리고 살린다.
+    p = _make(
+        type=ProblemType.MCQ,
+        answer="Best Fit",
+        distractors=[
+            {"text": "Best Fit", "confused_with": "x", "note": "정답을 오답이라 적음"},
+            {"text": "없는 보기", "confused_with": "x", "note": "보기에 없음"},
+            {"text": "First Fit", "confused_with": "최초 적합", "note": "정상"},
+            {"text": "First Fit", "confused_with": "최초 적합", "note": "중복"},
+        ],
+    )
+    assert [d.text for d in p.distractors] == ["First Fit"]
+
+
+def test_ox_has_no_distractors():
+    # ox는 보기가 없으므로 오답 메모도 성립하지 않는다.
+    p = _make(
+        type=ProblemType.OX,
+        answer="O",
+        distractors=[{"text": "X", "confused_with": "x", "note": "y"}],
+    )
+    assert p.distractors == []
+
+
+def test_distractors_are_optional():
+    # 필수로 걸면 이것 하나 빠졌다고 멀쩡한 문항이 폐기되어 수율이 무너진다.
+    assert _make(type=ProblemType.MCQ, answer="Best Fit").distractors == []
+
+
 def _main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
