@@ -94,7 +94,9 @@ class ProblemGeneratorService:
     ) -> GenerateProblemsResponse:
         results = await asyncio.gather(
             *(
-                self._generate_for_concept(req.subject, c, req.per_level)
+                self._generate_for_concept(
+                    req.subject, c, req.per_level, req.span_offset, req.span_limit
+                )
                 for c in req.concepts
             )
         )
@@ -122,7 +124,12 @@ class ProblemGeneratorService:
         return items if isinstance(items, list) else []
 
     async def _generate_for_concept(
-        self, subject: str, concept: ConceptInput, per_level: int
+        self,
+        subject: str,
+        concept: ConceptInput,
+        per_level: int,
+        offset: int = 0,
+        limit: int | None = None,
     ) -> ConceptProblems:
         """원문을 구간(span)으로 쪼개 구간마다 소량씩 생성한다.
 
@@ -130,23 +137,36 @@ class ProblemGeneratorService:
         커버리지가 "잘 되기를 바라는 값"에서 **전 구간을 도는 구조**로 바뀐다.
         문항 수도 숫자로 지정하는 대신 원문 크기에서 나온다(per_level은 상한).
 
+        offset·limit으로 구간의 일부만 처리할 수 있다(지연 생성). 남은 구간은
+        응답의 next_span으로 알려 다음 호출이 이어받는다.
+
         구간별 호출은 서로 독립이라 전부 병렬로 띄우고, 동시 호출 수는
         _ask의 세마포어가 잡는다.
         """
         stats = _CallStats()
-        span_list = spans.split(concept.source_text)
-        if not span_list:
+        all_spans = spans.split(concept.source_text)
+        # 이번 요청이 담당할 구간만 잘라낸다. 나머지는 다음 호출이 이어받는다
+        # (next_span). 전체를 한 번에 만들면 과목당 1시간 30분이 걸린다.
+        window = all_spans[offset : offset + limit] if limit else all_spans[offset:]
+        if not window:
             return ConceptProblems(
                 concept_id=concept.concept_id,
                 title=concept.title,
                 chapter_id=concept.chapter_id,
                 chapter_title=concept.chapter_title,
-                coverage_note="원문에서 출제 가능한 구간을 찾지 못했다.",
+                coverage_note=(
+                    "원문에서 출제 가능한 구간을 찾지 못했다."
+                    if not all_spans
+                    else f"구간 {len(all_spans)}개를 모두 처리했다."
+                ),
+                spans_total=len(all_spans),
             )
+        # Span.index는 원문 전체 기준이라 window의 리스트 위치와 다르다.
+        at = {s.index: s for s in window}
 
         # L1·L2는 구간마다, L3는 같은 표 안의 인접 쌍에서. 쌍 수는 레벨 상한에
         # 맞춰 제한한다(모든 조합을 쓰면 구간 16개에 120쌍이 되어 호출이 폭증한다).
-        pairs = spans.pair_indices(span_list, per_level + 1)
+        pairs = spans.pair_indices(window, per_level + 1)
         raw_batches = await asyncio.gather(
             *[
                 self._ask(
@@ -156,12 +176,12 @@ class ProblemGeneratorService:
                     f"{concept.concept_id}/span{s.index}",
                     stats,
                 )
-                for s in span_list
+                for s in window
             ],
             *[
                 self._ask(
                     build_pair_prompt(
-                        subject, concept.title, span_list[a].text, span_list[b].text
+                        subject, concept.title, at[a].text, at[b].text
                     ),
                     f"{concept.concept_id}/pair{a}-{b}",
                     stats,
@@ -176,7 +196,7 @@ class ProblemGeneratorService:
         candidates: list[_Candidate] = []
         reasons: list[str] = []
         thin: list[tuple[spans.Span, list[str]]] = []
-        for s, batch in zip(span_list, raw_batches[: len(span_list)]):
+        for s, batch in zip(window, raw_batches[: len(window)]):
             ok, why, _ = self._validate_problems(batch, concept)
             candidates.extend((p, lv, s.index) for p, lv in ok)
             reasons.extend(why)
@@ -184,7 +204,7 @@ class ProblemGeneratorService:
                 # 사유가 없는 빈 응답은 "구간이 얇다"는 모델의 판단이므로
                 # 재시도해도 같은 답이 온다. 폐기가 있었던 구간만 다시 부른다.
                 thin.append((s, why))
-        for batch in raw_batches[len(span_list) :]:
+        for batch in raw_batches[len(window) :]:
             ok, why, _ = self._validate_problems(batch, concept)
             candidates.extend((p, lv, -1) for p, lv in ok)
             reasons.extend(why)
@@ -223,17 +243,26 @@ class ProblemGeneratorService:
 
         by_level = _select(candidates, per_level)
         problems = [p for lv in _LEVELS for p in by_level[lv]]
-        report = coverage.analyze(_evidences(by_level), concept.source_text)
+        # 커버리지는 **이번에 처리한 구간**을 분모로 본다. 원문 전체로 재면
+        # 부분 생성에서는 항상 낮게 나와 노트가 쓸모없어진다.
+        covered_text = "\n".join(s.text for s in window)
+        report = coverage.analyze(_evidences(by_level), covered_text)
         note = _coverage_note(
             by_level, per_level, len(reasons), report, stats.failures
         )
+        done = offset + len(window)
         return ConceptProblems(
             concept_id=concept.concept_id,
             title=concept.title,
             chapter_id=concept.chapter_id,
             chapter_title=concept.chapter_title,
             problems=problems,
-            coverage_note=f"구간 {len(span_list)}개·쌍 {len(pairs)}개. {note}",
+            coverage_note=(
+                f"구간 {done - len(window)}~{done - 1}/{len(all_spans)}"
+                f"·쌍 {len(pairs)}개. {note}"
+            ),
+            spans_total=len(all_spans),
+            next_span=done if done < len(all_spans) else None,
         )
 
     @staticmethod

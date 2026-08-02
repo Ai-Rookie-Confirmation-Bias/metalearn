@@ -83,6 +83,15 @@ class GenerateProblemsRequest(BaseModel):
     # 레벨별 목표 문항 수. 레벨 게이트(정답률 80%)가 의미를 가지려면 실제로는
     # 10~15가 필요하다 — 5문항이면 1개만 틀려도 통과가 무너진다.
     per_level: int = Field(default=2, ge=1, le=20)
+    # ── 부분 생성 (지연 생성) ────────────────────────────────────────
+    # 과목 전체를 미리 만들면 실측 기준 1시간 30분이다(목차 7개 × 12분).
+    # 업로드하고 그만큼 기다리는 플로우는 성립하지 않으므로, 첫 세트에 필요한
+    # 구간만 만들고 나머지는 사용자가 푸는 동안 이어서 만든다.
+    #   1차: span_limit=15            → 약 3분, 첫 세트 확보
+    #   2차: span_offset=15, ...      → 백그라운드. 응답의 next_span을 그대로 넣는다
+    # next_span이 null이면 그 개념은 다 만든 것이다.
+    span_offset: int = Field(default=0, ge=0)
+    span_limit: int | None = Field(default=None, ge=1)
 
 
 # ── 출력 계약 (생성 → 검증/DB) ──────────────────────────────────────
@@ -184,6 +193,13 @@ class ConceptProblems(BaseModel):
     # 원문이 부족하면 억지로 채우지 않고 정직하게 명시한다.
     # ★ 진도 엔진 입력: "이 개념엔 L3가 없음"을 알아야 L2 통과=완료로 처리한다.
     coverage_note: str = ""
+    # ── 부분 생성 진행 상태 ──────────────────────────────────────────
+    # 이 개념의 전체 구간 수. 진행률 표시에 쓴다.
+    spans_total: int = 0
+    # 다음 요청의 span_offset에 넣을 값. null이면 이 개념은 완료다.
+    # 이게 있어야 "안 만든 구간이 남았나"를 호출측이 알 수 있다 — 남았으면
+    # 백그라운드 생성, 다 썼으면 재출제 큐로 돌려야 한다.
+    next_span: int | None = None
 
 
 class GenerateProblemsResponse(BaseModel):
