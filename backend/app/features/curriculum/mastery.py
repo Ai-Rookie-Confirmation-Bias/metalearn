@@ -171,6 +171,57 @@ def chapter_summary(chapter: str, states: list[SectionMastery]) -> ChapterMaster
     )
 
 
+@dataclass(frozen=True)
+class CourseMastery:
+    """과목 전체 — **서비스가 끝나는 지점**을 정의한다.
+
+    끝이 없으면 "이제 됐다"를 줄 수 없다. 일반 퀴즈 앱이 "15문제 중 9정답"에서
+    멈추는 것과 갈리는 지점이 여기다.
+    """
+
+    chapters: tuple[ChapterMastery, ...]
+
+    @property
+    def readiness(self) -> float:
+        """준비도 — 목차 이해도를 **절 수로 가중**한 평균.
+
+        절 수로 가중하는 이유: 절 26개짜리 목차와 16개짜리 목차를 같은 무게로
+        평균내면 작은 목차 하나가 전체를 흔든다. 분량이 곧 비중이다.
+        안 본 목차는 0으로 센다 — 여기서는 **진도까지 포함한 값**이어야
+        "시험 준비 완료"가 의미를 갖는다(이해도만 보면 한 목차만 풀고 100%가 된다).
+        """
+        total = sum(c.sections_total for c in self.chapters)
+        if not total:
+            return 0.0
+        weighted = sum(c.ratio * c.progress * c.sections_total for c in self.chapters)
+        return round(weighted / total, 3)
+
+    @property
+    def complete(self) -> bool:
+        """완료 판정 — 전 목차가 기준 이상. Bloom의 Mastery Learning에서 온 선."""
+        return bool(self.chapters) and all(
+            c.ratio >= SOLID and c.progress >= 1.0 for c in self.chapters
+        )
+
+    @property
+    def weakest(self) -> ChapterMastery | None:
+        """가장 약한 목차 — 화면의 🔴 표시. 안 본 목차는 제외한다."""
+        touched = [c for c in self.chapters if c.sections_touched]
+        return min(touched, key=lambda c: c.ratio) if touched else None
+
+    @property
+    def remaining_sections(self) -> int:
+        return sum(c.sections_total - c.sections_touched for c in self.chapters)
+
+    def estimated_minutes(self, per_section: int = 8) -> int:
+        """남은 시간 추정. per_section은 실측 전까지 추정값이다."""
+        return self.remaining_sections * per_section
+
+
+def course_summary(chapters: list[ChapterMastery]) -> CourseMastery:
+    return CourseMastery(chapters=tuple(chapters))
+
+
 def label(status: str) -> str:
     """화면에 쓸 한국어. 코드 값과 표시를 한 곳에서 묶어 둔다."""
     return {
