@@ -16,3 +16,6 @@ dist/
 
 # os / editor
 .DS_Store
+
+# 파싱 결과 테스트 픽스처 — 용량이 크고 팀 공유 파일이라 별도 관리
+backend/tests/fixtures/*.md
