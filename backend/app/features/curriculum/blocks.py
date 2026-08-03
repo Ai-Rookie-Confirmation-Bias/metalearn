@@ -34,8 +34,17 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 
-# 절 하나에서 만들 인출 문항 수. 많으면 지루하고 적으면 안 남는다.
-CLOZE_PER_SECTION = 2
+# ── 인출 밀도 ────────────────────────────────────────────────────────
+# 빈칸은 **개념마다** 하나. 절 기준으로 잡으면 단위를 바꿀 때 인출 수가 따라
+# 바뀌고, 실측에서 절당 2개 = 개념당 0.27개가 되어 **개념 넷 중 셋이 한 번도
+# 안 꺼내졌다.** 그러면 그 개념을 아는지 모르는지 판단할 데이터가 없다.
+CLOZE_PER_CONCEPT = 1
+# 객관식은 **절마다** 하나. 빈칸과 목적이 다르다:
+#   빈칸   = 회상(recall)      "Belady란?"           → 개념 하나를 꺼낼 수 있나
+#   객관식 = 구별(discrimination) "Belady vs 스래싱"  → 개념 사이를 가를 수 있나
+# 구별은 여러 개념이 있어야 성립하므로 절 단위가 자연스럽다. 개념마다 만들면
+# 빈칸과 중복되고 문항이 2배가 된다(754개 · 6.3시간).
+MCQ_PER_SECTION = 1
 # 원문을 붙일 때의 상한. 넘으면 요약되기 시작한다(문항 생성 실측 근거).
 MAX_SOURCE_CHARS = 1500
 
@@ -63,9 +72,15 @@ _SCHEMA = """{
   "explanation": "설명 본문 (여러 문단 가능)",
   "analogy": "비유 — 쓰지 않을 거면 JSON null (문자열 \\"null\\" 아님)",
   "cloze": [
-    {"sentence": "폭포수 모형은 이전 단계로 ____ 수 없다는 전제로 진행한다.",
-     "answer": "돌아갈", "concept": "폭포수 모형"}
-  ]
+    {"sentence": "이전 단계로 돌아갈 수 없는 고전적 생명주기 모형을 ____ 이라 한다.",
+     "answer": "폭포수 모형", "concept": "폭포수 모형"}
+  ],
+  "mcq": {
+    "question": "다음 설명에 해당하는 것은?",
+    "options": ["보기1", "보기2", "보기3", "보기4"],
+    "answer": "보기1",
+    "explanation": "왜 그것인지"
+  }
 }"""
 
 # 스키마 예시를 베낀 흔적. 이런 문장은 문항이 아니다.
@@ -111,10 +126,16 @@ def build_prompt(
    따로따로 나열하지 마라.
 3. **비유**: 이해를 돕는 장치이므로 **원문 밖에서 가져와도 된다.** 일상 경험에
    빗대라. 쓰지 않을 거면 JSON null을 넣어라.
-4. **빈칸 {CLOZE_PER_SECTION}개**: 설명을 읽은 사람이 꺼낼 수 있어야 한다.
-   핵심 용어를 `____`로 비우고, answer에 그 용어만 넣어라.
-   문장 하나에 빈칸은 하나만.
-5. 학습자가 읽을 글이다. "정의에 따르면" 같은 메타 표현은 쓰지 마라.
+4. **빈칸 {len(concepts)}개 — 개념마다 하나씩.** 빠뜨리면 그 개념을 아는지
+   판단할 수 없다. 설명을 덮고도 답할 수 있어야 하므로 **핵심 용어를 비워라.**
+   조사나 서술어를 비우면 문법으로 풀려 인출이 되지 않는다.
+   (X) 폭포수 모형은 이전 단계로 ____ 수 없다   → '돌아갈'은 문맥으로 나온다
+   (O) 이전 단계로 돌아갈 수 없는 모형을 ____ 이라 한다   → 개념을 꺼내야 한다
+   문장 하나에 빈칸은 하나만. concept에 어느 개념인지 정확히 적어라.
+5. **객관식 1개 — 개념들을 구별하는 문항.** 빈칸이 "이걸 아는가"라면 객관식은
+   "이것들을 가를 수 있는가"다. **위 개념 중 여럿을 보기로 넣어** 헷갈리는
+   지점을 묻어라. 한 개념만 묻는 문항은 빈칸과 중복이니 만들지 마라.
+6. 학습자가 읽을 글이다. "정의에 따르면" 같은 메타 표현은 쓰지 마라.
 {profile_part}
 아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
 {_SCHEMA}
@@ -183,7 +204,47 @@ def parse_response(raw: str, concepts: list[ConceptBrief]) -> list[Block]:
             )
         )
 
+    mcq = data.get("mcq")
+    if isinstance(mcq, dict):
+        question = _clean_optional(mcq.get("question"))
+        options = [
+            _clean_optional(o) for o in (mcq.get("options") or []) if _clean_optional(o)
+        ]
+        answer = _clean_optional(mcq.get("answer"))
+        # 정답이 보기에 없거나 보기가 부족하면 문항이 아니다.
+        ok = (
+            question
+            and len(options) >= 3
+            and answer in options
+            and len(set(options)) == len(options)
+            and not any(m in question for m in _TEMPLATE_MARKERS)
+        )
+        if ok:
+            blocks.append(
+                Block(
+                    "mcq",
+                    {
+                        "question": question,
+                        "options": options,
+                        "answer": answer,
+                        "explanation": _clean_optional(mcq.get("explanation")),
+                    },
+                    concept_keys=all_keys,
+                )
+            )
+
     return blocks
+
+
+def retrieval_gap(blocks: list[Block], concepts: list[ConceptBrief]) -> list[str]:
+    """빈칸이 한 번도 안 걸린 개념 — **인출 누락**.
+
+    설명에 언급되기만 하고 꺼내보지 않은 개념은 "안다/모른다"를 판정할 수
+    없다. 커리큘럼을 개인화할 데이터가 그만큼 비는 것이므로 커버리지와 별개로
+    따로 센다.
+    """
+    asked = {k for b in blocks if b.type == "cloze" for k in b.concept_keys}
+    return [c.key for c in concepts if c.key not in asked]
 
 
 # 토큰 끝에 붙는 조사. 개념명 "XP의 핵심 가치"의 "XP의"가 본문의

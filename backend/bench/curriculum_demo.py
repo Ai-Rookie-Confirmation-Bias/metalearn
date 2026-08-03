@@ -22,6 +22,7 @@ from app.features.curriculum.blocks import (  # noqa: E402
     build_prompt,
     coverage,
     parse_response,
+    retrieval_gap,
 )
 from app.features.curriculum.excerpt import section_source  # noqa: E402
 from app.features.curriculum.grouping import Concept, group_into_sections  # noqa: E402
@@ -114,20 +115,26 @@ for label, rep, dep in CASES:
         continue
     blocks = parse_response(raw, briefs)
     covered, missing = coverage(blocks, briefs)
+    gap = retrieval_gap(blocks, briefs)
 
     exp = next((b for b in blocks if b.type == "concept"), None)
     ana = next((b for b in blocks if b.type == "analogy"), None)
     clozes = [b for b in blocks if b.type == "cloze"]
+    mcq = next((b for b in blocks if b.type == "mcq"), None)
     exp_len = len(exp.content["text"]) if exp else 0
-    summary.append((label, exp_len, bool(ana), len(clozes), covered, len(briefs), took))
+    summary.append(
+        (label, exp_len, bool(ana), len(clozes), bool(mcq), len(gap), len(briefs), took)
+    )
 
     print("=" * 70)
-    print(f"{label}   {took:.1f}초 · 설명 {exp_len}자 · 빈칸 {len(clozes)}개 · "
-          f"개념 언급 {covered}/{len(briefs)}")
+    print(f"{label}   {took:.1f}초 · 설명 {exp_len}자 · 빈칸 {len(clozes)}/{len(briefs)}"
+          f" · 객관식 {'O' if mcq else 'X'} · 개념 언급 {covered}/{len(briefs)}")
     if explain(prof):
         print(f"  ⚡ {' · '.join(explain(prof))}")
     if missing:
         print(f"  ⚠️ 설명에 안 나온 개념: {', '.join(missing)}")
+    if gap:
+        print(f"  🔴 한 번도 안 꺼낸 개념: {', '.join(gap)}")
     print("-" * 70)
     if ana:
         print(f"💡 [{ana.content['label']}] {ana.content['text']}\n")
@@ -135,13 +142,19 @@ for label, rep, dep in CASES:
         print(exp.content["text"])
     for i, cz in enumerate(clozes, 1):
         print(f"\n✍️ {i}. {cz.content['sentence']}")
-        print(f"     답: {cz.content['answer']}")
+        print(f"     답: {cz.content['answer']}  ({', '.join(cz.concept_keys)})")
+    if mcq:
+        print(f"\n📝 {mcq.content['question']}")
+        for o in mcq.content["options"]:
+            mark = "✓" if o == mcq.content["answer"] else " "
+            print(f"     {mark} {o}")
     print()
 
 print("=" * 70)
-print(f"{'조합':<18}{'설명':<8}{'비유':<6}{'빈칸':<6}{'개념 언급':<10}{'소요'}")
-for label, ln, ana, cz, cov, tot, took in summary:
-    print(f"{label:<18}{ln:<8}{'O' if ana else 'X':<6}{cz:<6}{f'{cov}/{tot}':<10}{took:.1f}초")
+print(f"{'조합':<18}{'설명':<8}{'비유':<6}{'빈칸':<8}{'객관식':<8}{'인출누락':<10}{'소요'}")
+for label, ln, ana, cz, mq, gap, tot, took in summary:
+    print(f"{label:<18}{ln:<8}{'O' if ana else 'X':<6}{f'{cz}/{tot}':<8}"
+          f"{'O' if mq else 'X':<8}{gap:<10}{took:.1f}초")
 if summary:
     lens = [s[1] for s in summary]
     print(f"\n길이 배율 {max(lens)/max(min(lens),1):.1f}x  "

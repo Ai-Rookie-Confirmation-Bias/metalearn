@@ -15,6 +15,7 @@ from app.features.curriculum.blocks import (  # noqa: E402
     build_prompt,
     coverage,
     parse_response,
+    retrieval_gap,
 )
 
 CONCEPTS = [
@@ -129,6 +130,62 @@ def test_원문이_길면_잘라서_붙인다():
     p = build_prompt("절", CONCEPTS, "", long_src)
     assert "교재 원문" in p
     assert p.count("가") < 2000
+
+
+MCQ_OK = {
+    "question": "시간 순서에 따른 메시지 교환을 표현하는 것은?",
+    "options": ["XP의 핵심 가치", "애자일 개발 4가지 핵심 가치", "폭포수 모형", "나선형 모형"],
+    "answer": "폭포수 모형",
+    "explanation": "…",
+}
+
+
+def test_객관식이_블록으로_들어간다():
+    blocks = parse_response(_raw(mcq=MCQ_OK), CONCEPTS)
+    assert "mcq" in [b.type for b in blocks]
+
+
+def test_정답이_보기에_없으면_버린다():
+    bad = {**MCQ_OK, "answer": "보기에 없는 것"}
+    assert "mcq" not in [b.type for b in parse_response(_raw(mcq=bad), CONCEPTS)]
+
+
+def test_보기가_부족하면_버린다():
+    bad = {**MCQ_OK, "options": ["하나", "둘"], "answer": "하나"}
+    assert "mcq" not in [b.type for b in parse_response(_raw(mcq=bad), CONCEPTS)]
+
+
+def test_보기에_중복이_있으면_버린다():
+    bad = {**MCQ_OK, "options": ["A", "A", "B", "C"], "answer": "A"}
+    assert "mcq" not in [b.type for b in parse_response(_raw(mcq=bad), CONCEPTS)]
+
+
+def test_객관식이_없어도_나머지는_살린다():
+    blocks = parse_response(_raw(), CONCEPTS)  # mcq 필드 자체가 없음
+    assert [b.type for b in blocks] == ["concept", "analogy", "cloze"]
+
+
+def test_인출_누락을_잡는다():
+    # 설명에 언급만 되고 한 번도 안 꺼낸 개념은 안다/모른다를 판정할 수 없다.
+    blocks = parse_response(_raw(), CONCEPTS)  # cloze가 XP 하나뿐
+    assert retrieval_gap(blocks, CONCEPTS) == ["애자일 개발 4가지 핵심 가치"]
+
+
+def test_개념마다_빈칸이_있으면_누락이_없다():
+    both = [
+        {"sentence": "XP의 다섯 가치 중 하나는 ____ 이다.", "answer": "존중",
+         "concept": "XP의 핵심 가치"},
+        {"sentence": "개인과 상호작용을 중시하는 것은 ____ 이다.", "answer": "애자일",
+         "concept": "애자일 개발 4가지 핵심 가치"},
+    ]
+    blocks = parse_response(_raw(cloze=both), CONCEPTS)
+    assert retrieval_gap(blocks, CONCEPTS) == []
+
+
+def test_프롬프트가_개념_수만큼_빈칸을_요구한다():
+    p = build_prompt("절", CONCEPTS, "", "")
+    assert f"빈칸 {len(CONCEPTS)}개" in p
+    assert "객관식 1개" in p
 
 
 def _main() -> int:
