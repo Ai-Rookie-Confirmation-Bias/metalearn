@@ -63,6 +63,9 @@ LEFTOVER_TARGET = 4
 # 대신 ③으로 넘어가는 개념이 필기 24%→30%, 실기 27%→28%로 조금 는다.
 # 4까지 올리면 필기 31%·실기 29%로 이득 없이 ①b만 부푼다.
 MIN_SIBLINGS = 3
+# 개념이 안 든 덩어리를 이웃 절이 가져올 수 있는 최대 거리(덩어리 수).
+# 무제한이면 조각 앞머리의 저자 인사말까지 첫 절에 붙는다(실측).
+MAX_ORPHAN_DISTANCE = 3
 
 
 @dataclass(frozen=True)
@@ -279,6 +282,68 @@ def _structure_groups(
             body = blocks[i - 1] + "\n" + body
         out.append((title, reason, set(keys), body))
     return out
+
+
+def _owner_map(
+    sections: list[Section],
+    blocks: list[str],
+    squashed: list[str],
+    categories: frozenset[str],
+) -> dict[int, list[int]]:
+    """절 → 그 절이 가져갈 덩어리 번호들. **원문을 남김없이 나눠 준다.**
+
+    개념이 든 덩어리만 모으면 개념명을 못 찾은 덩어리가 통째로 버려진다.
+    실측(실기): 원문 내용의 **13%(9,198자)가 어느 절에도 안 붙었다.**
+    `익스트림 프로그래밍`의 `기본 원리 : 전체 팀 / 소규모 릴리즈 / …`가 그렇게
+    사라졌다. "원문의 설명 내용은 다 들어가야 한다"가 원칙인데 들어갈 기회조차
+    없던 것이다.
+
+    남은 덩어리는 **가장 가까운 절**에 준다. 절이 원문 순서로 정렬돼 있으므로
+    번호가 곧 위치다. 붙여도 무해하다 — 프롬프트에 넣을 때 `clip_around`가
+    개념 자리 중심으로 다시 자르므로 무관한 줄은 어차피 밀려난다.
+    """
+    owns: dict[int, list[int]] = {i: [] for i in range(len(sections))}
+    taken: set[int] = set()
+    for si, sec in enumerate(sections):
+        for bi, body in enumerate(squashed):
+            if any(_find(body, k, categories) >= 0 for k in sec.concept_keys):
+                owns[si].append(bi)
+                taken.add(bi)
+
+    # 개념을 하나도 못 찾은 절도 **자리를 갖는다.** 절 순서가 곧 원문 순서이므로
+    # 이웃 사이로 끼워 넣는다. 자리가 없으면 배분에서 영영 빠져 원문이 안 붙는다
+    # (실측: 그래서 필기 16%·실기 9%의 절이 원문 없이 남았다).
+    pos: dict[int, float] = {si: sum(v) / len(v) for si, v in owns.items() if v}
+    if not pos:  # 이 조각에서 아무 절도 개념을 못 찾았다 — 순서대로 균등 배분
+        pos = {si: si * len(blocks) / max(len(sections), 1) for si in range(len(sections))}
+    for si in range(len(sections)):
+        if si in pos:
+            continue
+        prev = max((k for k in pos if k < si), default=None)
+        nxt = min((k for k in pos if k > si), default=None)
+        if prev is None:
+            pos[si] = pos[nxt] - 0.5  # type: ignore[index]
+        elif nxt is None:
+            pos[si] = pos[prev] + 0.5
+        else:
+            pos[si] = (pos[prev] + pos[nxt]) / 2
+
+    for bi in range(len(blocks)):
+        if bi in taken:
+            continue
+        si = min(pos, key=lambda k: abs(pos[k] - bi))
+        # 너무 먼 덩어리는 안 가져온다. 조각 앞머리의 저자 인사말이 첫 절에
+        # 통째로 붙는 사고가 있었다(실측). 근처가 아니면 그 절 내용이 아니다.
+        if abs(pos[si] - bi) <= MAX_ORPHAN_DISTANCE:
+            owns[si].append(bi)
+
+    # 그래도 빈 절은 자기 자리에서 가장 가까운 덩어리를 **함께 쓴다.**
+    # 이웃과 겹쳐도 아무것도 없는 것보다 낫다 — 프롬프트에서 `clip_around`가
+    # 개념 자리 중심으로 다시 자르므로 무관한 줄은 밀려난다.
+    for si, v in owns.items():
+        if not v and blocks:
+            v.append(min(range(len(blocks)), key=lambda b: abs(pos[si] - b)))
+    return {si: sorted(v) for si, v in owns.items()}
 
 
 def _source_for(
@@ -521,27 +586,43 @@ def group_into_sections(
     else:
         sections.sort(key=lambda s: min(c.order for c in s.concepts))
 
-    # ①~③으로 묶인 절은 원문이 비어 있다. 개념이 들어 있는 덩어리를 모아 채운다.
+    # 원문을 절들에 **남김없이** 나눠 준다. 개념이 든 덩어리만 모으면 개념명을
+    # 못 찾은 덩어리가 통째로 버려진다(실기 13%가 그랬다).
     blocks = _blocks(source) if source else []
     squashed = [_squash(b) for b in blocks]
+    owns = _owner_map(sections, blocks, squashed, cats) if blocks else {}
 
     # 제목이 겹치면 화면에서 같은 절로 보인다 — 뒤에 나온 것에 번호를 붙인다.
     used: dict[str, int] = {}
     out: list[Section] = []
     for i, s in enumerate(sections):
         n = used[s.title] = used.get(s.title, 0) + 1
+        mine = "\n".join(blocks[b] for b in owns.get(i, []))
         out.append(
             Section(
                 title=s.title if n == 1 else f"{s.title} ({n})",
                 concepts=s.concepts,
                 reason=s.reason,
                 order=i,
-                source=s.source or _source_for(s.concept_keys, blocks, squashed, cats),
+                # ⓪ 절은 자기 덩어리를 이미 들고 있다. 거기에 배분분을 더한다 —
+                # 표만 있고 앞뒤 설명이 빠지는 걸 막는다.
+                source=_merge(s.source, mine),
                 page=_page_at(pages),
                 section_id=s.section_id,
             )
         )
     return out
+
+
+def _merge(own: str, assigned: str) -> str:
+    """⓪가 들고 온 덩어리와 배분받은 덩어리를 겹치지 않게 합친다."""
+    if not own:
+        return assigned
+    if not assigned:
+        return own
+    seen = {_squash(ln) for ln in own.splitlines() if ln.strip()}
+    extra = [ln for ln in assigned.splitlines() if ln.strip() and _squash(ln) not in seen]
+    return own + ("\n" + "\n".join(extra) if extra else "")
 
 
 def _title_of(keys: set[str], ordered: list[Concept]) -> str:
