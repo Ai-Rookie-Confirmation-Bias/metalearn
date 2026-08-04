@@ -63,6 +63,36 @@ export interface ChapterOut {
   sections: SectionOut[];
 }
 
+export type BlockType = "concept" | "analogy" | "cloze" | "mcq";
+
+export interface BlockOut {
+  type: BlockType;
+  // 종류마다 모양이 다르다:
+  //   concept {text} · analogy {text,label} · cloze {sentence,answer}
+  //   mcq {question,options,answer,explanation}
+  content: Record<string, unknown>;
+  conceptKeys: string[];
+}
+
+export interface LessonOut {
+  sectionId: string;
+  docId: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  title: string;
+  concepts: string[];
+  reason: string;
+  page: string;
+  status: MasteryStatus;
+  statusLabel: string;
+  blocks: BlockOut[];
+  source: string; // 📎 교재 원문 그대로. 요약이 아니다
+  covered: number;
+  missing: string[];
+  retrievalGap: string[];
+  generated: boolean;
+}
+
 export interface AnswerOut {
   sectionId: string;
   status: MasteryStatus;
@@ -92,6 +122,13 @@ export async function fetchDocument(docId: string): Promise<DocumentOut> {
 export async function fetchChapter(docId: string, index: number): Promise<ChapterOut> {
   const { data } = await apiClient.get<ChapterOut>(
     `${base}/documents/${encodeURIComponent(docId)}/chapters/${index}`,
+  );
+  return data;
+}
+
+export async function fetchLesson(docId: string, sectionId: string): Promise<LessonOut> {
+  const { data } = await apiClient.get<LessonOut>(
+    `${base}/documents/${encodeURIComponent(docId)}/sections/${sectionId}`,
   );
   return data;
 }

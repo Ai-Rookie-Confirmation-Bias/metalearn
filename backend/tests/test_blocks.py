@@ -231,6 +231,44 @@ def test_보기에_중복이_있으면_버린다():
     assert "mcq" not in [b.type for b in parse_response(_raw(mcq=bad), CONCEPTS)]
 
 
+def test_이_절과_무관한_정답은_버린다():
+    """예시를 구체적으로 바꿨더니 모델이 그걸 그대로 베끼기 시작했다.
+
+    실측: `접근 통제 기술` 절(DAC·MAC·RBAC)에 스키마 예시가 그대로 나왔다 —
+    "이전 단계로 돌아갈 수 없는 고전적 생명주기 모형을 ____ 이라 한다"(답: 폭포수 모형).
+    placeholder보다 나쁘다. 멀쩡해 보여서 형식 검사를 통과한다.
+    """
+    src = "XP는 애자일 방법론이다. 애자일 개발은 짧은 주기를 반복한다."
+    baddie = [
+        {
+            "sentence": "이전 단계로 돌아갈 수 없는 고전적 생명주기 모형을 ____ 이라 한다.",
+            "answer": "폭포수 모형",
+        }
+    ]
+    blocks = parse_response(_raw(cloze=baddie), CONCEPTS, src)
+    assert not any(b.type == "cloze" for b in blocks)
+
+    # 이 절의 개념이면 통과한다.
+    good = [{"sentence": "다섯 가지로 이루어진 것은 ____ 이다.", "answer": "XP의 핵심 가치"}]
+    assert any(b.type == "cloze" for b in parse_response(_raw(cloze=good), CONCEPTS, src))
+
+    # 원문에 있는 말도 통과한다(개념명이 아니어도 교재의 말이다).
+    from_src = [{"sentence": "짧은 주기를 반복하는 것은 ____ 이다.", "answer": "애자일 개발"}]
+    assert any(
+        b.type == "cloze" for b in parse_response(_raw(cloze=from_src), CONCEPTS, src)
+    )
+
+    # 원문을 안 주면 검사하지 않는다 — 근거가 없다고 멀쩡한 문항까지 버리면 손해다.
+    assert any(b.type == "cloze" for b in parse_response(_raw(cloze=baddie), CONCEPTS))
+
+
+def test_스키마_예시를_베낀_객관식은_버린다():
+    # 실측 사고: 모델이 스키마의 "다음 설명에 해당하는 것은?"을 그대로 쓰고
+    # 정작 설명은 안 넣었다. 보기만 보고는 답을 고를 수 없는 문항이 된다.
+    bad = {**MCQ_OK, "question": "다음 설명에 해당하는 것은?"}
+    assert "mcq" not in [b.type for b in parse_response(_raw(mcq=bad), CONCEPTS)]
+
+
 def test_객관식이_없어도_나머지는_살린다():
     blocks = parse_response(_raw(), CONCEPTS)  # mcq 필드 자체가 없음
     assert [b.type for b in blocks] == ["concept", "analogy", "cloze"]

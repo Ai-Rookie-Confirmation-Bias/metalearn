@@ -92,6 +92,44 @@ class ChapterOut(_Camel):
     sections: list[SectionOut]
 
 
+class BlockOut(_Camel):
+    """학습 블록 하나. `content`는 종류마다 모양이 달라 그대로 싣는다.
+
+        concept  {text}
+        analogy  {text, label}
+        cloze    {sentence, answer}
+        mcq      {question, options, answer, explanation}
+    """
+
+    type: str
+    content: dict
+    concept_keys: list[str]
+
+
+class LessonOut(_Camel):
+    """[화면 3] 절 하나 — 설명·비유·인출 + 📎 원문."""
+
+    section_id: str
+    doc_id: str
+    chapter_index: int
+    chapter_title: str
+    title: str
+    concepts: list[str]
+    reason: str
+    page: str = ""
+    status: str
+    status_label: str
+    blocks: list[BlockOut]
+    # 📎 교재 원문 그대로. 요약이 아니다 — 요약을 넣으면 또 다른 AI 생성물이 되어
+    # "AI가 지어낸 해설이 아니라 교재의 그 문장"이라는 근거가 무너진다.
+    source: str = ""
+    # 생성 품질. 화면에 그대로 쓰진 않지만 개발 중 확인용으로 내보낸다.
+    covered: int = 0
+    missing: list[str] = []
+    retrieval_gap: list[str] = []
+    generated: bool = True
+
+
 class AnswerIn(_Camel):
     """인출 결과 한 건."""
 

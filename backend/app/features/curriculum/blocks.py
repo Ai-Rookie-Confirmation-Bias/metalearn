@@ -79,15 +79,26 @@ _SCHEMA = """{
      "answer": "폭포수 모형", "concept": "폭포수 모형"}
   ],
   "mcq": {
-    "question": "다음 설명에 해당하는 것은?",
-    "options": ["보기1", "보기2", "보기3", "보기4"],
-    "answer": "보기1",
+    "question": "이전 단계로 돌아갈 수 없고 각 단계를 순차적으로 진행하는 모형은?",
+    "options": ["폭포수 모형", "프로토타입 모형", "나선형 모형", "애자일 모형"],
+    "answer": "폭포수 모형",
     "explanation": "왜 그것인지"
   }
 }"""
 
 # 스키마 예시를 베낀 흔적. 이런 문장은 문항이 아니다.
-_TEMPLATE_MARKERS = ("들어갈 자리", "포함한 문장", "설명 본문", "개념명")
+#
+# ⚠️ 객관식 사고(실측): 스키마 예시가 `"다음 설명에 해당하는 것은?"`이었더니 모델이
+#    그걸 그대로 쓰고 정작 설명은 안 넣었다. 보기만 보고는 답을 고를 수 없다.
+#    예시를 실제 문항 모양으로 바꿨고, 그래도 베끼면 아래에서 막는다.
+_TEMPLATE_MARKERS = (
+    "들어갈 자리",
+    "포함한 문장",
+    "설명 본문",
+    "개념명",
+    "다음 설명에 해당하는 것은",
+    "보기1",
+)
 
 
 def _sq(text: str) -> str:
@@ -216,10 +227,34 @@ def _clean_optional(value: object) -> str:
     return "" if text.lower() in {"null", "none", "n/a", ""} else text
 
 
-def parse_response(raw: str, concepts: list[ConceptBrief]) -> list[Block]:
+def _grounded(answer: str, concepts: list[ConceptBrief], source: str) -> bool:
+    """정답이 **이 절과 실제로 관련 있는가.**
+
+    스키마 예시를 구체적인 문항으로 바꿨더니 모델이 그걸 그대로 베끼기 시작했다.
+    실측 사고: `접근 통제 기술` 절(DAC·MAC·RBAC)에 이런 빈칸이 나왔다 —
+        "이전 단계로 돌아갈 수 없는 고전적 생명주기 모형을 ____ 이라 한다." (답: 폭포수 모형)
+    placeholder를 베낄 때보다 나쁘다. 멀쩡해 보여서 형식 검사를 통과한다.
+
+    문구를 막는 대신 **근거를 요구한다** — 정답은 이 절의 개념이거나 원문에 있는
+    말이어야 한다. 원문이 없으면(⓪ 밖의 절) 검사를 건너뛴다. 근거가 없다고
+    멀쩡한 문항까지 버리면 손해가 더 크다.
+    """
+    ans = _sq(answer)
+    if not ans:
+        return False
+    for c in concepts:
+        if any(_sq(a) and (_sq(a) in ans or ans in _sq(a)) for a in aliases(c.key)):
+            return True
+    return not source or ans in _sq(source)
+
+
+def parse_response(
+    raw: str, concepts: list[ConceptBrief], source: str = ""
+) -> list[Block]:
     """LLM 응답 → 블록 목록. 깨진 항목은 버리고 나머지는 살린다.
 
     부가 항목(비유·빈칸) 하나가 깨졌다고 설명 본문까지 잃으면 손해가 크다.
+    `source`를 주면 정답이 이 절과 관련 있는지까지 본다(`_grounded`).
     """
     try:
         data = json.loads(raw[raw.find("{") : raw.rfind("}") + 1])
@@ -259,6 +294,9 @@ def parse_response(raw: str, concepts: list[ConceptBrief]) -> list[Block]:
         # 문맥 없이 빈칸만 있으면 답을 특정할 수 없다.
         if len(sentence.replace("____", "").strip()) < 10:
             continue
+        # 이 절과 무관한 정답이면 다른 절 문항이거나 스키마 예시를 베낀 것이다.
+        if not _grounded(answer, concepts, source):
+            continue
         concept = item.get("concept")
         concept = concept if concept in valid_keys else None
         blocks.append(
@@ -283,6 +321,7 @@ def parse_response(raw: str, concepts: list[ConceptBrief]) -> list[Block]:
             and answer in options
             and len(set(options)) == len(options)
             and not any(m in question for m in _TEMPLATE_MARKERS)
+            and _grounded(answer, concepts, source)
         )
         if ok:
             blocks.append(

@@ -11,11 +11,14 @@ from .mastery import label
 from .schemas import (
     AnswerIn,
     AnswerOut,
+    BlockOut,
     ChapterBrief,
     ChapterOut,
     DocumentOut,
+    LessonOut,
     SectionOut,
 )
+from .service import build_lesson
 from .store import Chapter, Document, store, summarize
 
 router = APIRouter()
@@ -114,6 +117,46 @@ def get_chapter(doc_id: str, index: int) -> ChapterOut:
         reason=plan.reason,
         weak_concepts=list(plan.weak_concepts),
         sections=_sections_out(chapter),
+    )
+
+
+@router.get(
+    "/documents/{doc_id}/sections/{section_id}", response_model=LessonOut
+)
+async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> LessonOut:
+    """[화면 3] 절 하나 — 설명·비유·빈칸·객관식 + 원문.
+
+    생성이 5~7초라 캐시한다. `?refresh=true`로 다시 만들 수 있다(개발용).
+    성향은 아직 안 붙인다 — 온보딩이 없으므로 중립으로 생성한다.
+    """
+    doc = _doc(doc_id)
+    found = doc.section(section_id)
+    if found is None:
+        raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")
+    chapter, section = found
+
+    lesson = await build_lesson(section, "", refresh=refresh)
+    m = store.progress.of(section_id)
+    return LessonOut(
+        section_id=section.section_id,
+        doc_id=doc.doc_id,
+        chapter_index=chapter.index,
+        chapter_title=chapter.title,
+        title=section.title,
+        concepts=list(section.concept_keys),
+        reason=section.reason,
+        page=section.page,
+        status=m.status,
+        status_label=label(m.status),
+        blocks=[
+            BlockOut(type=b.type, content=b.content, concept_keys=list(b.concept_keys))
+            for b in lesson.blocks
+        ],
+        source=section.source,
+        covered=lesson.covered,
+        missing=list(lesson.missing),
+        retrieval_gap=list(lesson.retrieval_gap),
+        generated=lesson.ok,
     )
 
 
