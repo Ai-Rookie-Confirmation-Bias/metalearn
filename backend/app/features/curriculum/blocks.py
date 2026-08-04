@@ -32,6 +32,7 @@ LLM 호출은 하지 않는다(호출측이 LLMClient로 한다). 프롬프트�
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
 # ── 인출 밀도 ────────────────────────────────────────────────────────
@@ -260,6 +261,44 @@ def _variants(token: str) -> list[str]:
     return out
 
 
+# 개념명의 괄호 병기. `목 오브젝트 (Mock Object)` / `DRM(디지털 저작권 관리)`
+_PAREN = re.compile(r"\s*[(（]([^)）]*)[)）]\s*")
+
+
+def aliases(key: str) -> list[str]:
+    """개념명의 표기 후보. 괄호 병기를 **따로 떼어** 둘 다 후보로 삼는다.
+
+    실측 사고: 개념명이 `목 오브젝트 (Mock Object)`인데 본문은 `목 오브젝트`라고만
+    써서 **넷 다 나와 있는 설명이 `언급 0/4`로 찍혔다.** 토큰으로 쪼개면
+    `(Mock` `Object)`가 본문에 없어 70% 문턱을 못 넘기 때문이다.
+
+    교재도 설명도 한쪽 표기만 쓴다. 둘 다 요구하면 정상 문장이 누락이 된다.
+    괄호 병기 개념은 실측에서 필기 16%·실기 15%로 적지 않다.
+
+        "목 오브젝트 (Mock Object)"  →  ["목 오브젝트", "Mock Object"]
+        "DRM(디지털 저작권 관리)"     →  ["DRM", "디지털 저작권 관리"]
+    """
+    # 원형을 먼저 둔다 — `Python input() 함수`처럼 괄호가 병기가 아니라
+    # 이름의 일부인 경우가 있다. 떼어내면 원문과 안 맞는다.
+    out = [key.strip()]
+    outer = _PAREN.sub(" ", key).strip()
+    if len(outer) >= 2:
+        out.append(outer)
+    # 병기 자체(`Mock Object`). 한 글자짜리는 노이즈라 버린다.
+    out += [a.strip() for a in _PAREN.findall(key) if len(a.strip()) >= 2]
+    return [a for a in dict.fromkeys(out) if a]
+
+
+def _mentions_one(text: str, key: str) -> bool:
+    if key.replace(" ", "") in text.replace(" ", ""):
+        return True
+    tokens = [t for t in key.split() if len(t) >= 2]
+    if not tokens:
+        return key in text
+    hit = sum(1 for t in tokens if any(v in text for v in _variants(t)))
+    return hit / len(tokens) >= 0.7
+
+
 def _mentions(text: str, key: str) -> bool:
     """개념명이 본문에 언급됐는가 — **정확 일치로 세면 안 된다.**
 
@@ -269,14 +308,9 @@ def _mentions(text: str, key: str) -> bool:
     잡히면 **커버리지 숫자 자체를 못 믿게 된다.**
 
     개념명을 토큰으로 쪼개 조사를 떼고, 대부분이 나타나면 언급으로 본다.
+    표기 후보(`aliases`) 중 **하나라도** 맞으면 언급으로 친다.
     """
-    if key.replace(" ", "") in text.replace(" ", ""):
-        return True
-    tokens = [t for t in key.split() if len(t) >= 2]
-    if not tokens:
-        return key in text
-    hit = sum(1 for t in tokens if any(v in text for v in _variants(t)))
-    return hit / len(tokens) >= 0.7
+    return any(_mentions_one(text, a) for a in aliases(key))
 
 
 def coverage(blocks: list[Block], concepts: list[ConceptBrief]) -> tuple[int, list[str]]:

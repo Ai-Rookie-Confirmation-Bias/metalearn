@@ -43,6 +43,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
+from .blocks import aliases
 from .excerpt import normalize_spaces
 
 # 한 절에 너무 많으면 학습 단위가 아니라 다시 조각이 된다.
@@ -165,6 +166,19 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", "", normalize_spaces(text))
 
 
+def _find(body: str, key: str) -> int:
+    """공백을 지운 원문에서 개념이 처음 나오는 위치. 없으면 -1.
+
+    개념명이 `목 오브젝트 (Mock Object)`인데 교재는 `목 오브젝트`라고만 쓰는 일이
+    잦다(괄호 병기 개념 필기 16%·실기 15%). 표기 후보를 다 시도한다.
+    """
+    for alias in aliases(key):
+        at = body.find(_squash(alias))
+        if at >= 0:
+            return at
+    return -1
+
+
 def _blocks(source: str) -> list[str]:
     """원문을 표 / 항목 단위 덩어리로 나눈다.
 
@@ -220,11 +234,8 @@ def _structure_groups(
     squashed = [_squash(b) for b in blocks]
     owner: dict[int, list[str]] = defaultdict(list)
     for c in concepts:
-        key = _squash(c.key)
-        if not key:
-            continue
         for i, body in enumerate(squashed):
-            if key in body:
+            if _find(body, c.key) >= 0:
                 owner[i].append(c.key)
                 break
 
@@ -253,9 +264,8 @@ def _source_for(keys: tuple[str, ...], blocks: list[str], squashed: list[str]) -
     처음부터 다시 뒤지는 것보다 정확하다 — 이미 덩어리로 나눠 놨으므로
     "이 개념이 어느 덩어리에 있나"만 보면 되고, 덩어리 경계가 곧 맥락이다.
     """
-    want = {_squash(k) for k in keys if k}
     hit = sorted(
-        i for i, body in enumerate(squashed) if any(k and k in body for k in want)
+        i for i, body in enumerate(squashed) if any(_find(body, k) >= 0 for k in keys)
     )
     return "\n".join(blocks[i] for i in hit)
 
@@ -269,7 +279,7 @@ def _positions(concepts: list[Concept], source: str) -> dict[str, int]:
     body = _squash(source)
     out: dict[str, int] = {}
     for c in concepts:
-        at = body.find(_squash(c.key))
+        at = _find(body, c.key)
         if at >= 0:
             out[c.key] = at
     return out

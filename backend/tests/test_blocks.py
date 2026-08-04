@@ -103,6 +103,30 @@ def test_커버리지가_표기_차이를_흡수한다():
     assert covered == 2, missing
 
 
+def test_괄호_병기는_한쪽_표기만_써도_언급으로_친다():
+    # 실측 사고: 개념명 "목 오브젝트 (Mock Object)"인데 본문은 "목 오브젝트"라고만
+    # 써서, 넷 다 나와 있는 설명이 `언급 0/4`로 찍혔다. 토큰으로 쪼개면
+    # "(Mock" "Object)"가 본문에 없어 70% 문턱을 못 넘는다.
+    mock = [ConceptBrief("목 오브젝트 (Mock Object)", "대체 객체")]
+    for body in (
+        "목 오브젝트는 조건부 입력 시 계획된 행위를 수행하는 대체 객체다.",
+        "Mock Object는 조건부 입력 시 계획된 행위를 수행한다.",
+        "목 오브젝트 (Mock Object)는 대체 객체다.",
+    ):
+        covered, missing = coverage(parse_response(_raw(explanation=body), mock), mock)
+        assert covered == 1, (body, missing)
+
+
+def test_괄호가_이름의_일부면_떼지_않는다():
+    # `Python input() 함수`의 괄호는 병기가 아니다. 떼면 원문과 안 맞는다.
+    from app.features.curriculum.blocks import aliases
+
+    assert "Python input() 함수" in aliases("Python input() 함수")
+    assert aliases("DRM(디지털 저작권 관리)")[1:] == ["DRM", "디지털 저작권 관리"]
+    # 한 글자 주표기는 버린다 — "키"로 부분일치를 걸면 "키워드"까지 잡힌다.
+    assert "키" not in aliases("키(Key)")
+
+
 def test_진짜_누락은_잡는다():
     blocks = parse_response(
         _raw(explanation="애자일 개발 4가지 핵심 가치만 설명한다.", analogy="null", cloze=[]),
