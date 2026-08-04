@@ -65,11 +65,11 @@ export function ChapterPage() {
           <li key={s.sectionId} className="rounded-lg border border-border-primary p-4">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
-                <p className="font-semibold text-text-primary">
-                  <span className="mr-1.5 tabular-nums text-text-tertiary">{s.order + 1}.</span>
-                  {s.title}
+                <p className="text-[0.7rem] font-semibold text-text-tertiary">
+                  {s.order + 1}번째 절
                 </p>
-                <p className="mt-1 text-[0.75rem] text-text-tertiary">
+                <p className="font-semibold text-text-primary">{s.title}</p>
+                <p className="mt-0.5 text-[0.75rem] text-text-tertiary">
                   개념 {s.concepts.length}개{s.page && <> · 📖 {s.page}</>}
                   {s.attempts > 0 && <> · {s.attempts}문제 풀이</>}
                 </p>
@@ -82,7 +82,23 @@ export function ChapterPage() {
               </div>
             </div>
 
-            <p className="mt-2 text-[0.8rem] text-text-secondary">{s.concepts.join(" · ")}</p>
+            {/* 절 제목은 대표 개념 이름을 그대로 쓰는 일이 많다(실측 54%).
+                라벨 없이 나열하면 제목과 개념이 구분이 안 된다. */}
+            <div className="mt-2">
+              <p className="text-[0.7rem] font-semibold text-text-tertiary">
+                이 절에서 배우는 개념
+              </p>
+              <p className="mt-0.5 text-[0.8rem] text-text-secondary">
+                {s.concepts.map((c, i) => (
+                  <span key={c}>
+                    {i > 0 && " · "}
+                    <span className={c === s.title ? "font-semibold text-text-primary" : ""}>
+                      {c}
+                    </span>
+                  </span>
+                ))}
+              </p>
+            </div>
 
             <div className="mt-2">
               <Reason text={s.reason} />

@@ -68,29 +68,45 @@ class Block:
     concept_keys: tuple[str, ...] = ()
 
 
-# ⚠️ 스키마의 placeholder를 모델이 그대로 베끼는 사고가 있었다(실측: 빈칸 문장이
-# "____ 가 들어갈 자리를 포함한 문장"으로 나왔다). 예시를 **실제 문항 모양**으로
-# 써두면 베껴도 형태가 유지된다.
-_SCHEMA = """{
+def _schema_for(concepts: list[ConceptBrief]) -> str:
+    """응답 스키마 — **예시를 이 절의 개념으로 만든다.**
+
+    모델은 예시를 베낀다. 세 번 겪었다:
+      ① placeholder를 그대로  — "____ 가 들어갈 자리를 포함한 문장"
+      ② 고쳤더니 구체 예시를  — `접근 통제 기술` 절에 "폭포수 모형" 문항
+      ③ 원문이 짧은 절일수록 심하다. 재료가 없으니 예시에 기댄다
+
+    ②를 `_grounded`로 막았더니 이번엔 **인출이 0개인 절**이 절반이 됐다. 막을수록
+    비는 것이다. 그래서 막는 대신 **베껴도 무해하게** 만든다 — 예시가 이 절의
+    개념이면 그대로 베껴도 이 절 문항이다.
+
+    `_grounded`는 그대로 둔다. 다른 절 개념을 끌어오는 경우까지는 막아야 한다.
+    """
+    first = concepts[0].key if concepts else "개념"
+    second = concepts[1].key if len(concepts) > 1 else first
+    options = [c.key for c in concepts[:4]] or [first]
+    while len(options) < 3:  # 보기가 모자라면 스키마가 규칙과 어긋난다
+        options.append(f"{first} 아닌 것 {len(options)}")
+    return f"""{{
   "explanation": "설명 본문 (여러 문단 가능)",
   "analogy": "비유 — 쓰지 않을 거면 JSON null (문자열 \\"null\\" 아님)",
   "cloze": [
-    {"sentence": "이전 단계로 돌아갈 수 없는 고전적 생명주기 모형을 ____ 이라 한다.",
-     "answer": "폭포수 모형", "concept": "폭포수 모형"}
+    {{"sentence": "(…{first}를 설명하는 문장…) ____ 이라 한다.",
+     "answer": "{first}", "concept": "{first}"}},
+    {{"sentence": "(…{second}를 설명하는 문장…) ____ 이다.",
+     "answer": "{second}", "concept": "{second}"}}
   ],
-  "mcq": {
-    "question": "이전 단계로 돌아갈 수 없고 각 단계를 순차적으로 진행하는 모형은?",
-    "options": ["폭포수 모형", "프로토타입 모형", "나선형 모형", "애자일 모형"],
-    "answer": "폭포수 모형",
+  "mcq": {{
+    "question": "(…{first}만 해당하는 설명…) 에 해당하는 것은?",
+    "options": {json.dumps(options, ensure_ascii=False)},
+    "answer": "{first}",
     "explanation": "왜 그것인지"
-  }
-}"""
+  }}
+}}"""
 
 # 스키마 예시를 베낀 흔적. 이런 문장은 문항이 아니다.
-#
-# ⚠️ 객관식 사고(실측): 스키마 예시가 `"다음 설명에 해당하는 것은?"`이었더니 모델이
-#    그걸 그대로 쓰고 정작 설명은 안 넣었다. 보기만 보고는 답을 고를 수 없다.
-#    예시를 실제 문항 모양으로 바꿨고, 그래도 베끼면 아래에서 막는다.
+# 예시를 절마다 만들어(`_schema_for`) 베껴도 무해하게 했지만, 채우라고 남긴
+# `(…)` 자리를 그대로 두고 내는 경우가 있어 그것까지 막는다.
 _TEMPLATE_MARKERS = (
     "들어갈 자리",
     "포함한 문장",
@@ -98,6 +114,9 @@ _TEMPLATE_MARKERS = (
     "개념명",
     "다음 설명에 해당하는 것은",
     "보기1",
+    "를 설명하는 문장",
+    "만 해당하는 설명",
+    "(…",
 )
 
 
@@ -214,8 +233,9 @@ def build_prompt(
 6. 학습자가 읽을 글이다. "정의에 따르면" 같은 메타 표현은 쓰지 마라.
 {profile_part}
 아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
-{_SCHEMA}
+{_schema_for(concepts)}
 
+괄호 안 `(…)`는 네가 실제 문장으로 채워라. answer와 concept는 위 개념 그대로 써라.
 concept 필드에는 {keys} 중 하나를 정확히 써라."""
 
 

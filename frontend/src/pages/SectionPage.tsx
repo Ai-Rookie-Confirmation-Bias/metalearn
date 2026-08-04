@@ -178,11 +178,18 @@ export function SectionPage() {
 
       <header className="mt-3 mb-6">
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl font-bold text-text-primary">{data.title}</h1>
+          <div>
+            <p className="text-[0.7rem] font-semibold text-text-tertiary">절</p>
+            <h1 className="text-2xl font-bold text-text-primary">{data.title}</h1>
+          </div>
           <StatusBadge status={data.status} label={data.statusLabel} />
         </div>
-        <p className="mt-1 text-[0.75rem] text-text-tertiary">
-          개념 {data.concepts.length}개{data.page && <> · 📖 {data.page}</>}
+        <p className="mt-2 text-[0.75rem] text-text-tertiary">
+          이 절에서 배우는 개념 {data.concepts.length}개
+          {data.page && <> · 📖 {data.page}</>}
+        </p>
+        <p className="mt-0.5 text-[0.8rem] text-text-secondary">
+          {data.concepts.join(" · ")}
         </p>
         <div className="mt-2">
           <Reason text={data.reason} />

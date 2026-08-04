@@ -157,6 +157,8 @@ def _parent_groups(
 _HEAD_MARK = re.compile(
     r"^(?:[\s#■※▶★◆●○*·\-\[\]()]|[①-⑳]|\d+\s*[.)]\s)+"
 )
+# 앞머리를 걷은 뒤에도 **가운데** 남는 기호. 있으면 제목이 아니라 순서도·나열이다.
+_MID_MARK = re.compile(r"[▶→⇒■※★◆●○]|[①-⑳]")
 # 이런 제목은 절 이름으로 아무것도 알려주지 않는다 — 개념명으로 대체한다.
 # ⚠️ **한 단어일 때만** 걸린다. `소프트웨어 설계 원칙`처럼 앞에 말이 붙으면
 #    멀쩡한 제목이므로 통과한다.
@@ -252,6 +254,14 @@ def _block_title(blocks: list[str], i: int, fallback: str) -> str:
             continue
         t = _HEAD_MARK.sub("", first).strip()
         t = t.split(" : ")[0].split(" (")[0].strip(" :·-]）)")
+        # 기호가 **가운데** 남아 있으면 제목이 아니라 순서도·나열이다.
+        # 실측: `# ①프로젝트 계획 ▶ ②요구 분석 ▶`이 앞머리만 걷혀
+        # `프로젝트 계획 ▶ ②요구 분석 ▶`으로 화면에 떴다.
+        if _MID_MARK.search(t):
+            continue
+        # 숫자만 남은 제목은 교재의 항목 번호다(`# 017`). 이름이 아니다.
+        if t.isdigit():
+            continue
         if 2 <= len(t) <= 40 and t not in _EMPTY_TITLES:
             return t
     return fallback
