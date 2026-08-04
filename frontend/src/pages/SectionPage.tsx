@@ -34,7 +34,9 @@ function Cloze({
     if (graded !== null || !value.trim()) return;
     const ok = norm(value) === norm(answer);
     setGraded(ok);
-    onGraded(ok, block.conceptKeys[0]);
+    // 개념이 하나로 특정될 때만 그 개념에 기록한다. 여럿이면(라벨을 못 붙인 경우)
+    // 절 단위로만 센다 — 첫 개념에 몰아주면 약점 통계가 통째로 거짓이 된다.
+    onGraded(ok, block.conceptKeys.length === 1 ? block.conceptKeys[0] : undefined);
   };
 
   const [before, after] = sentence.split("____");
@@ -93,10 +95,15 @@ function Mcq({
   const explanation = String(block.content.explanation ?? "");
   const [picked, setPicked] = useState<string | null>(null);
 
+  // 객관식은 여러 개념을 구별하는 문항이라 conceptKeys가 절 전체다.
+  // **채점 귀속에 conceptKeys[0]을 쓰면 안 된다** — 항상 첫 개념에 몰린다(실측 5/5 오귀속).
+  // 백엔드가 "이 문항이 실제로 묻는 개념"을 content.concept로 실어 보낸다.
+  const target = (block.content.concept as string | null) ?? undefined;
+
   const pick = (o: string) => {
     if (picked !== null) return;
     setPicked(o);
-    onGraded(o === answer, block.conceptKeys[0]);
+    onGraded(o === answer, target);
   };
 
   return (

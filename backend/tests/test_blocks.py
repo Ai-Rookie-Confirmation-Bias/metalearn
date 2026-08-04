@@ -269,6 +269,27 @@ def test_스키마_예시를_베낀_객관식은_버린다():
     assert "mcq" not in [b.type for b in parse_response(_raw(mcq=bad), CONCEPTS)]
 
 
+def test_객관식은_묻는_개념을_따로_싣는다():
+    """실측 사고: 객관식 오답이 **항상 절의 첫 개념**에 기록됐다.
+
+    concept_keys가 절 전체(구별 문항이라 맞다)인데 화면이 conceptKeys[0]을 썼다.
+    객관식 5/5가 오귀속이었고, 그게 wrong_by_concept → weak_concepts → carry_over →
+    다음 목차 설명으로 흘러 학습 루프의 입력을 오염시켰다.
+    """
+    blocks = parse_response(_raw(mcq=MCQ_OK), CONCEPTS)
+    mcq = next(b for b in blocks if b.type == "mcq")
+    # MCQ_OK의 정답은 "폭포수 모형" — 이 절 개념이 아니므로 None이어야 한다.
+    assert mcq.content["concept"] is None
+
+    on_topic = {**MCQ_OK, "answer": "XP의 핵심 가치"}
+    mcq = next(
+        b for b in parse_response(_raw(mcq=on_topic), CONCEPTS) if b.type == "mcq"
+    )
+    assert mcq.content["concept"] == "XP의 핵심 가치"
+    # concept_keys는 절 전체 그대로 — 보기가 전부 이 절 개념이라 그게 맞다.
+    assert len(mcq.concept_keys) == len(CONCEPTS)
+
+
 def test_객관식이_없어도_나머지는_살린다():
     blocks = parse_response(_raw(), CONCEPTS)  # mcq 필드 자체가 없음
     assert [b.type for b in blocks] == ["concept", "analogy", "cloze"]

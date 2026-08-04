@@ -268,6 +268,29 @@ def _grounded(answer: str, concepts: list[ConceptBrief], source: str) -> bool:
     return not source or ans in _sq(source)
 
 
+def _answer_concept(answer: str, concepts: list[ConceptBrief]) -> str | None:
+    """정답이 가리키는 개념. 못 찾으면 None.
+
+    객관식은 여러 개념을 구별하는 문항이라 `concept_keys`가 절 전체다. 그래서
+    화면이 오답을 기록할 때 **첫 개념에 몰아주는 사고**가 있었다 — 실측에서
+    객관식 5/5가 오귀속이었고, 그게 `wrong_by_concept → weak_concepts →
+    carry_over → 다음 목차 설명`으로 흘러 **학습 루프의 입력을 오염**시켰다.
+
+    "이 문항이 실제로 묻는 개념"을 따로 실어 보낸다. 못 찾으면 **None을 준다** —
+    아무 개념에나 붙이느니 절 단위로만 세는 게 낫다. 틀린 통계는 없는 통계보다 나쁘다.
+    """
+    ans = _sq(answer)
+    if not ans:
+        return None
+    for c in concepts:  # 정확히 같은 표기 우선
+        if any(_sq(a) == ans for a in aliases(c.key)):
+            return c.key
+    for c in concepts:  # 표기가 조금 달라도 서로 포함하면 같은 것으로 본다
+        if any(_sq(a) and (_sq(a) in ans or ans in _sq(a)) for a in aliases(c.key)):
+            return c.key
+    return None
+
+
 def parse_response(
     raw: str, concepts: list[ConceptBrief], source: str = ""
 ) -> list[Block]:
@@ -352,7 +375,12 @@ def parse_response(
                         "options": options,
                         "answer": answer,
                         "explanation": _clean_optional(mcq.get("explanation")),
+                        # 이 문항이 실제로 묻는 개념. 오답을 여기에 기록한다.
+                        # None이면 화면이 절 단위로만 기록한다.
+                        "concept": _answer_concept(answer, concepts),
                     },
+                    # 보기 전체가 이 절 개념들이라 concept_keys는 절 전체가 맞다.
+                    # 다만 **채점 귀속에는 쓰면 안 된다** — 위 content.concept를 쓸 것.
                     concept_keys=all_keys,
                 )
             )
