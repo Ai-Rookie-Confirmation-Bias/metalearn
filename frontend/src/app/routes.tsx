@@ -10,6 +10,8 @@ import { LibraryPage } from "@/pages/LibraryPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
+import { CurriculumPage } from "@/pages/CurriculumPage";
+import { ChapterPage } from "@/pages/ChapterPage";
 
 // URL 기반 페이지 매핑 지도
 // 두 개의 셸: App(마케팅 헤더) / AppLayout(로그인 후 사이드바). 사이드바는 고정, 본문만 교체.
@@ -35,6 +37,10 @@ export const router = createBrowserRouter([
       { path: "library", element: <LibraryPage /> },
       { path: "analysis", element: <AnalysisPage /> },
       { path: "settings", element: <SettingsPage /> },
+      // 커리큘럼 — 자료(목차 목록) → 목차 하나(절 목록)
+      { path: "curriculum", element: <CurriculumPage /> },
+      { path: "curriculum/:docId", element: <CurriculumPage /> },
+      { path: "curriculum/:docId/chapters/:index", element: <ChapterPage /> },
     ],
   },
   // 수업 생성 위저드 — 셸 없는 전체화면 집중 플로우
