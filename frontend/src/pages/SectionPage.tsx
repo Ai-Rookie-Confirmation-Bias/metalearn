@@ -13,7 +13,7 @@ import type { BlockOut } from "@/features/curriculum/api/curriculum";
 import { Reason, StatusBadge } from "@/features/curriculum/components/bits";
 import { useAnswer, useLesson } from "@/features/curriculum/queries/useCurriculum";
 
-/** 채점은 공백·대소문자만 흡수한다. 그 이상 느슨하게 하면 인출이 아니게 된다. */
+/** 표기 흔들림만 흡수한다. 인정할 답 목록은 백엔드가 정해서 `accept`로 보낸다. */
 const norm = (s: string) => s.replace(/\s+/g, "").toLowerCase();
 
 function Cloze({
@@ -27,12 +27,14 @@ function Cloze({
 }) {
   const sentence = String(block.content.sentence ?? "");
   const answer = String(block.content.answer ?? "");
+  // 백엔드가 정해준 인정 표기들. `폭포수 모형`의 정답에 `폭포수`도 들어 있다.
+  const accept = (block.content.accept as string[] | undefined) ?? [answer];
   const [value, setValue] = useState("");
   const [graded, setGraded] = useState<boolean | null>(null);
 
   const check = () => {
     if (graded !== null || !value.trim()) return;
-    const ok = norm(value) === norm(answer);
+    const ok = accept.some((a) => norm(a) === norm(value));
     setGraded(ok);
     // 개념이 하나로 특정될 때만 그 개념에 기록한다. 여럿이면(라벨을 못 붙인 경우)
     // 절 단위로만 센다 — 첫 개념에 몰아주면 약점 통계가 통째로 거짓이 된다.

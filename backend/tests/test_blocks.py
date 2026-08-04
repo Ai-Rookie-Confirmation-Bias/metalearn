@@ -269,6 +269,46 @@ def test_스키마_예시를_베낀_객관식은_버린다():
     assert "mcq" not in [b.type for b in parse_response(_raw(mcq=bad), CONCEPTS)]
 
 
+def test_분류어를_안_붙여도_정답으로_인정한다():
+    """실측 사고: `폭포수`라고 적었는데 정답이 `폭포수 모형`이라 오답 처리됐다.
+
+    개념을 정확히 꺼냈는데 분류어를 안 붙였다고 틀렸다고 하면 **인출이 아니라
+    표기를 측정하는 것**이다.
+    """
+    from app.features.curriculum.blocks import accepted_answers
+
+    # 분류어(`모형`)를 세 개 이상이 공유해야 분류어로 인정된다.
+    models = [
+        ConceptBrief("폭포수 모형", ""),
+        ConceptBrief("나선형 모형", ""),
+        ConceptBrief("애자일 모형", ""),
+    ]
+    got = accepted_answers("폭포수 모형", models)
+    assert "폭포수 모형" in got and "폭포수" in got
+    # 다른 개념까지 인정하면 안 된다.
+    assert "나선형" not in got and "모형" not in got
+
+    # 괄호 병기도 인정한다.
+    ac = [ConceptBrief("강제 접근 통제 (MAC)", ""), ConceptBrief("임의 접근 통제 (DAC)", "")]
+    got = accepted_answers("강제 접근 통제 (MAC)", ac)
+    assert "MAC" in got and "강제 접근 통제" in got
+
+
+def test_다른_개념과_겹치는_형태는_인정하지_않는다():
+    # `자료 결합도`를 `자료`로 인정했는데 절에 `자료 사전`이 있으면 둘을 못 가린다.
+    from app.features.curriculum.blocks import accepted_answers
+
+    coupling = [
+        ConceptBrief("자료 결합도", ""),
+        ConceptBrief("제어 결합도", ""),
+        ConceptBrief("스탬프 결합도", ""),
+        ConceptBrief("자료 사전", ""),
+    ]
+    got = accepted_answers("자료 결합도", coupling)
+    assert "자료 결합도" in got
+    assert "자료" not in got  # `자료 사전`과 헷갈린다
+
+
 def test_객관식은_묻는_개념을_따로_싣는다():
     """실측 사고: 객관식 오답이 **항상 절의 첫 개념**에 기록됐다.
 

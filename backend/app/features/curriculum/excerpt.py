@@ -84,6 +84,40 @@ def aliases(key: str) -> list[str]:
     return [a for a in dict.fromkeys(out) if a]
 
 
+# 분류어로 인정할 최소 공유 수. 이보다 적으면 그냥 우연히 끝이 같은 말이다.
+MIN_CATEGORY_SHARE = 3
+
+
+def category_words(keys: list[str], min_share: int = MIN_CATEGORY_SHARE) -> frozenset[str]:
+    """개념명 끝 어절 중 여러 개념이 공유하는 것 = 교재의 **분류어**.
+
+    교재는 표 안에서 분류어를 생략한다:
+        # ■ 응집도 (Cohesion)
+        | 기능적 (Function) | … |      ← 원문은 `기능적`
+    파싱은 표 제목을 읽고 `기능적 응집도`로 이름을 완성한다. 잘한 일이지만 그 바람에
+    **우리가 원문에서 그 이름을 못 찾아** 표를 통째로 놓쳤다(응집/결합 15개 중 13개).
+    그러면 ③이 원문 순서로 4개씩 잘라 `시간적 응집도·싱글톤 패턴·외부 결합도`처럼
+    섞인다.
+
+    분류어를 **목록으로 박지 않고 데이터에서 뽑는다** — 박으면 정보처리기사에만
+    맞는 물건이 된다. 교재가 바뀌면 그 교재의 분류어가 자동으로 잡힌다.
+
+    ※ 여기 있는 이유: 절 묶기(원문에서 개념 찾기)와 채점(정답 표기 인정) 양쪽이
+      쓴다. 낮은 층인 이 모듈에 둬야 `grouping → blocks` 방향이 뒤집히지 않는다.
+
+    ⚠️ `min_share`를 쓰는 쪽마다 다르게 준다. **오탐 비용이 다르기 때문이다.**
+      묶기(3) — 잘못 떼면 엉뚱한 덩어리에 배치돼 **절이 통째로 잘못 만들어진다**
+      채점(2) — 잘못 떼면 관대하게 채점될 뿐이다. 반대로 엄격하면 개념을 정확히
+                꺼낸 학습자가 틀렸다는 말을 듣는다(`폭포수` vs `폭포수 모형`)
+    """
+    tail: dict[str, int] = {}
+    for k in keys:
+        parts = k.split()
+        if len(parts) >= 2 and len(parts[-1]) >= 2:
+            tail[parts[-1]] = tail.get(parts[-1], 0) + 1
+    return frozenset(w for w, n in tail.items() if n >= min_share)
+
+
 @dataclass(frozen=True)
 class Excerpt:
     """개념 하나에 대응하는 원문 구간."""

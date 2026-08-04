@@ -43,7 +43,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .excerpt import aliases, normalize_spaces
+from .excerpt import aliases, category_words, normalize_spaces
 
 # 한 절에 너무 많으면 학습 단위가 아니라 다시 조각이 된다.
 MAX_PER_SECTION = 10
@@ -174,32 +174,6 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", "", normalize_spaces(text))
 
 
-# 분류어로 인정할 최소 공유 수. 이보다 적으면 그냥 우연히 끝이 같은 말이다.
-MIN_CATEGORY_SHARE = 3
-
-
-def _category_words(keys: list[str]) -> frozenset[str]:
-    """개념명 끝 어절 중 여러 개념이 공유하는 것 = 교재의 **분류어**.
-
-    교재는 표 안에서 분류어를 생략한다:
-        # ■ 응집도 (Cohesion)
-        | 기능적 (Function) | … |      ← 원문은 `기능적`
-    파싱은 표 제목을 읽고 `기능적 응집도`로 이름을 완성한다. 잘한 일이지만 그 바람에
-    **우리가 원문에서 그 이름을 못 찾아** 표를 통째로 놓쳤다(응집/결합 15개 중 13개).
-    그러면 ③이 원문 순서로 4개씩 잘라 `시간적 응집도·싱글톤 패턴·외부 결합도`처럼
-    섞인다.
-
-    분류어를 **목록으로 박지 않고 데이터에서 뽑는다** — 박으면 정보처리기사에만
-    맞는 물건이 된다. 교재가 바뀌면 그 교재의 분류어가 자동으로 잡힌다.
-    """
-    tail: dict[str, int] = defaultdict(int)
-    for k in keys:
-        parts = k.split()
-        if len(parts) >= 2 and len(parts[-1]) >= 2:
-            tail[parts[-1]] += 1
-    return frozenset(w for w, n in tail.items() if n >= MIN_CATEGORY_SHARE)
-
-
 def _find(body: str, key: str, categories: frozenset[str] = frozenset()) -> int:
     """공백을 지운 원문에서 개념이 처음 나오는 위치. 없으면 -1.
 
@@ -281,7 +255,7 @@ def _structure_groups(
         return []
     blocks = _blocks(source)
     squashed = [_squash(b) for b in blocks]
-    cats = _category_words([c.key for c in concepts])
+    cats = category_words([c.key for c in concepts])
     owner: dict[int, list[str]] = defaultdict(list)
     for c in concepts:
         for i, body in enumerate(squashed):
@@ -471,7 +445,7 @@ def group_into_sections(
     by_key = {c.key: c for c in concepts}
     ordered = sorted(concepts, key=lambda c: (c.order, c.key))
     chunk_id = next((c.chunk_id for c in ordered if c.chunk_id), None)
-    cats = _category_words([c.key for c in concepts])
+    cats = category_words([c.key for c in concepts])
     taken: set[str] = set()
     sections: list[Section] = []
 
