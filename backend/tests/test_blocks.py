@@ -170,6 +170,39 @@ def test_원문이_길면_잘라서_붙인다():
     assert p.count("가") < 2000
 
 
+def test_원문을_앞에서_자르지_않고_개념_자리를_남긴다():
+    """앞자르기는 뒤쪽 개념을 통째로 버린다.
+
+    실측(표·헤딩을 지운 판 = 강의자료 흉내): 절이 자기 개념을 하나도 못 받는
+    비율이 필기 22%·실기 29%였다. 조판 있는 실기 원본에서는 1%라 안 보였다.
+    """
+    from app.features.curriculum.blocks import MAX_SOURCE_CHARS, clip_around
+
+    filler = "\n".join("관계 없는 줄입니다." * 3 for _ in range(300))
+    source = (
+        "XP의 핵심 가치는 다섯 가지다.\n"
+        + filler
+        + "\n애자일 개발 4가지 핵심 가치는 개인과 상호작용을 중시한다."
+    )
+    assert len(source) > MAX_SOURCE_CHARS * 3
+
+    clipped = clip_around(source, CONCEPTS)
+    # 앞자르기였다면 뒤쪽 개념이 사라진다 — 그게 이 함수가 막으려는 것이다.
+    assert "애자일 개발 4가지 핵심 가치" not in source[:MAX_SOURCE_CHARS]
+    for c in CONCEPTS:
+        assert c.key in clipped, c.key
+    assert len(clipped) <= MAX_SOURCE_CHARS
+    assert "…" in clipped  # 건너뛴 자리를 표시해야 이어붙인 글임을 안다
+
+
+def test_개념을_하나도_못_찾으면_앞에서_자른다():
+    # 폴백이 있어야 원문이 통째로 프롬프트에 들어가는 사고를 막는다.
+    from app.features.curriculum.blocks import MAX_SOURCE_CHARS, clip_around
+
+    clipped = clip_around("나" * 5000, CONCEPTS)
+    assert len(clipped) == MAX_SOURCE_CHARS
+
+
 MCQ_OK = {
     "question": "시간 순서에 따른 메시지 교환을 표현하는 것은?",
     "options": ["XP의 핵심 가치", "애자일 개발 4가지 핵심 가치", "폭포수 모형", "나선형 모형"],

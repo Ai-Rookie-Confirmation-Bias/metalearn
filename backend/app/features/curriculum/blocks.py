@@ -32,9 +32,10 @@ LLM 호출은 하지 않는다(호출측이 LLMClient로 한다). 프롬프트�
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 
-from .excerpt import aliases
+from .excerpt import aliases, normalize_spaces
 
 # ── 인출 밀도 ────────────────────────────────────────────────────────
 # 빈칸은 **개념마다** 하나. 절 기준으로 잡으면 단위를 바꿀 때 인출 수가 따라
@@ -89,6 +90,68 @@ _SCHEMA = """{
 _TEMPLATE_MARKERS = ("들어갈 자리", "포함한 문장", "설명 본문", "개념명")
 
 
+def _sq(text: str) -> str:
+    return re.sub(r"\s+", "", normalize_spaces(text))
+
+
+def clip_around(
+    source: str, concepts: list[ConceptBrief], budget: int = MAX_SOURCE_CHARS
+) -> str:
+    """원문을 **개념이 나오는 자리 기준으로** 자른다. 앞에서 자르지 않는다.
+
+    앞에서 budget만큼 자르면 뒤쪽 개념이 통째로 사라진다. 조판이 없는 문서에서는
+    덩어리 나누기가 무력해져 조각 전체가 원문으로 오기 때문에 이게 심각해진다.
+
+    실측(표·헤딩을 지워 대학 강의자료를 흉내 낸 판):
+        절이 자기 개념을 하나도 못 받음   필기 22% · 실기 29%
+        개념 기준 유실                    필기 42% · 실기 48%
+    조판이 있는 실기 원본에서는 1%라 안 보이던 문제다. **확정 타깃이 강의자료이므로
+    조판 있는 문서에서만 되는 것은 된 게 아니다** — ⓪에 걸었던 기준을 여기도 건다.
+
+    줄 단위로 본다. 먼저 개념마다 자기 줄을 하나씩 확보하고(그래야 "하나도 못
+    받는 절"이 없다), 예산이 남으면 주변으로 넓힌다. 건너뛴 자리에는 `…`를 넣어
+    이어붙인 글이라는 걸 모델이 알게 한다.
+    """
+    if len(source) <= budget:
+        return source
+    lines = source.splitlines()
+    squashed = [_sq(ln) for ln in lines]
+
+    # 1차 — 개념마다 처음 등장하는 줄 하나씩.
+    anchors: set[int] = set()
+    for c in concepts:
+        forms = [_sq(a) for a in aliases(c.key)]
+        for i, body in enumerate(squashed):
+            if any(f and f in body for f in forms):
+                anchors.add(i)
+                break
+    if not anchors:
+        return source[:budget]
+
+    # 2차 — 예산이 남는 만큼 앵커 주변으로 넓힌다.
+    keep = set(anchors)
+    used = sum(len(lines[i]) + 1 for i in keep)
+    for radius in (1, 2, 3):
+        for i in sorted(anchors):
+            for j in (i - radius, i + radius):
+                if not (0 <= j < len(lines)) or j in keep:
+                    continue
+                cost = len(lines[j]) + 1
+                if used + cost > budget:
+                    continue
+                keep.add(j)
+                used += cost
+
+    out: list[str] = []
+    prev = -2
+    for i in sorted(keep):
+        if out and i != prev + 1:
+            out.append("…")
+        out.append(lines[i])
+        prev = i
+    return "\n".join(out)
+
+
 def build_prompt(
     section_title: str,
     concepts: list[ConceptBrief],
@@ -105,7 +168,7 @@ def build_prompt(
 
     source_part = ""
     if source_text.strip():
-        clipped = source_text.strip()[:MAX_SOURCE_CHARS]
+        clipped = clip_around(source_text.strip(), concepts)
         source_part = (
             f"\n<교재 원문 (참고)>\n{clipped}\n</교재 원문>\n"
             "※ 원문은 PDF 추출본이라 공백·줄바꿈이 뒤틀려 있고 항목 번호나 잡음이\n"
