@@ -68,8 +68,13 @@ def plan_chapter(
     total = summary.sections_total
     weak = tuple(dict.fromkeys(summary.weak_concepts + weak_from_previous))
 
-    # 아직 안 본 목차 — 판단할 근거가 없으니 표준으로 둔다.
-    if summary.sections_touched == 0:
+    # 아직 안 본 목차, 또는 **판정하기엔 너무 적게 푼 목차**는 표준으로 둔다.
+    #
+    # 실측 사고: 한 문제 틀리자마자 단원이 `deep`으로 바뀌고 화면에
+    # "이해도 0%로 낮아 설명을 늘렸습니다"가 떴다. 한 문제로 이해도를 말하는 건
+    # 거짓말이다. 절에는 `MIN_ATTEMPTS` 가드를 걸어놓고 목차엔 안 걸었던 것 —
+    # **측정이 부족하면 판정하지 않는다**는 원칙은 층이 달라도 같다.
+    if summary.sections_touched == 0 or not summary.judged:
         mode, planned, reason = NORMAL, total, ""
         if weak_from_previous:
             mode = DEEP

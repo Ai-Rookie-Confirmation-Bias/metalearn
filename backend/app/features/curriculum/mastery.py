@@ -119,6 +119,7 @@ class ChapterMastery:
     sections_touched: int
     ratio: float  # 시도한 절들의 가중 정답률
     weak_concepts: tuple[str, ...]
+    attempts: int = 0  # 이 목차에서 푼 문항 수 — **판정할 자격이 있는지**를 본다
 
     @property
     def progress(self) -> float:
@@ -126,9 +127,22 @@ class ChapterMastery:
         return self.sections_touched / self.sections_total if self.sections_total else 0.0
 
     @property
+    def judged(self) -> bool:
+        """이해도를 말할 만큼 풀었는가.
+
+        절에 `MIN_ATTEMPTS` 가드를 걸어놓고 목차엔 안 걸었더니, **한 문제 틀리면
+        단원 전체가 "이해도 0%로 낮아 설명을 늘렸습니다"로 뒤집혔다**(실측).
+        한 문제로 이해도를 말하는 건 거짓말이다 — 성향에 confidence를 둔 것과
+        같은 원리로, **측정이 부족하면 판정하지 않는다.**
+        """
+        return self.attempts >= MIN_ATTEMPTS
+
+    @property
     def status(self) -> str:
         if self.sections_touched == 0:
             return UNTOUCHED
+        if not self.judged:
+            return LEARNING  # 아직 판정하기엔 이르다
         if self.ratio >= SOLID:
             return SOLID_S
         if self.ratio >= SHAKY:
@@ -168,6 +182,7 @@ def chapter_summary(chapter: str, states: list[SectionMastery]) -> ChapterMaster
         sections_touched=len(touched),
         ratio=round(ratio, 3),
         weak_concepts=tuple(weak),
+        attempts=total_attempts,
     )
 
 
