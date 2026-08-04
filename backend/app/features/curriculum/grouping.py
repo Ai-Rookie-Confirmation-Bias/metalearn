@@ -152,7 +152,11 @@ def _parent_groups(
 
 
 # 헤딩 앞머리의 조판 기호. 한 번에 걷어내야 `# ※ 제목`이 `제목`이 된다.
-_HEAD_MARK = re.compile(r"^[\s#■※▶★◆●○*·\-\[\]()]+")
+# 원문자(①②③)와 `1.` `1)` 같은 번호도 교재의 나열 표시지 절 이름이 아니다
+# — 안 걷으면 화면에 `② 통합 테스트`로 뜬다.
+_HEAD_MARK = re.compile(
+    r"^(?:[\s#■※▶★◆●○*·\-\[\]()]|[①-⑳]|\d+\s*[.)]\s)+"
+)
 # 이런 제목은 절 이름으로 아무것도 알려주지 않는다 — 개념명으로 대체한다.
 _EMPTY_TITLES = {
     "종류", "특징", "개요", "정의", "구성", "구성요소", "방법", "분류",
@@ -343,21 +347,21 @@ def _safe_title(candidate: str, keys: set[str], ordered: list[Concept]) -> str:
     return _title_of(keys, ordered)
 
 
-def _page_at(pos: int, total: int, pages: str) -> str:
-    """조각의 쪽 범위 안에서 위치 비율로 절의 쪽을 추정한다.
+def _page_at(pages: str) -> str:
+    """절이 실린 교재 쪽. 조각의 쪽 범위를 **그대로** 쓴다.
 
-    `p.3-4` 같은 조각 단위 정보밖에 없어 추정이다. 파싱이 개념별 문자 범위를
-    주면 정확해진다. 그래도 `p.3~8`보다 `p.5`가 PDF에서 찾기에 낫다.
+    한때 조각 안 위치 비율로 한 쪽을 집어냈는데, 원본 PDF와 대조하니
+    **정확 59% · 1쪽 차이 41%**였다(2쪽 이상 어긋남은 0 — 조각이 최대 2쪽이라).
+    `p.5`라고 단정했다가 거기 없으면 "교재의 그 문장"이라는 약속이 바로 흔들린다.
+    범위로 주면 100% 맞고, 사용자는 두 쪽만 훑으면 된다. 정밀도보다 신뢰가 크다.
+
+    파싱이 개념별 문자 범위를 주면 그때 한 쪽으로 좁힌다.
     """
     m = re.search(r"(\d+)\s*(?:[-~]\s*(\d+))?", pages or "")
     if not m:
         return ""
-    lo = int(m.group(1))
-    hi = int(m.group(2) or lo)
-    if hi <= lo or total <= 0:
-        return f"p.{lo}"
-    ratio = min(max(pos / total, 0.0), 1.0)
-    return f"p.{lo + int((hi - lo) * ratio)}"
+    lo, hi = int(m.group(1)), int(m.group(2) or m.group(1))
+    return f"p.{lo}" if hi <= lo else f"p.{lo}-{hi}"
 
 
 def _section_id(chunk_id: str | None, keys: tuple[str, ...]) -> str:
@@ -502,7 +506,7 @@ def group_into_sections(
                 reason=s.reason,
                 order=i,
                 source=s.source or _source_for(s.concept_keys, blocks, squashed),
-                page=_page_at(at.get(s.section_id, 0), total, pages) if pages else "",
+                page=_page_at(pages),
                 section_id=s.section_id,
             )
         )
