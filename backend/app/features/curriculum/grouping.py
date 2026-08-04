@@ -38,6 +38,7 @@ DB·LLM 비의존. 커리큘럼 엔진의 **첫 단계**이며, 이후 모든 �
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -86,10 +87,26 @@ class Section:
     # (판단을 규칙이 하므로 이유를 쓸 수 있다 — 서비스 정의의 전제).
     reason: str
     order: int = 0
+    # 이 절이 나온 원문. **⓪로 묶인 절은 덩어리를 그대로 들고 온다.**
+    #
+    # 이걸 안 들고 다녔던 게 실측 사고의 원인이었다 — 절을 만들 때는 원문
+    # 위치를 알고 있었는데 넘길 때 버려서, 받는 쪽이 개념명으로 다시 찾다가
+    # 실패했다(`테스트 하네스` 절에 `요구사항 검증` 원문 3,768자가 붙음).
+    # ①~③으로 묶인 절은 비어 있고, 그때만 `excerpt.section_source` 폴백.
+    source: str = ""
+    # 교재 쪽수 표시용(`p.12` / `p.12-13`). PDF를 옆에 놓고 찾을 때 쓴다.
+    page: str = ""
+    # 화면 클릭·진도 저장에 쓸 식별자. 같은 입력이면 같은 값이어야 하므로
+    # 조각 id와 원문 순서로 만든다(내용이 바뀌면 새 절로 보는 게 맞다).
+    section_id: str = ""
 
     @property
     def size(self) -> int:
         return len(self.concepts)
+
+    @property
+    def concept_keys(self) -> tuple[str, ...]:
+        return tuple(c.key for c in self.concepts)
 
 
 def _cycles(by_key: dict[str, Concept]) -> list[set[str]]:
@@ -189,8 +206,11 @@ def _block_title(blocks: list[str], i: int, fallback: str) -> str:
 
 def _structure_groups(
     concepts: list[Concept], source: str
-) -> list[tuple[str, str, set[str]]]:
-    """ⓠ 원문 구조로 묶는다. (제목, 이유, 개념 key들) 목록.
+) -> list[tuple[str, str, set[str], str]]:
+    """⓪ 원문 구조로 묶는다. (제목, 이유, 개념 key들, **그 덩어리 원문**) 목록.
+
+    덩어리 원문을 같이 돌려주는 게 중요하다 — 이걸 안 들고 가면 받는 쪽이
+    개념명으로 원문을 다시 찾아야 하고, 그게 실패해서 엉뚱한 글이 붙었다.
 
     개념명을 원문에서 못 찾으면(표기가 달라서) 그냥 넘긴다 — ①~③이 받는다.
     """
@@ -208,7 +228,7 @@ def _structure_groups(
                 owner[i].append(c.key)
                 break
 
-    out: list[tuple[str, str, set[str]]] = []
+    out: list[tuple[str, str, set[str], str]] = []
     for i in sorted(owner):
         keys = owner[i]
         # 혼자면 묶음이 아니고, 정원을 넘으면 절이 아니라 다시 조각이다.
@@ -217,8 +237,27 @@ def _structure_groups(
             continue
         title = _block_title(blocks, i, keys[0])
         kind = "표" if blocks[i].strip().startswith("|") else "항목"
-        out.append((title, f"교재가 이 {len(keys)}개를 같은 {kind}에 묶어 설명합니다", set(keys)))
+        reason = f"교재가 이 {len(keys)}개를 같은 {kind}에 묶어 설명합니다"
+        # 표는 바로 앞 헤딩이 제목이므로 원문도 헤딩부터 붙여야 말이 된다.
+        body = blocks[i]
+        if i > 0 and blocks[i - 1].strip().startswith("#"):
+            body = blocks[i - 1] + "\n" + body
+        out.append((title, reason, set(keys), body))
     return out
+
+
+def _source_for(keys: tuple[str, ...], blocks: list[str], squashed: list[str]) -> str:
+    """개념들이 들어 있는 원문 덩어리를 모아 붙인다.
+
+    ①~③으로 묶인 절(⓪가 아닌 절)의 원문을 채우는 데 쓴다. 개념명으로 원문을
+    처음부터 다시 뒤지는 것보다 정확하다 — 이미 덩어리로 나눠 놨으므로
+    "이 개념이 어느 덩어리에 있나"만 보면 되고, 덩어리 경계가 곧 맥락이다.
+    """
+    want = {_squash(k) for k in keys if k}
+    hit = sorted(
+        i for i, body in enumerate(squashed) if any(k and k in body for k in want)
+    )
+    return "\n".join(blocks[i] for i in hit)
 
 
 def _positions(concepts: list[Concept], source: str) -> dict[str, int]:
@@ -282,6 +321,47 @@ def _root_of(keys: set[str], by_key: dict[str, Concept]) -> str:
     return min(heads or list(keys), key=lambda k: (by_key[k].order, k))
 
 
+# 파싱이 만든 인공 상위 노드의 이름. 교재엔 없고 화면에 나가면 안 된다.
+#   실측(실기): uml-diagram · ui-design · uml-thing · uml-relationship · component
+# 묶는 기준으로는 유용하지만(UML 다이어그램 10종을 한 절로 모아줬다) **제목으로는 못 쓴다.**
+_SLUG = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+$")
+
+
+def _safe_title(candidate: str, keys: set[str], ordered: list[Concept]) -> str:
+    """제목이 사람이 읽을 만한지 보고, 아니면 개념명으로 되돌린다."""
+    if candidate and not _SLUG.match(candidate.strip()):
+        return candidate
+    return _title_of(keys, ordered)
+
+
+def _page_at(pos: int, total: int, pages: str) -> str:
+    """조각의 쪽 범위 안에서 위치 비율로 절의 쪽을 추정한다.
+
+    `p.3-4` 같은 조각 단위 정보밖에 없어 추정이다. 파싱이 개념별 문자 범위를
+    주면 정확해진다. 그래도 `p.3~8`보다 `p.5`가 PDF에서 찾기에 낫다.
+    """
+    m = re.search(r"(\d+)\s*(?:[-~]\s*(\d+))?", pages or "")
+    if not m:
+        return ""
+    lo = int(m.group(1))
+    hi = int(m.group(2) or lo)
+    if hi <= lo or total <= 0:
+        return f"p.{lo}"
+    ratio = min(max(pos / total, 0.0), 1.0)
+    return f"p.{lo + int((hi - lo) * ratio)}"
+
+
+def _section_id(chunk_id: str | None, keys: tuple[str, ...]) -> str:
+    """절 식별자 — 담긴 개념들로 만든다.
+
+    순번(`chunk-0`)으로 매기면 앞 절이 하나 갈릴 때 뒤 번호가 전부 밀려서
+    진도 기록이 엉뚱한 절에 붙는다. 내용이 같으면 같은 id, 내용이 바뀌면
+    새 절로 보는 게 맞다.
+    """
+    digest = hashlib.sha1("|".join(sorted(keys)).encode("utf-8")).hexdigest()[:8]
+    return f"{chunk_id or 'x'}-{digest}"
+
+
 def _fit(group: set[str], anchor: str | None, by_key: dict[str, Concept]) -> set[str]:
     """정원(`MAX_PER_SECTION`)에 맞춘다. **기준 개념은 절대 밀어내지 않는다.**
 
@@ -303,12 +383,15 @@ def _chunk_leftovers(items: list[Concept], size: int) -> list[list[Concept]]:
     return out
 
 
-def group_into_sections(concepts: list[Concept], source: str = "") -> list[Section]:
+def group_into_sections(
+    concepts: list[Concept], source: str = "", pages: str = ""
+) -> list[Section]:
     """개념 목록을 절로 묶는다.
 
     `source`(그 조각의 원문)를 주면 ⓪(원문 구조)과 원문 기준 절 순서가 켜진다.
     안 주면 ①~③만으로 도는 예전 동작 그대로다 — 원문을 못 쓰는 호출부가 있어도
     깨지지 않아야 하고, 구조 없는 문서에서도 같은 경로로 떨어져야 한다.
+    `pages`(조각의 쪽 범위, 예 `3-4`)를 주면 절마다 쪽을 추정해 붙인다.
 
     입력 순서와 무관하게 결정적이다 — 같은 입력이면 같은 결과가 나와야
     "왜 이렇게 묶였는지"를 화면에 쓸 수 있다.
@@ -318,28 +401,37 @@ def group_into_sections(concepts: list[Concept], source: str = "") -> list[Secti
 
     by_key = {c.key: c for c in concepts}
     ordered = sorted(concepts, key=lambda c: (c.order, c.key))
+    chunk_id = next((c.chunk_id for c in ordered if c.chunk_id), None)
     taken: set[str] = set()
     sections: list[Section] = []
 
-    def emit(keys: set[str], title: str, reason: str) -> None:
+    def emit(keys: set[str], title: str, reason: str, body: str = "") -> None:
         members = tuple(c for c in ordered if c.key in keys)
         if not members:
             return
-        sections.append(Section(title=title, concepts=members, reason=reason))
+        sections.append(
+            Section(
+                title=_safe_title(title, keys, ordered),
+                concepts=members,
+                reason=reason,
+                source=body,
+                section_id=_section_id(chunk_id, tuple(k.key for k in members)),
+            )
+        )
         taken.update(keys)
 
     # ⓪ 원문 구조 — 저자가 이미 내린 결정이라 우리 추론보다 앞선다.
-    for title, reason, keys in _structure_groups(concepts, source):
+    for title, reason, keys, body in _structure_groups(concepts, source):
         keys = {k for k in keys if k not in taken}
         if len(keys) >= 2:
-            emit(keys, title, reason)
+            emit(keys, title, reason, body)
 
     # ② 순환부터 — 순서를 정할 수 없으므로 무조건 함께 간다.
     for cyc in _cycles(by_key):
         if cyc & taken:
             continue
         names = " ↔ ".join(sorted(cyc))
-        emit(cyc, _title_of(cyc, by_key, ordered), f"서로가 서로의 선수입니다 ({names})")
+        emit(cyc, _title_of(cyc, ordered), f"서로가 서로의 선수입니다 ({names})")
 
     # ① 같은 부모를 공유하는 개념들 + 그 부모
     for parent, kids in _parent_groups(by_key, taken):
@@ -370,27 +462,45 @@ def group_into_sections(concepts: list[Concept], source: str = "") -> list[Secti
             "교재에서 이어서 나오는 내용입니다",
         )
 
-    # 절 자체의 순서도 원문을 따른다 — 학습 순서가 교재와 어긋나면 혼란스럽다.
     # 절 순서는 교재를 따른다. 원문이 있으면 등장 위치로, 없으면 입력 순서로.
     # 원문에서 이름을 못 찾은 절(8~11%)은 기준이 없으므로 뒤로 보낸다.
+    total = len(_squash(source)) if source else 0
+    at: dict[str, int] = {}
     if source:
         pos = _positions(concepts, source)
-        far = len(_squash(source)) + 1
-        sections.sort(key=lambda s: min((pos[c.key] for c in s.concepts if c.key in pos), default=far))
+        far = total + 1
+        for s in sections:
+            at[s.section_id] = min(
+                (pos[c.key] for c in s.concepts if c.key in pos), default=far
+            )
+        sections.sort(key=lambda s: at[s.section_id])
     else:
         sections.sort(key=lambda s: min(c.order for c in s.concepts))
+
+    # ①~③으로 묶인 절은 원문이 비어 있다. 개념이 들어 있는 덩어리를 모아 채운다.
+    blocks = _blocks(source) if source else []
+    squashed = [_squash(b) for b in blocks]
 
     # 제목이 겹치면 화면에서 같은 절로 보인다 — 뒤에 나온 것에 번호를 붙인다.
     used: dict[str, int] = {}
     out: list[Section] = []
     for i, s in enumerate(sections):
         n = used[s.title] = used.get(s.title, 0) + 1
-        title = s.title if n == 1 else f"{s.title} ({n})"
-        out.append(Section(title=title, concepts=s.concepts, reason=s.reason, order=i))
+        out.append(
+            Section(
+                title=s.title if n == 1 else f"{s.title} ({n})",
+                concepts=s.concepts,
+                reason=s.reason,
+                order=i,
+                source=s.source or _source_for(s.concept_keys, blocks, squashed),
+                page=_page_at(at.get(s.section_id, 0), total, pages) if pages else "",
+                section_id=s.section_id,
+            )
+        )
     return out
 
 
-def _title_of(keys: set[str], by_key: dict[str, Concept], ordered: list[Concept]) -> str:
+def _title_of(keys: set[str], ordered: list[Concept]) -> str:
     """절 제목 — 원문에 먼저 나온 개념 이름을 쓴다(임시).
 
     나중에 LLM으로 묶음을 아우르는 이름을 짓게 할 수 있지만, 그 전에도
