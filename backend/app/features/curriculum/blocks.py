@@ -35,7 +35,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from .excerpt import aliases, category_words, normalize_spaces
+from .excerpt import aliases, category_words, normalize_spaces, source_aliases
 
 # ── 인출 밀도 ────────────────────────────────────────────────────────
 # 빈칸은 **개념마다** 하나. 절 기준으로 잡으면 단위를 바꿀 때 인출 수가 따라
@@ -268,17 +268,21 @@ def _grounded(answer: str, concepts: list[ConceptBrief], source: str) -> bool:
     return not source or ans in _sq(source)
 
 
-def accepted_answers(answer: str, concepts: list[ConceptBrief]) -> list[str]:
+def accepted_answers(
+    answer: str, concepts: list[ConceptBrief], source: str = ""
+) -> list[str]:
     """채점에서 **정답으로 인정할 표기들.**
 
     실측 사고: `폭포수`라고 적었는데 정답이 `폭포수 모형`이라 오답 처리됐다.
     개념을 정확히 꺼냈는데 분류어를 안 붙였다고 틀렸다고 하면 **인출이 아니라
     표기를 측정하는 것**이다.
 
-    넓히는 방향 셋:
+    넓히는 방향 넷:
       · 괄호 병기를 뗀/만 남긴 형태   `강제 접근 통제 (MAC)` → `MAC`
       · 교재의 분류어를 뗀 형태        `폭포수 모형` → `폭포수`
-      · 위 둘의 조합
+      · **원문이 단 약어**             `익스트림 프로그래밍` → `XP`
+        (개념명엔 없고 교재 헤딩에만 있다. 개념의 21~26%가 여기서 별칭을 얻는다)
+      · 위 셋의 조합
 
     다만 무한정 넓히지 않는다. **이 절의 다른 개념과 겹치는 형태는 뺀다** —
     `자료 결합도`를 `자료`로 인정했는데 절에 `자료 사전`이 있으면 둘을 못 가린다.
@@ -295,6 +299,10 @@ def accepted_answers(answer: str, concepts: list[ConceptBrief]) -> list[str]:
         parts = alias.split()
         if len(parts) >= 2 and parts[-1] in cats:
             forms.append(" ".join(parts[:-1]))
+    # 개념 정의와 원문에서 교재가 단 약어를 찾는다.
+    haystack = "\n".join([c.definition for c in concepts] + [source])
+    if haystack.strip():
+        forms += source_aliases(answer, haystack)
 
     # 다른 개념과 헷갈리는 형태는 제외한다.
     others = [c.key for c in concepts if _sq(c.key) != _sq(answer)]
@@ -392,7 +400,7 @@ def parse_response(
                     # 채점에서 정답으로 인정할 표기들. 화면이 이걸로 맞춘다 —
                     # `폭포수`라고 적었는데 `폭포수 모형`이라 틀렸다고 하면
                     # 인출이 아니라 표기를 측정하는 것이다.
-                    "accept": accepted_answers(answer, concepts),
+                    "accept": accepted_answers(answer, concepts, source),
                 },
                 concept_keys=(concept,) if concept else all_keys,
             )

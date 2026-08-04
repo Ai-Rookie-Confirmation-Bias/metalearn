@@ -294,6 +294,25 @@ def test_분류어를_안_붙여도_정답으로_인정한다():
     assert "MAC" in got and "강제 접근 통제" in got
 
 
+def test_교재가_단_약어도_정답으로_인정한다():
+    """`익스트림 프로그래밍`의 정답에 `XP`도 들어가야 한다(yoonhs 지적).
+
+    교재는 `※ 익스트림 프로그래밍 (eXtreme Programming, XP)`처럼 약어를 괄호로
+    다는데 파싱이 주는 개념명엔 안 들어 있다. 개념의 21~26%가 이 경우다.
+    """
+    from app.features.curriculum.blocks import accepted_answers
+
+    xp = [ConceptBrief("익스트림 프로그래밍", "고객 참여와 신속한 개발"), ConceptBrief("피드백", "")]
+    src = "# ※ 익스트림 프로그래밍 (eXtreme Programming, XP)\n- 고객의 요구사항에…"
+    got = accepted_answers("익스트림 프로그래밍", xp, src)
+    assert "XP" in got and "eXtreme Programming" in got
+
+    # 괄호 안이 이름이 아니라 설명이면 별칭이 아니다.
+    proto = [ConceptBrief("프로토타입", "")]
+    desc = "프로토타입 (고객의 needs를 파악하기 위해 만드는 견본이다)"
+    assert accepted_answers("프로토타입", proto, desc) == ["프로토타입"]
+
+
 def test_다른_개념과_겹치는_형태는_인정하지_않는다():
     # `자료 결합도`를 `자료`로 인정했는데 절에 `자료 사전`이 있으면 둘을 못 가린다.
     from app.features.curriculum.blocks import accepted_answers

@@ -84,6 +84,40 @@ def aliases(key: str) -> list[str]:
     return [a for a in dict.fromkeys(out) if a]
 
 
+# 괄호 안이 이름이 아니라 설명일 때 섞이는 조사·어미. 있으면 별칭이 아니다.
+_PROSE = re.compile(r"[은는이가을를의에서하며되고]")
+
+
+def source_aliases(key: str, text: str) -> list[str]:
+    """원문·정의문에서 **개념명 바로 뒤 괄호**를 별칭으로 뽑는다.
+
+    교재는 약어를 괄호로 단다:
+        ※ 익스트림 프로그래밍 (eXtreme Programming, XP)
+    그런데 파싱이 주는 개념명은 `익스트림 프로그래밍`뿐이라 **`XP`라고 답하면
+    오답**이 됐다(yoonhs 지적). 개념명에 없는 이름이 원문에는 있는 것이다.
+
+    실측: 개념의 21~26%가 이렇게 별칭을 얻는다.
+        소프트웨어 생명 주기 → SDLC · 하향식 설계 → Top-down · 캡슐화 → Encapsulation
+
+    괄호 안이 이름이 아니라 설명인 경우가 있어(`프로토타입 (고객 needs 파악…)`)
+    조사·어미가 섞였거나 너무 길면 버린다.
+    """
+    core = key.replace(" ", "")
+    if len(core) < 2:
+        return []
+    # 원문은 띄어쓰기가 들쭉날쭉해 글자 사이 어디에나 공백이 올 수 있다.
+    pat = re.compile(r"\s*".join(map(re.escape, core)) + r"\s*[(（]([^)）]{1,60})[)）]")
+    m = pat.search(normalize_spaces(text))
+    if not m:
+        return []
+    out: list[str] = []
+    for piece in re.split(r"[,/·]", m.group(1)):
+        p = piece.strip()
+        if 2 <= len(p) <= 25 and not _PROSE.search(p):
+            out.append(p)
+    return out
+
+
 # 분류어로 인정할 최소 공유 수. 이보다 적으면 그냥 우연히 끝이 같은 말이다.
 MIN_CATEGORY_SHARE = 3
 
