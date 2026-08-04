@@ -172,7 +172,33 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", "", normalize_spaces(text))
 
 
-def _find(body: str, key: str) -> int:
+# 분류어로 인정할 최소 공유 수. 이보다 적으면 그냥 우연히 끝이 같은 말이다.
+MIN_CATEGORY_SHARE = 3
+
+
+def _category_words(keys: list[str]) -> frozenset[str]:
+    """개념명 끝 어절 중 여러 개념이 공유하는 것 = 교재의 **분류어**.
+
+    교재는 표 안에서 분류어를 생략한다:
+        # ■ 응집도 (Cohesion)
+        | 기능적 (Function) | … |      ← 원문은 `기능적`
+    파싱은 표 제목을 읽고 `기능적 응집도`로 이름을 완성한다. 잘한 일이지만 그 바람에
+    **우리가 원문에서 그 이름을 못 찾아** 표를 통째로 놓쳤다(응집/결합 15개 중 13개).
+    그러면 ③이 원문 순서로 4개씩 잘라 `시간적 응집도·싱글톤 패턴·외부 결합도`처럼
+    섞인다.
+
+    분류어를 **목록으로 박지 않고 데이터에서 뽑는다** — 박으면 정보처리기사에만
+    맞는 물건이 된다. 교재가 바뀌면 그 교재의 분류어가 자동으로 잡힌다.
+    """
+    tail: dict[str, int] = defaultdict(int)
+    for k in keys:
+        parts = k.split()
+        if len(parts) >= 2 and len(parts[-1]) >= 2:
+            tail[parts[-1]] += 1
+    return frozenset(w for w, n in tail.items() if n >= MIN_CATEGORY_SHARE)
+
+
+def _find(body: str, key: str, categories: frozenset[str] = frozenset()) -> int:
     """공백을 지운 원문에서 개념이 처음 나오는 위치. 없으면 -1.
 
     개념명이 `목 오브젝트 (Mock Object)`인데 교재는 `목 오브젝트`라고만 쓰는 일이
@@ -182,6 +208,13 @@ def _find(body: str, key: str) -> int:
         at = body.find(_squash(alias))
         if at >= 0:
             return at
+    # 분류어를 뗀 형태(`자료 결합도` → `자료`)는 **표의 첫 칸에 있을 때만** 인정한다.
+    # 그냥 부분일치를 허용하면 `자료`가 본문 아무 데나 걸려 엉뚱한 덩어리에 배치된다.
+    parts = key.split()
+    if len(parts) >= 2 and parts[-1] in categories:
+        at = body.find("|" + _squash(" ".join(parts[:-1])))
+        if at >= 0:
+            return at + 1
     return -1
 
 
@@ -238,10 +271,11 @@ def _structure_groups(
         return []
     blocks = _blocks(source)
     squashed = [_squash(b) for b in blocks]
+    cats = _category_words([c.key for c in concepts])
     owner: dict[int, list[str]] = defaultdict(list)
     for c in concepts:
         for i, body in enumerate(squashed):
-            if _find(body, c.key) >= 0:
+            if _find(body, c.key, cats) >= 0:
                 owner[i].append(c.key)
                 break
 
@@ -263,7 +297,12 @@ def _structure_groups(
     return out
 
 
-def _source_for(keys: tuple[str, ...], blocks: list[str], squashed: list[str]) -> str:
+def _source_for(
+    keys: tuple[str, ...],
+    blocks: list[str],
+    squashed: list[str],
+    categories: frozenset[str] = frozenset(),
+) -> str:
     """개념들이 들어 있는 원문 덩어리를 모아 붙인다.
 
     ①~③으로 묶인 절(⓪가 아닌 절)의 원문을 채우는 데 쓴다. 개념명으로 원문을
@@ -271,12 +310,16 @@ def _source_for(keys: tuple[str, ...], blocks: list[str], squashed: list[str]) -
     "이 개념이 어느 덩어리에 있나"만 보면 되고, 덩어리 경계가 곧 맥락이다.
     """
     hit = sorted(
-        i for i, body in enumerate(squashed) if any(_find(body, k) >= 0 for k in keys)
+        i
+        for i, body in enumerate(squashed)
+        if any(_find(body, k, categories) >= 0 for k in keys)
     )
     return "\n".join(blocks[i] for i in hit)
 
 
-def _positions(concepts: list[Concept], source: str) -> dict[str, int]:
+def _positions(
+    concepts: list[Concept], source: str, categories: frozenset[str] = frozenset()
+) -> dict[str, int]:
     """개념이 원문에 처음 나오는 위치. 절 순서를 정하는 데 쓴다.
 
     `Concept.order`는 파싱 md의 나열 순서인데 실측해보니 **가나다순**이었다.
@@ -285,7 +328,7 @@ def _positions(concepts: list[Concept], source: str) -> dict[str, int]:
     body = _squash(source)
     out: dict[str, int] = {}
     for c in concepts:
-        at = _find(body, c.key)
+        at = _find(body, c.key, categories)
         if at >= 0:
             out[c.key] = at
     return out
@@ -418,6 +461,7 @@ def group_into_sections(
     by_key = {c.key: c for c in concepts}
     ordered = sorted(concepts, key=lambda c: (c.order, c.key))
     chunk_id = next((c.chunk_id for c in ordered if c.chunk_id), None)
+    cats = _category_words([c.key for c in concepts])
     taken: set[str] = set()
     sections: list[Section] = []
 
@@ -483,7 +527,7 @@ def group_into_sections(
     total = len(_squash(source)) if source else 0
     at: dict[str, int] = {}
     if source:
-        pos = _positions(concepts, source)
+        pos = _positions(concepts, source, cats)
         far = total + 1
         for s in sections:
             at[s.section_id] = min(
@@ -508,7 +552,7 @@ def group_into_sections(
                 concepts=s.concepts,
                 reason=s.reason,
                 order=i,
-                source=s.source or _source_for(s.concept_keys, blocks, squashed),
+                source=s.source or _source_for(s.concept_keys, blocks, squashed, cats),
                 page=_page_at(pages),
                 section_id=s.section_id,
             )
