@@ -32,8 +32,9 @@ LLM 호출은 하지 않는다(호출측이 LLMClient로 한다). 프롬프트�
 from __future__ import annotations
 
 import json
-import re
 from dataclasses import dataclass
+
+from .excerpt import aliases
 
 # ── 인출 밀도 ────────────────────────────────────────────────────────
 # 빈칸은 **개념마다** 하나. 절 기준으로 잡으면 단위를 바꿀 때 인출 수가 따라
@@ -261,40 +262,16 @@ def _variants(token: str) -> list[str]:
     return out
 
 
-# 개념명의 괄호 병기. `목 오브젝트 (Mock Object)` / `DRM(디지털 저작권 관리)`
-_PAREN = re.compile(r"\s*[(（]([^)）]*)[)）]\s*")
-
-
-def aliases(key: str) -> list[str]:
-    """개념명의 표기 후보. 괄호 병기를 **따로 떼어** 둘 다 후보로 삼는다.
-
-    실측 사고: 개념명이 `목 오브젝트 (Mock Object)`인데 본문은 `목 오브젝트`라고만
-    써서 **넷 다 나와 있는 설명이 `언급 0/4`로 찍혔다.** 토큰으로 쪼개면
-    `(Mock` `Object)`가 본문에 없어 70% 문턱을 못 넘기 때문이다.
-
-    교재도 설명도 한쪽 표기만 쓴다. 둘 다 요구하면 정상 문장이 누락이 된다.
-    괄호 병기 개념은 실측에서 필기 16%·실기 15%로 적지 않다.
-
-        "목 오브젝트 (Mock Object)"  →  ["목 오브젝트", "Mock Object"]
-        "DRM(디지털 저작권 관리)"     →  ["DRM", "디지털 저작권 관리"]
-    """
-    # 원형을 먼저 둔다 — `Python input() 함수`처럼 괄호가 병기가 아니라
-    # 이름의 일부인 경우가 있다. 떼어내면 원문과 안 맞는다.
-    out = [key.strip()]
-    outer = _PAREN.sub(" ", key).strip()
-    if len(outer) >= 2:
-        out.append(outer)
-    # 병기 자체(`Mock Object`). 한 글자짜리는 노이즈라 버린다.
-    out += [a.strip() for a in _PAREN.findall(key) if len(a.strip()) >= 2]
-    return [a for a in dict.fromkeys(out) if a]
-
-
 def _mentions_one(text: str, key: str) -> bool:
     if key.replace(" ", "") in text.replace(" ", ""):
         return True
     tokens = [t for t in key.split() if len(t) >= 2]
-    if not tokens:
-        return key in text
+    # 남은 토큰이 하나뿐이면 부분 매칭이 위험하다. `제 1 정규형`에서 `제`와 `1`이
+    # 걸러지면 `정규형` 하나만 남아, 본문의 제2·제3정규형까지 언급으로 쳐진다.
+    # 통짜 일치(위)에서 이미 실패했으므로 여기서는 아닌 것으로 본다.
+    # 실측: 이 함정에 걸리는 개념이 필기 5개·실기 18개.
+    if len(tokens) < 2:
+        return False
     hit = sum(1 for t in tokens if any(v in text for v in _variants(t)))
     return hit / len(tokens) >= 0.7
 

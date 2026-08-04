@@ -43,8 +43,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
-from .blocks import aliases
-from .excerpt import normalize_spaces
+from .excerpt import aliases, normalize_spaces
 
 # 한 절에 너무 많으면 학습 단위가 아니라 다시 조각이 된다.
 MAX_PER_SECTION = 10

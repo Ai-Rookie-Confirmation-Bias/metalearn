@@ -119,12 +119,26 @@ def test_괄호_병기는_한쪽_표기만_써도_언급으로_친다():
 
 def test_괄호가_이름의_일부면_떼지_않는다():
     # `Python input() 함수`의 괄호는 병기가 아니다. 떼면 원문과 안 맞는다.
-    from app.features.curriculum.blocks import aliases
+    from app.features.curriculum.excerpt import aliases
 
     assert "Python input() 함수" in aliases("Python input() 함수")
     assert aliases("DRM(디지털 저작권 관리)")[1:] == ["DRM", "디지털 저작권 관리"]
     # 한 글자 주표기는 버린다 — "키"로 부분일치를 걸면 "키워드"까지 잡힌다.
     assert "키" not in aliases("키(Key)")
+
+
+def test_토큰이_하나로_줄면_부분일치를_안_쓴다():
+    # 오탐을 막다가 미탐이 생기는 지점. 2어절인데 한 어절이 1글자면 토큰 필터
+    # (len>=2) 후 하나만 남아, 그 하나만 본문에 있어도 100%가 되어 통과한다.
+    #   "제 1 정규형"              → ["정규형"]    → 제2·제3정규형까지 언급으로
+    #   "목 오브젝트 (Mock Object)" → ["오브젝트"]  → 아무 오브젝트나 언급으로
+    from app.features.curriculum.blocks import _mentions
+
+    assert not _mentions("제 2 정규형은 부분 함수 종속을 제거한다.", "제 1 정규형")
+    assert _mentions("제 1 정규형은 원자값만 갖는다.", "제 1 정규형")
+    assert not _mentions("이 절은 오브젝트를 다룬다.", "목 오브젝트 (Mock Object)")
+    assert _mentions("목 오브젝트는 대체 객체다.", "목 오브젝트 (Mock Object)")
+    assert _mentions("Mock Object는 대체 객체다.", "목 오브젝트 (Mock Object)")
 
 
 def test_진짜_누락은_잡는다():

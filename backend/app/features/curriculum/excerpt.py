@@ -51,6 +51,39 @@ def normalize_spaces(text: str) -> str:
     return _WEIRD_SPACE.sub(" ", text)
 
 
+# 개념명의 괄호 병기. `목 오브젝트 (Mock Object)` / `DRM(디지털 저작권 관리)`
+_PAREN = re.compile(r"\s*[(（]([^)）]*)[)）]\s*")
+
+
+def aliases(key: str) -> list[str]:
+    """개념명의 표기 후보. 괄호 병기를 **따로 떼어** 둘 다 후보로 삼는다.
+
+    실측 사고: 개념명이 `목 오브젝트 (Mock Object)`인데 본문은 `목 오브젝트`라고만
+    써서 **넷 다 나와 있는 설명이 `언급 0/4`로 찍혔다.** 토큰으로 쪼개면
+    `(Mock` `Object)`가 본문에 없어 70% 문턱을 못 넘기 때문이다.
+
+    교재도 설명도 한쪽 표기만 쓴다. 둘 다 요구하면 정상 문장이 누락이 된다.
+    괄호 병기 개념은 실측에서 필기 16%·실기 15%로 적지 않다.
+
+        "목 오브젝트 (Mock Object)"  →  [원형, "목 오브젝트", "Mock Object"]
+        "Python input() 함수"       →  [원형]          괄호가 이름의 일부다
+        "키(Key)"                   →  [원형, "Key"]   한 글자 주표기는 버린다
+
+    ※ 여기 있는 이유: 개념명을 원문에 맞춰보는 일은 절 묶기(grouping)와 학습 블록
+      (blocks) 양쪽이 쓴다. 낮은 층인 이 모듈에 둬야 `grouping → blocks` 방향이
+      뒤집히지 않는다.
+    """
+    # 원형을 먼저 둔다 — `Python input() 함수`처럼 괄호가 병기가 아니라
+    # 이름의 일부인 경우가 있다. 떼어내면 원문과 안 맞는다.
+    out = [key.strip()]
+    outer = _PAREN.sub(" ", key).strip()
+    if len(outer) >= 2:
+        out.append(outer)
+    # 병기 자체(`Mock Object`). 한 글자짜리는 노이즈라 버린다.
+    out += [a.strip() for a in _PAREN.findall(key) if len(a.strip()) >= 2]
+    return [a for a in dict.fromkeys(out) if a]
+
+
 @dataclass(frozen=True)
 class Excerpt:
     """개념 하나에 대응하는 원문 구간."""
