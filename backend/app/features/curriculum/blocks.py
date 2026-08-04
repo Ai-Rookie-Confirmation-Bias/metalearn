@@ -68,6 +68,13 @@ class Block:
     concept_keys: tuple[str, ...] = ()
 
 
+def _gist(definition: str, limit: int = 44) -> str:
+    """정의문에서 예시 문장에 쓸 짧은 조각. 문장 끝 어미는 떼고 이어 붙일 수 있게."""
+    d = re.split(r"[.。\n]", definition.strip())[0].strip()
+    d = re.sub(r"(이다|입니다|한다|합니다|임|함)$", "", d).strip()
+    return (d[:limit].rstrip() or "그런 성질을 가진")
+
+
 def _schema_for(concepts: list[ConceptBrief]) -> str:
     """응답 스키마 — **예시를 이 절의 개념으로 만든다.**
 
@@ -84,6 +91,11 @@ def _schema_for(concepts: list[ConceptBrief]) -> str:
     """
     first = concepts[0].key if concepts else "개념"
     second = concepts[1].key if len(concepts) > 1 else first
+    # 예시는 **완성된 문장**이어야 한다. 빈칸을 `(…)`로 남겨두면 모델이 그대로
+    # 내고 필터에 걸려 **인출이 0개**가 된다(실측). 개념 정의로 문장을 만들면
+    # 베껴도 이 절의 유효한 문항이고, 안 베끼면 더 나아진다.
+    d1 = _gist(concepts[0].definition) if concepts else "그런 성질을 가진 것"
+    d2 = _gist(concepts[1].definition) if len(concepts) > 1 else d1
     options = [c.key for c in concepts[:4]] or [first]
     while len(options) < 3:  # 보기가 모자라면 스키마가 규칙과 어긋난다
         options.append(f"{first} 아닌 것 {len(options)}")
@@ -91,9 +103,9 @@ def _schema_for(concepts: list[ConceptBrief]) -> str:
   "explanation": "설명 본문 (여러 문단 가능)",
   "analogy": "비유 — 쓰지 않을 거면 JSON null (문자열 \\"null\\" 아님)",
   "cloze": [
-    {{"sentence": "(…{first}를 설명하는 문장…) ____ 이라 한다.",
+    {{"kind": "정의", "sentence": "{d1} 것을 ____ 이라 한다.",
      "answer": "{first}", "concept": "{first}"}},
-    {{"sentence": "(…{second}를 설명하는 문장…) ____ 이다.",
+    {{"kind": "상황", "sentence": "어떤 팀이 {d2} 방식으로 일하고 있다면 그것은 ____ 다.",
      "answer": "{second}", "concept": "{second}"}}
   ],
   "mcq": {{
@@ -105,8 +117,10 @@ def _schema_for(concepts: list[ConceptBrief]) -> str:
 }}"""
 
 # 스키마 예시를 베낀 흔적. 이런 문장은 문항이 아니다.
-# 예시를 절마다 만들어(`_schema_for`) 베껴도 무해하게 했지만, 채우라고 남긴
-# `(…)` 자리를 그대로 두고 내는 경우가 있어 그것까지 막는다.
+#
+# ⚠️ **예시에 빈 자리를 남기면 안 된다.** `(…)`로 두면 모델이 그대로 내고 여기서
+#    전부 걸려 **인출이 0개**가 된다(실측). 예시는 `_schema_for`가 절 개념으로
+#    완성된 문장을 만들어 준다 — 베껴도 유효하고, 안 베끼면 더 나아진다.
 _TEMPLATE_MARKERS = (
     "들어갈 자리",
     "포함한 문장",
@@ -114,8 +128,6 @@ _TEMPLATE_MARKERS = (
     "개념명",
     "다음 설명에 해당하는 것은",
     "보기1",
-    "를 설명하는 문장",
-    "만 해당하는 설명",
     "(…",
 )
 
@@ -222,11 +234,22 @@ def build_prompt(
 3. **비유**: 이해를 돕는 장치이므로 **원문 밖에서 가져와도 된다.** 일상 경험에
    빗대라. 쓰지 않을 거면 JSON null을 넣어라.
 4. **빈칸 {len(concepts)}개 — 개념마다 하나씩.** 빠뜨리면 그 개념을 아는지
-   판단할 수 없다. 설명을 덮고도 답할 수 있어야 하므로 **핵심 용어를 비워라.**
-   조사나 서술어를 비우면 문법으로 풀려 인출이 되지 않는다.
-   (X) 폭포수 모형은 이전 단계로 ____ 수 없다   → '돌아갈'은 문맥으로 나온다
-   (O) 이전 단계로 돌아갈 수 없는 모형을 ____ 이라 한다   → 개념을 꺼내야 한다
-   문장 하나에 빈칸은 하나만. concept에 어느 개념인지 정확히 적어라.
+   판단할 수 없다. 문장 하나에 빈칸은 하나만. concept에 어느 개념인지 적어라.
+
+   ⚠️ **`kind`를 반드시 넣고, 빈칸들이 전부 같은 kind면 안 된다.**
+   전부 같은 모양이면 개념을 아는 게 아니라 **정의문을 외우게** 된다.
+
+   "정의"  위에 준 정의를 **풀어서** 읽어주고 이름을 묻는다.
+           ⚠️ 정의를 **그대로 옮겨 적지 마라.** 같은 뜻을 다른 말로 써라
+   "상황"  정의 대신 **그 개념이 실제로 벌어지는 장면**을 한 문장으로 묘사하고
+           이름을 묻는다. 교재의 예시·적용 대목이 있으면 그걸 쓴다
+   "성질"  **개념명을 문장 안에 두고** 그 개념의 성질·수치·순서를 비운다.
+           답은 개념명이 아니라 원문에 있는 말이다. 지어내지 마라
+
+   {len(concepts)}개 중 "정의"는 절반을 넘기지 마라.
+
+   그리고 **조사나 서술어를 비우지 마라** — 문법으로 풀려 인출이 안 된다.
+   (X) …는 이전 단계로 ____ 수 없다   → '돌아갈'은 문맥으로 나온다
 5. **객관식 1개 — 개념들을 구별하는 문항.** 빈칸이 "이걸 아는가"라면 객관식은
    "이것들을 가를 수 있는가"다. **위 개념 중 여럿을 보기로 넣어** 헷갈리는
    지점을 묻어라. 한 개념만 묻는 문항은 빈칸과 중복이니 만들지 마라.
@@ -397,6 +420,9 @@ def parse_response(
                 {
                     "sentence": sentence,
                     "answer": answer,
+                    # 문항 유형(정의/상황/성질). 화면에는 안 쓰고 **다양성 측정용**이다.
+                    # 유형 라벨로 학습자를 가두지 않는다는 원칙은 그대로다.
+                    "kind": _clean_optional(item.get("kind")) or "정의",
                     # 채점에서 정답으로 인정할 표기들. 화면이 이걸로 맞춘다 —
                     # `폭포수`라고 적었는데 `폭포수 모형`이라 틀렸다고 하면
                     # 인출이 아니라 표기를 측정하는 것이다.
