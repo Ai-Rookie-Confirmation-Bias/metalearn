@@ -32,7 +32,7 @@ from app.features.curriculum.profile import (  # noqa: E402
     observe,
     prompt_block,
 )
-from parsing_md import parse  # noqa: E402
+from app.features.curriculum.parsing_md import parse  # noqa: E402
 
 KEY = ""
 for line in (_ROOT / ".env").read_text(encoding="utf-8").splitlines():

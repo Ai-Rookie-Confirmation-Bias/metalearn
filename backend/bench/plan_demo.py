@@ -20,7 +20,7 @@ from app.features.curriculum.mastery import (  # noqa: E402
     record,
 )
 from app.features.curriculum.planner import bar, plan_course  # noqa: E402
-from parsing_md import parse  # noqa: E402
+from app.features.curriculum.parsing_md import parse  # noqa: E402
 
 md = sys.argv[1] if len(sys.argv) > 1 else "tests/fixtures/파싱결과_필기핵심요약.md"
 doc = parse(md)

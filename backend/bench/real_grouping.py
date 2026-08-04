@@ -18,7 +18,7 @@ from app.features.curriculum.grouping import (  # noqa: E402
     Concept,
     group_into_sections,
 )
-from parsing_md import parse  # noqa: E402
+from app.features.curriculum.parsing_md import parse  # noqa: E402
 
 if len(sys.argv) < 2:
     sys.exit("사용: python3 bench/real_grouping.py <파싱결과.md> [--detail 조각번호]")

@@ -14,7 +14,7 @@ sys.path.insert(0, str(_ROOT / "tests"))
 
 from app.features.curriculum.excerpt import split_by_concepts  # noqa: E402
 from app.features.curriculum.grouping import Concept, group_into_sections  # noqa: E402
-from parsing_md import parse  # noqa: E402
+from app.features.curriculum.parsing_md import parse  # noqa: E402
 
 if len(sys.argv) < 2:
     sys.exit("사용: python3 bench/excerpt_check.py <파싱결과.md>")

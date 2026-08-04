@@ -32,7 +32,7 @@ from app.features.curriculum.blocks import (  # noqa: E402
 )
 from app.features.curriculum.excerpt import normalize_spaces, section_source  # noqa: E402
 from app.features.curriculum.grouping import Concept, group_into_sections  # noqa: E402
-from parsing_md import parse  # noqa: E402
+from app.features.curriculum.parsing_md import parse  # noqa: E402
 
 KEY = ""
 for line in (_ROOT / ".env").read_text(encoding="utf-8").splitlines():
