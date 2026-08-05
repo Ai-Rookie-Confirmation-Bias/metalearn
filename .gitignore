@@ -16,3 +16,7 @@ dist/
 
 # os / editor
 .DS_Store
+
+# 학습 자료 원본 — 저작물이라 저장소에 넣지 않는다 (118MB짜리도 있음)
+*.pdf
+backend/uploads/

@@ -19,7 +19,9 @@ services:
     env_file: ./backend/.env
     environment:
       # 호스트가 'db'(서비스명) — 도커 네트워크 내부 DNS
-      DATABASE_URL: postgresql+psycopg://postgres:dev@db:5432/metalearn
+      # metalearn_v3: 파싱 v3 전용. 기존 metalearn DB는 integration 브랜치
+      # 스키마(alembic 0023)라 documents/concepts 등 테이블명이 겹쳐 공존 불가.
+      DATABASE_URL: postgresql+psycopg://postgres:dev@db:5432/metalearn_v3
     ports: ["8000:8000"]
     volumes:
       - ./backend:/app
