@@ -10,6 +10,7 @@ import { LibraryPage } from "@/pages/LibraryPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
+import { CurriculumLayout } from "@/pages/CurriculumLayout";
 import { CurriculumPage } from "@/pages/CurriculumPage";
 import { ChapterPage } from "@/pages/ChapterPage";
 import { FormativePage } from "@/pages/FormativePage";
@@ -39,12 +40,20 @@ export const router = createBrowserRouter([
       { path: "library", element: <LibraryPage /> },
       { path: "analysis", element: <AnalysisPage /> },
       { path: "settings", element: <SettingsPage /> },
-      // 커리큘럼 — 자료(목차 목록) → 목차 하나(절 목록) → 절 하나(학습)
+      // 커리큘럼 — 자료 고르기(사이드바 없음)
       { path: "curriculum", element: <CurriculumPage /> },
-      { path: "curriculum/:docId", element: <CurriculumPage /> },
-      { path: "curriculum/:docId/chapters/:index", element: <ChapterPage /> },
-      { path: "curriculum/:docId/chapters/:index/formative", element: <FormativePage /> },
-      { path: "curriculum/:docId/sections/:sectionId", element: <SectionPage /> },
+      {
+        // 자료 하나를 열면 **좌측에 목차가 고정**되고 본문만 바뀐다.
+        // 자료 개요 → 목차 하나 → 화면 하나 → 단원 평가
+        path: "curriculum/:docId",
+        element: <CurriculumLayout />,
+        children: [
+          { index: true, element: <CurriculumPage /> },
+          { path: "chapters/:index", element: <ChapterPage /> },
+          { path: "chapters/:index/formative", element: <FormativePage /> },
+          { path: "sections/:sectionId", element: <SectionPage /> },
+        ],
+      },
     ],
   },
   // 수업 생성 위저드 — 셸 없는 전체화면 집중 플로우

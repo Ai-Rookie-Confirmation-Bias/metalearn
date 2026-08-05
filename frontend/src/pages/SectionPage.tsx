@@ -96,7 +96,7 @@ export function SectionPage() {
       <div className="mx-auto max-w-2xl p-8">
         <p className="text-text-secondary">학습 내용을 만드는 중…</p>
         <p className="mt-1 text-[0.8rem] text-text-tertiary">
-          이 절은 처음이라 5~10초 걸립니다. 다음부터는 바로 열립니다.
+          이 화면은 처음이라 5~10초 걸립니다. 다음부터는 바로 열립니다.
         </p>
       </div>
     );
@@ -126,13 +126,13 @@ export function SectionPage() {
       <header className="mt-3 mb-6">
         <div className="flex items-start justify-between gap-3">
           <div>
-            <p className="text-[0.7rem] font-semibold text-text-tertiary">절</p>
+            <p className="text-[0.7rem] font-semibold text-text-tertiary">화면</p>
             <h1 className="text-2xl font-bold text-text-primary">{data.title}</h1>
           </div>
           <StatusBadge status={data.status} label={data.statusLabel} />
         </div>
         <p className="mt-2 text-[0.75rem] text-text-tertiary">
-          이 절에서 배우는 개념 {data.concepts.length}개
+          이 화면에서 배우는 개념 {data.concepts.length}개
           {data.page && <> · 📖 {data.page}</>}
         </p>
         <p className="mt-0.5 text-[0.8rem] text-text-secondary">
