@@ -217,8 +217,17 @@ def build_fill_prompt(
             "\n<교재 원문>\n" + clip_around(source_text.strip(), missing) + "\n</교재 원문>\n"
         )
 
+    # ⚠️ **예시가 곧 출력이다**(일곱 번째). 예시 문장이
+    # `"그런 상황에서 쓰는 것이 ____ 다."`였는데, 모델이 그걸 그대로 베껴 세 개념
+    # 전부 같은 문장으로 냈다. 앞 문장을 가리키는 문장이라 파서가 다 버려 **0문항**.
+    #
+    # 예시는 "베껴도 무해"를 넘어 **베끼면 오히려 맞는 모양**이어야 한다.
+    # 개념 정의에서 단서를 뽑아 만든다 — 베끼면 자기 개념 문장이 된다.
+    # ⚠️ 정의문 뒤에 조사를 붙이면 받침에 따라 어색해진다("…표기 기호 사전**는 것은**").
+    #    형성평가에서 겪고 고친 것과 같은 자리다 — **문장을 끊고 묻는 형태**로 쓴다.
+    #    앞머리에 정의가 들어 있으니 이 문장 하나로 답이 정해진다(지시어 규칙 통과).
     examples = ",\n    ".join(
-        f'{{"kind": "상황", "sentence": "그런 상황에서 쓰는 것이 ____ 다.", '
+        f'{{"kind": "상황", "sentence": "{_stem(c)}. 이것을 가리키는 말은 ____ 이다.", '
         f'"answer": "{c.key}", "concept": "{c.key}"}}'
         for c in missing
     )
@@ -254,6 +263,43 @@ def build_fill_prompt(
     {examples}
   ]
 }}"""
+
+
+def _stem(c: ConceptBrief) -> str:
+    """예시 문장의 앞부분 — **그 개념의 정의에서** 뽑는다.
+
+    개념명이 답이므로 단서는 정의에서 와야 한다. 정의가 없으면 개념명을 되풀이하지
+    않고 일반 문구를 쓴다(개념명을 단서에 넣으면 답이 문장에 노출돼 파서가 버린다).
+    """
+    d = (c.definition or "").strip().rstrip(".")
+    if not d:
+        return "이런 성질을 가진 것"
+    # 정의를 한 구절로 줄인다. 길면 예시가 본문처럼 보여 규칙이 묻힌다.
+    return d.split(",")[0][:40]
+
+
+async def fill_only(
+    section_title: str,
+    concepts: list[ConceptBrief],
+    grounds: str,
+) -> list[Block]:
+    """설명 없이 **문항만** 만든다 — 복습이 쓰는 문이다.
+
+    학습 화면은 설명 → 인출 순서라 인출이 설명을 근거로 받는다. 복습은 설명을
+    다시 보여주지 않으므로 근거가 원문(또는 개념 정의)이다. 설명 콜이 빠져
+    화면당 한 콜로 끝난다.
+
+    보충 프롬프트를 그대로 쓴다 — 거긴 이미 "개념마다 하나씩, 상황·정의로,
+    답은 개념명"이 못 박혀 있다. 복습이 재려는 것과 같다.
+    """
+    return await _fill(
+        section_title,
+        concepts,
+        tuple(c.key for c in concepts),
+        grounds,
+        "",
+        grounds,
+    )
 
 
 async def recall_one(

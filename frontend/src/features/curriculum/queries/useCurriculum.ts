@@ -12,6 +12,7 @@ import {
   fetchDocuments,
   fetchFormative,
   fetchLesson,
+  fetchReview,
   submitAnswer,
 } from "@/features/curriculum/api/curriculum";
 
@@ -24,6 +25,9 @@ export const curriculumKeys = {
     ["curriculum", "lesson", docId, sectionId] as const,
   formative: (docId: string, index: number) =>
     ["curriculum", "formative", docId, index] as const,
+  // days는 시연용 시계 이동. 시점마다 다른 목록이라 키에 들어가야 한다.
+  review: (docId: string, days: number) =>
+    ["curriculum", "review", docId, days] as const,
 };
 
 export function useDocuments() {
@@ -83,5 +87,16 @@ export function useAnswer(docId: string) {
       qc.invalidateQueries({ queryKey: ["curriculum", "document"] });
       qc.invalidateQueries({ queryKey: ["curriculum", "chapter"] });
     },
+  });
+}
+
+/** 복습 큐. 화면마다 문항을 만들므로 첫 호출이 느리다(화면당 1콜). */
+export function useReview(docId: string | undefined, days: number) {
+  return useQuery({
+    queryKey: curriculumKeys.review(docId ?? "", days),
+    queryFn: () => fetchReview(docId as string, days),
+    enabled: Boolean(docId),
+    // 풀고 있는 도중에 문항이 바뀌면 안 된다.
+    staleTime: Infinity,
   });
 }

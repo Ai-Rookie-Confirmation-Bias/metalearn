@@ -14,6 +14,7 @@ import { CurriculumLayout } from "@/pages/CurriculumLayout";
 import { CurriculumPage } from "@/pages/CurriculumPage";
 import { ChapterPage } from "@/pages/ChapterPage";
 import { FormativePage } from "@/pages/FormativePage";
+import { ReviewPage } from "@/pages/ReviewPage";
 import { SectionPage } from "@/pages/SectionPage";
 
 // URL 기반 페이지 매핑 지도
@@ -50,6 +51,8 @@ export const router = createBrowserRouter([
         children: [
           { index: true, element: <CurriculumPage /> },
           { path: "chapters/:index", element: <ChapterPage /> },
+          // 🔁 망각곡선이 불러온 화면들. 목차 밖이라 자료 아래 바로 둔다
+          { path: "review", element: <ReviewPage /> },
           { path: "chapters/:index/formative", element: <FormativePage /> },
           { path: "sections/:sectionId", element: <SectionPage /> },
         ],

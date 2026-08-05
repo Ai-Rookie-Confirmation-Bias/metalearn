@@ -181,6 +181,38 @@ class FormativeOut(_Camel):
     generated: bool = True
 
 
+class ReviewItem(_Camel):
+    """복습할 화면 하나 + 그 화면의 새 문항."""
+
+    section_id: str
+    title: str
+    chapter_index: int
+    chapter_title: str
+    # 회상 강도. 0.6 아래로 내려온 것들이 여기 온다
+    recall: float
+    # 마지막으로 맞힌 뒤 며칠. 화면에 "3일 전 학습"으로 쓴다
+    days_since: float
+    blocks: list[BlockOut] = []
+
+
+class ReviewOut(_Camel):
+    """[화면 5] 복습 큐 — 망각곡선이 불러온 것들.
+
+    ⚠️ **설명은 안 준다.** 복습은 잊혀가는 걸 되살리는 자리고, 설명을 다시
+    보여주면 재인이 되어 "읽었으니 안다"는 착각만 늘린다.
+
+    ⚠️ **한 번도 못 맞힌 화면은 여기 없다.** 그건 잊은 게 아니라 아직 모르는
+    것이라 처방이 다르다(보충 화면·설명 안 ⚡가 맡는다).
+    """
+
+    doc_id: str
+    # 시연용 시계 이동(일). 0이면 지금. **가짜 데이터가 아니라 진짜 곡선을
+    # 옮겨 보는 것**이라 심사에서 그대로 설명할 수 있다.
+    shifted_days: int = 0
+    total_due: int = 0
+    items: list[ReviewItem] = []
+
+
 class AnswerIn(_Camel):
     """시도 한 건. **네 출처가 전부 이 문으로 들어온다.**
 

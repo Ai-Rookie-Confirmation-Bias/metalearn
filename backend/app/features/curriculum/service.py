@@ -68,6 +68,44 @@ def _key(section: Section, profile_block: str, weak: tuple[str, ...]) -> str:
     return f"{section.section_id}|{hash(profile_block)}|{hash(weak)}"
 
 
+_review_cache: dict[str, tuple[Block, ...]] = {}
+
+
+async def build_review(section: Section, seed: int) -> tuple[Block, ...]:
+    """복습 문항 — **설명 없이 문항만.**
+
+    복습은 잊혀가는 걸 되살리는 자리다. 설명을 다시 보여주면 그건 복습이 아니라
+    재인이고, "읽었으니 안다"는 착각만 늘린다(인출 에이전트가 L1을 강등시키는
+    이유와 같다).
+
+    **문항을 새로 만든다.** 그때 그 빈칸을 다시 내면 개념이 아니라 **그 문장을
+    외웠는지**를 재게 된다. 망각곡선이 재는 건 개념 쪽이다.
+
+    seed: 그 화면의 시도 횟수. 답을 내기 전까지는 같은 문항을 보여준다 —
+    새로고침할 때마다 문항이 바뀌면 풀던 걸 잃는다. 답하면 seed가 올라
+    다음 복습에는 새 문항이 나온다.
+    """
+    key = f"{section.section_id}|{seed}"
+    if key in _review_cache:
+        return _review_cache[key]
+
+    lock = _locks.setdefault(f"r:{key}", asyncio.Lock())
+    async with lock:
+        if key in _review_cache:
+            return _review_cache[key]
+        briefs = [ConceptBrief(c.key, c.definition) for c in section.concepts]
+        # 원문이 근거다. 설명을 만들지 않으니 설명 콜이 없다(복습은 화면당 1콜).
+        grounds = section.source or "\n\n".join(c.definition for c in briefs)
+        blocks = tuple(
+            b
+            for b in await retrieval_agent.fill_only(section.title, briefs, grounds)
+            if b.type == "cloze"
+        )
+        if blocks:
+            _review_cache[key] = blocks
+        return blocks
+
+
 async def _tie_in_cloze(section: Section, exp) -> Block | None:
     """다시 설명에 붙일 빈칸 하나. 조건이 안 맞으면 None(콜을 안 쓴다)."""
     tie = next((b for b in exp.blocks if b.type == "tie_in"), None)

@@ -144,3 +144,19 @@ def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(_main())
+
+
+def test_보충_예시가_스스로_필터를_통과한다():
+    # ★ 예시가 곧 출력이다(일곱 번째). 예시가 '그런 상황에서 쓰는 것이 ____ 다.'였는데
+    # 모델이 그대로 베껴 세 개념 전부 같은 문장을 냈고, 앞 문장을 가리키는 문장이라
+    # 파서가 다 버려 0문항이 됐다. 예시는 **베끼면 오히려 맞는 모양**이어야 한다.
+    p = build_fill_prompt("모듈", CONCEPTS, CONCEPTS, "설명")
+    import json, re
+    from app.features.curriculum.blocks import parse_response
+
+    # 프롬프트 안의 예시를 그대로 응답인 척 넣어본다.
+    examples = re.findall(r'\{"kind".*?\}', p)
+    assert examples, "예시가 프롬프트에 없다"
+    raw = json.dumps({"cloze": [json.loads(e) for e in examples]}, ensure_ascii=False)
+    blocks = [b for b in parse_response(raw, CONCEPTS, "설명") if b.type == "cloze"]
+    assert len(blocks) == len(CONCEPTS), f"예시를 베끼면 {len(blocks)}개만 남는다"

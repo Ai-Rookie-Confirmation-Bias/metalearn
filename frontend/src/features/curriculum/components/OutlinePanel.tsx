@@ -130,6 +130,7 @@ export function OutlinePanel({ docId }: { docId: string }) {
   const currentSectionId = secMatch ? decodeURIComponent(secMatch[1]) : "";
   const currentChapter = chMatch ? Number(chMatch[1]) : null;
   const onFormative = pathname.endsWith("/formative");
+  const onReview = pathname.endsWith("/review");
 
   // 지금 있는 목차는 기본으로 펼친다. 절에 들어와 있으면 그 절이 속한 목차를
   // 알아야 하는데, 목록만으로는 모른다 — 그래서 목차 화면에서 온 것만 편다.
@@ -170,11 +171,18 @@ export function OutlinePanel({ docId }: { docId: string }) {
         </div>
         {/* 🔁 복습이 밀려 있으면 여기서 먼저 말한다. 목차를 다 펼쳐 봐야
             알 수 있으면 복습은 영영 안 하게 된다. */}
-        {data.sectionsDue > 0 && (
-          <p className="mt-1.5 text-[0.75rem] font-medium text-amber-700">
-            🔁 복습할 화면 {data.sectionsDue}개
-          </p>
-        )}
+        {/* 숫자만 띄우면 아무도 안 누른다 — 갈 데가 있어야 복습이 일어난다.
+            다만 **막지는 않는다**(integration은 전면 모달로 세웠다). */}
+        <Link
+          to={`${base(docId)}/review`}
+          className={clsx(
+            "mt-1.5 block text-[0.75rem] font-medium hover:underline",
+            onReview && "font-bold",
+            data.sectionsDue > 0 ? "text-amber-700" : "text-text-tertiary",
+          )}
+        >
+          {data.sectionsDue > 0 ? `🔁 복습할 화면 ${data.sectionsDue}개 →` : "🔁 복습"}
+        </Link>
       </div>
 
       <div className="flex-1 overflow-y-auto">

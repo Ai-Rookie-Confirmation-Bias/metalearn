@@ -212,3 +212,30 @@ export async function submitAnswer(args: {
   );
   return data;
 }
+
+// 복습 큐 — 망각곡선이 불러온 화면들.
+// ⚠️ 설명은 안 온다(복습이지 재학습이 아니다). 한 번도 못 맞힌 화면도 안 온다.
+export interface ReviewItem {
+  sectionId: string;
+  title: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  recall: number;
+  daysSince: number;
+  blocks: BlockOut[];
+}
+
+export interface ReviewOut {
+  docId: string;
+  shiftedDays: number; // 시연용 시계 이동. 진짜 곡선을 시간만 옮겨 본다
+  totalDue: number;
+  items: ReviewItem[];
+}
+
+export async function fetchReview(docId: string, days = 0): Promise<ReviewOut> {
+  const { data } = await apiClient.get<ReviewOut>(
+    `${base}/documents/${encodeURIComponent(docId)}/review`,
+    { params: { days } },
+  );
+  return data;
+}

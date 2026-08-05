@@ -5,10 +5,12 @@
 """
 from __future__ import annotations
 
+import time
+
 from fastapi import APIRouter, HTTPException
 
 from .blocks import ConceptBrief
-from .mastery import WEIGHT, label
+from .mastery import DAY, WEIGHT, label
 from .planner import formative_ready, weak_for_section
 from .schemas import (
     AnswerIn,
@@ -19,10 +21,16 @@ from .schemas import (
     DocumentOut,
     FormativeOut,
     LessonOut,
+    ReviewItem,
+    ReviewOut,
     SectionOut,
 )
-from .service import build_formative, build_lesson
+from .service import build_formative, build_lesson, build_review
 from .store import Chapter, Document, store, summarize, with_supplements
+
+# 한 번에 보여줄 복습 화면 수. 다 보여주면 어디부터 할지 학습자가 정해야 하고,
+# 화면마다 LLM 콜이 하나씩 붙는다.
+REVIEW_BATCH = 5
 
 router = APIRouter()
 
@@ -265,6 +273,53 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
         # 요청한 약점(weak)이 아니라 **본문에 실제로 들어간 것**을 보낸다.
         # 화면의 ⚡는 이 값이 있을 때만 뜬다.
         tied_in=list(lesson.tied_in),
+    )
+
+
+@router.get("/documents/{doc_id}/review", response_model=ReviewOut)
+async def get_review(doc_id: str, days: int = 0, limit: int = REVIEW_BATCH) -> ReviewOut:
+    """[화면 5] 복습 큐 — 망각곡선이 불러온 화면들.
+
+    `days`는 **시연용 시계 이동**이다. 첫 복습은 맞힌 뒤 2.2일에 오는데
+    발표에서 그걸 기다릴 수 없다. `recall(now)`가 원래 시각을 받게 되어 있어
+    **진짜 곡선을 시간만 옮겨** 보여준다 — 가짜 데이터가 아니라서 심사에서
+    그대로 설명할 수 있다.
+
+    문항은 **새로 만든다.** 그때 그 빈칸을 다시 내면 개념이 아니라 그 문장을
+    외웠는지를 재게 된다. 설명은 안 준다(복습이지 재학습이 아니다).
+    """
+    doc = _doc(doc_id)
+    now = time.time() + days * DAY
+
+    due = [
+        (ch, s, store.progress.of(s.section_id))
+        for ch in doc.chapters
+        for s in ch.sections
+        if store.progress.of(s.section_id).needs_review(now)
+    ]
+    # 많이 잊은 것부터. 다 보여주면 어디부터 할지 학습자가 정해야 한다.
+    due.sort(key=lambda t: t[2].recall(now))
+
+    items = []
+    for ch, section, m in due[:limit]:
+        blocks = await build_review(section, m.attempts)
+        items.append(
+            ReviewItem(
+                section_id=section.section_id,
+                title=section.title,
+                chapter_index=ch.index,
+                chapter_title=ch.title,
+                recall=round(m.recall(now), 3),
+                days_since=round((now - (m.last_success or now)) / DAY, 1),
+                blocks=[
+                    BlockOut(type=b.type, content=b.content, concept_keys=list(b.concept_keys))
+                    for b in blocks
+                ],
+            )
+        )
+
+    return ReviewOut(
+        doc_id=doc.doc_id, shifted_days=days, total_due=len(due), items=items
     )
 
 
