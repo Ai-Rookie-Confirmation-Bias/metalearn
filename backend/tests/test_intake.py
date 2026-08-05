@@ -7,9 +7,16 @@ def test_fixture_passes_validation(parsed_doc):
     assert report.ok, report.errors
 
 
-def test_unsupported_parser_version_hard_fails(parsed_doc):
+def test_any_parser_version_accepted_by_default(parsed_doc):
     doc = parsed_doc.model_copy(update={"parser_version": "9.9"})
     report = validate_document(doc, QuizGenConfig())
+    assert report.ok
+
+
+def test_version_gate_when_explicitly_configured(parsed_doc):
+    doc = parsed_doc.model_copy(update={"parser_version": "9.9"})
+    config = QuizGenConfig(supported_parser_versions=["3.0"])
+    report = validate_document(doc, config)
     assert not report.ok
     assert "파서 버전" in report.errors[0]
 

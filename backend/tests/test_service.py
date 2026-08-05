@@ -80,9 +80,12 @@ async def test_generate_bank_end_to_end(service, parsed_doc):
     assert service.llm.verification_calls >= 1
 
 
-async def test_generate_bank_rejects_bad_parser_version(service, parsed_doc):
+async def test_generate_bank_rejects_bad_version_only_when_gate_configured(service, parsed_doc):
+    from app.features.quiz.schemas import QuizGenConfig
+
     doc = parsed_doc.model_copy(update={"parser_version": "9.9"})
-    result = await service.generate_bank(uuid.uuid4(), uuid.uuid4(), doc)
+    config = QuizGenConfig(supported_parser_versions=["3.0"])
+    result = await service.generate_bank(uuid.uuid4(), uuid.uuid4(), doc, config=config)
     assert not result.report.ok
     assert result.saved == 0
 

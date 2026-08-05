@@ -9,7 +9,10 @@ from app.features.quiz.schemas import ParsedDocument, ParseReport, QuizGenConfig
 def validate_document(doc: ParsedDocument, config: QuizGenConfig) -> ParseReport:
     report = ParseReport()
 
-    if doc.parser_version not in config.supported_parser_versions:
+    if (
+        config.supported_parser_versions is not None
+        and doc.parser_version not in config.supported_parser_versions
+    ):
         report.errors.append(
             f"지원하지 않는 파서 버전: {doc.parser_version} "
             f"(지원: {config.supported_parser_versions})"

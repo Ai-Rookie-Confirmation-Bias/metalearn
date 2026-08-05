@@ -93,7 +93,8 @@ class QuizGenConfig(BaseModel):
     toc_min: int = 15
     toc_max: int = 80
     overgen_ratio: float = 1.15  # 검증 탈락 대비 과생성
-    supported_parser_versions: list[str] = ["3.0", "v3.0"]
+    # None = 모든 파서 버전 허용(기본). 특정 버전만 받으려면 리스트로 지정.
+    supported_parser_versions: list[str] | None = None
 
 
 # ── 계획 (선별·예산의 산출물, 생성 콜의 입력) ──────────────
