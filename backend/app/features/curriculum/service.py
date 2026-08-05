@@ -68,6 +68,34 @@ def _key(section: Section, profile_block: str, weak: tuple[str, ...]) -> str:
     return f"{section.section_id}|{hash(profile_block)}|{hash(weak)}"
 
 
+async def _tie_in_cloze(section: Section, exp) -> Block | None:
+    """다시 설명에 붙일 빈칸 하나. 조건이 안 맞으면 None(콜을 안 쓴다)."""
+    tie = next((b for b in exp.blocks if b.type == "tie_in"), None)
+    if tie is None or not tie.content.get("more") or not exp.tied_in:
+        return None
+    key = exp.tied_in[0]
+    # 정의는 이 화면에 없다(지난 개념이다). 다시 설명 본문이 곧 근거다.
+    return await retrieval_agent.recall_one(
+        section.title, ConceptBrief(key, ""), str(tie.content["more"])
+    )
+
+
+def _with_tie_in_cloze(blocks: tuple[Block, ...], cloze: Block | None) -> tuple[Block, ...]:
+    """빈칸을 tie_in 블록 **안에** 넣는다.
+
+    별도 블록으로 뒤에 붙이면 접힘 밖에 남아, 안 펼친 사람에게 맥락 없는 빈칸이
+    먼저 보인다. 화면이 순서를 다시 판단하지 않도록 여기서 담아 보낸다.
+    """
+    if cloze is None:
+        return blocks
+    return tuple(
+        Block(b.type, {**b.content, "cloze": dict(cloze.content)}, b.concept_keys)
+        if b.type == "tie_in"
+        else b
+        for b in blocks
+    )
+
+
 async def build_lesson(
     section: Section,
     profile_block: str = "",
@@ -113,8 +141,16 @@ async def build_lesson(
             foreign_keys=foreign_keys,
         )
 
+        # 다시 설명을 펼친 자리에 붙일 빈칸. **tie_in이 실제로 엮였을 때만** 부른다
+        # (`exp.tied_in`은 문단과 개념명이 둘 다 있어야 채워진다). 요청만 하고
+        # 안 엮인 화면에서까지 콜을 쓰면 안 쓸 문항에 돈을 쓰는 것이다.
+        blocks = _with_tie_in_cloze(
+            exp.blocks,
+            await _tie_in_cloze(section, exp),
+        )
+
         lesson = Lesson(
-            blocks=exp.blocks + ret.blocks,
+            blocks=blocks + ret.blocks,
             covered=exp.covered,
             missing=exp.missing,
             retrieval_gap=ret.gap,

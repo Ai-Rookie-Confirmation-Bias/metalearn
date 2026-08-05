@@ -243,7 +243,10 @@ def build_fill_prompt(
 2. ★ **설명이나 정의를 그대로 옮겨 적지 마라.** 문장을 복사해 이름만 비우면
    학습자는 개념이 아니라 그 문장을 외웠는지만 확인받는다. 다른 말로 다시 써라.
 3. **조사나 서술어를 비우지 마라** — 문법으로 풀려 인출이 안 된다.
-4. 문장 하나에 빈칸은 하나. concept·answer에 어느 개념인지 정확히 적는다.
+4. ★ **문장 하나로 답이 정해져야 한다.** `그런 상황에서 쓰는 것이 ____ 다`처럼
+   앞 문장을 가리키면 안 된다. 학습자는 설명을 덮고 이 문장만 본다 —
+   무엇을 묻는지가 이 문장 안에 다 들어 있어야 한다.
+5. 문장 하나에 빈칸은 하나. concept·answer에 어느 개념인지 정확히 적는다.
 
 아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
 {{
@@ -251,6 +254,29 @@ def build_fill_prompt(
     {examples}
   ]
 }}"""
+
+
+async def recall_one(
+    section_title: str,
+    concept: ConceptBrief,
+    explanation: str,
+) -> Block | None:
+    """개념 하나짜리 빈칸. **다시 설명을 펼친 자리에 붙는다.**
+
+    읽고 끝내면 "봤다"는 느낌만 남고 실제로는 안 는다 — 인출 에이전트가 L1을
+    강등시키는 이유가 그것이다. 다시 설명도 읽기라서, 읽었으면 바로 꺼내봐야
+    학습이 된다.
+
+    이 화면 개념이 아니므로 **커버리지·누락 게이트와 무관하다.** 그쪽은 이
+    화면이 자기 개념을 다 물었는지를 보는 자리고, 여기는 지난 결손을 짚는
+    자리다. 섞으면 둘 다 뜻이 흐려진다.
+
+    실패하면 None — 다시 설명 본문은 그대로 살린다.
+    """
+    blocks = await _fill(
+        section_title, [concept], (concept.key,), explanation, "", explanation
+    )
+    return next((b for b in blocks if b.type == "cloze"), None)
 
 
 async def _fill(

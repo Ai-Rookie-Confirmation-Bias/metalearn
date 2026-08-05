@@ -131,6 +131,16 @@ _TEMPLATE_MARKERS = (
     "(…",
 )
 
+# 문장이 이걸로 시작하면 **앞 문장을 가리키고 있다.**
+#
+# 실측: 다시 설명에 붙일 빈칸을 만들게 했더니 `"그런 상황에서 쓰는 것이 ____ 다."`가
+# 여섯 화면 중 넷에서 나왔다. 글자 수 가드(10자)는 통과한다 — 짧아서가 아니라
+# **"그런 상황"이 문장 안에 없어서** 못 푸는 것이다.
+#
+# 빈칸은 **혼자 서야 한다.** 설명을 덮고 답하는 자리라, 앞을 가리키면 앞을 다시
+# 봐야 하고 그러면 인출이 아니라 찾아보기가 된다.
+_DEICTIC_STARTS = ("그런", "이런", "그것", "이것", "그 ", "이 ", "위의", "앞의", "해당")
+
 
 def _sq(text: str) -> str:
     return re.sub(r"\s+", "", normalize_spaces(text))
@@ -399,8 +409,16 @@ def parse_response(
     # (그냥 안 씀)을 택한다. 실측: 본문 안 지시로는 관련 있는 절에서도 0회.
     tie_in = _clean_optional(data.get("tie_in"))
     if tie_in:
+        # `more`는 **펼쳐야 보이는 다시 설명**이다. 한 문단(text)과 필드를 나눈다 —
+        # 한 덩어리로 두면 "짚고 넘어가기"와 "다시 배우기"가 섞여 둘 다 애매해진다.
+        # 없으면 화면이 펼침 버튼을 안 띄운다(빈 서랍을 열게 하지 않는다).
+        more = _clean_optional(data.get("tie_in_more"))
         blocks.append(
-            Block("tie_in", {"text": tie_in, "label": "여기서 잠깐"}, concept_keys=all_keys)
+            Block(
+                "tie_in",
+                {"text": tie_in, "more": more or "", "label": "여기서 잠깐"},
+                concept_keys=all_keys,
+            )
         )
 
     for item in data.get("cloze") or []:
@@ -418,6 +436,9 @@ def parse_response(
             continue
         # 문맥 없이 빈칸만 있으면 답을 특정할 수 없다.
         if len(sentence.replace("____", "").strip()) < 10:
+            continue
+        # 앞 문장을 가리키는 빈칸은 혼자 못 선다(위 _DEICTIC_STARTS 참조).
+        if sentence.lstrip().startswith(_DEICTIC_STARTS):
             continue
         # 이 절과 무관한 정답이면 다른 절 문항이거나 스키마 예시를 베낀 것이다.
         if not _grounded(answer, concepts, source):

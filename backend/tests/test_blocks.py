@@ -424,3 +424,22 @@ def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(_main())
+
+
+def test_앞_문장을_가리키는_빈칸은_버린다():
+    # 실측: 다시 설명용 빈칸에서 '그런 상황에서 쓰는 것이 ____ 다.'가 6화면 중 4번.
+    # 글자 수 가드는 통과한다 — 짧아서가 아니라 '그런 상황'이 문장 안에 없어서
+    # 못 푸는 것이다. 빈칸은 설명을 덮고 답하는 자리라 혼자 서야 한다.
+    bad = [
+        {"sentence": "그런 상황에서 쓰는 것이 ____ 이다.", "answer": "XP",
+         "concept": "XP의 핵심 가치", "kind": "상황"},
+    ]
+    assert not [b for b in parse_response(_raw(cloze=bad), CONCEPTS) if b.type == "cloze"]
+
+
+def test_문장_안에_단서가_있으면_남긴다():
+    ok = [
+        {"sentence": "다섯 가지 핵심 가치를 강조하는 개발 방법론은 ____ 이다.",
+         "answer": "XP의 핵심 가치", "concept": "XP의 핵심 가치", "kind": "상황"},
+    ]
+    assert [b for b in parse_response(_raw(cloze=ok), CONCEPTS) if b.type == "cloze"]

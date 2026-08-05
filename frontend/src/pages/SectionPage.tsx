@@ -85,6 +85,68 @@ function Cloze({
   );
 }
 
+/** ⚡ 지난 결손을 짚는 자리 — 한 문단은 그냥 보이고, 다시 설명은 **펼쳐야** 보인다.
+ *
+ * 팝업으로 띄우지 않는다. 화면에 들어오자마자 "앞에서 틀렸어요"라고 물으면
+ * 학습자는 아직 아무것도 안 읽어서 필요한지 판단할 근거가 없다. 문맥이 깔린
+ * 이 자리에 접어두면, 안 눌러도 흐름이 안 끊기고 누르는 건 진짜 선택이 된다.
+ *
+ * ⚠️ 펼쳤다는 것 자체는 **숙련도에 기록하지 않는다.** 문항을 틀린 게 아니라
+ *    "다시 봤다"일 뿐인데 정답률에 섞으면 오측정이다. 아래 빈칸 결과만 올린다.
+ */
+function TieIn({
+  block,
+  tiedIn,
+  onGraded,
+}: {
+  block: BlockOut;
+  tiedIn: string[];
+  onGraded: (correct: boolean, conceptKey?: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const more = String(block.content.more ?? "");
+  const cloze = block.content.cloze as BlockOut["content"] | undefined;
+
+  return (
+    <div className="mb-8 rounded-lg border-l-4 border-accent bg-accent/5 p-4">
+      <p className="text-[0.7rem] font-semibold text-accent">
+        ⚡ {String(block.content.label ?? "여기서 잠깐")} —{" "}
+        {tiedIn.join(" · ")}을(를) 최근 틀리셔서 여기에 엮었습니다
+      </p>
+      <p className="mt-1 leading-relaxed text-text-primary">
+        {String(block.content.text ?? "")}
+      </p>
+
+      {/* 본문이 없으면 버튼도 없다 — 빈 서랍을 열게 하지 않는다. */}
+      {more && !open && (
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="mt-3 text-[0.8rem] font-semibold text-accent hover:underline"
+        >
+          {tiedIn[0]} 다시 설명 보기 ▾
+        </button>
+      )}
+
+      {more && open && (
+        <div className="mt-3 border-t border-accent/20 pt-3">
+          <p className="whitespace-pre-line leading-relaxed text-text-primary">{more}</p>
+          {/* 읽고 끝내면 "봤다"는 느낌만 남는다. 읽었으면 바로 꺼내본다. */}
+          {cloze && (
+            <ul className="mt-4">
+              <Cloze
+                block={{ type: "cloze", content: cloze, conceptKeys: [tiedIn[0]] }}
+                index={1}
+                onGraded={onGraded}
+              />
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function SectionPage() {
   const { docId = "", sectionId = "" } = useParams<{ docId: string; sectionId: string }>();
   const { data, isLoading, isError } = useLesson(docId, sectionId);
@@ -166,17 +228,7 @@ export function SectionPage() {
         </article>
       )}
 
-      {tieIn && (
-        <div className="mb-8 rounded-lg border-l-4 border-accent bg-accent/5 p-4">
-          <p className="text-[0.7rem] font-semibold text-accent">
-            ⚡ {String(tieIn.content.label ?? "여기서 잠깐")} —{" "}
-            {data.tiedIn.join(" · ")}을(를) 최근 틀리셔서 여기에 엮었습니다
-          </p>
-          <p className="mt-1 leading-relaxed text-text-primary">
-            {String(tieIn.content.text ?? "")}
-          </p>
-        </div>
-      )}
+      {tieIn && <TieIn block={tieIn} tiedIn={data.tiedIn} onGraded={grade} />}
 
       {(clozes.length > 0 || mcq) && (
         <section className="mb-8">
