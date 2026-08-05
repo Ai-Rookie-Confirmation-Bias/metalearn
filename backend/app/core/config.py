@@ -16,6 +16,11 @@ class Settings(BaseSettings):
     UPSTAGE_API_KEY: str = ""
     SOLAR_BASE_URL: str = "https://api.upstage.ai/v1"
 
+    # 교차 검증용 EXAONE (OpenAI 호환 엔드포인트 — 키가 있으면 검증 모델로 사용)
+    EXAONE_API_KEY: str = ""
+    EXAONE_BASE_URL: str = "https://api.friendli.ai/serverless/v1"
+    EXAONE_MODEL: str = "LGAI-EXAONE/EXAONE-4.0.1-32B"
+
     # CORS (프론트 dev 서버)
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
 

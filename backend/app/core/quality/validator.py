@@ -26,14 +26,20 @@ async def validate_items(
     items: list[CandidateItem],
     llm: LLMClient,
     config: QualityConfig | None = None,
+    revise_llm: LLMClient | None = None,
 ) -> list[ItemVerdict]:
+    """llm = 심판·풀이자 (교차 검증 시 생성과 다른 모델을 넣는다).
+    revise_llm = 불합격 수정 담당 (생성 성격이므로 기본은 llm이지만,
+    교차 검증 구성에선 생성 모델을 넘기는 게 자연스럽다)."""
     config = config or QualityConfig()
     verdicts = await _screen(items, llm, config)
 
     if config.enable_revise:
         failed_idx = [i for i, v in enumerate(verdicts) if not v.ok]
         if failed_idx:
-            await _revise_and_rescreen(items, verdicts, failed_idx, llm, config)
+            await _revise_and_rescreen(
+                items, verdicts, failed_idx, llm, revise_llm or llm, config
+            )
     return verdicts
 
 
@@ -95,15 +101,16 @@ async def _revise_and_rescreen(
     verdicts: list[ItemVerdict],
     failed_idx: list[int],
     llm: LLMClient,
+    revise_llm: LLMClient,
     config: QualityConfig,
 ) -> None:
-    """불합격 문항을 사유와 함께 수정시키고, 수정본을 전체 배터리로 재검사."""
+    """불합격 문항을 사유와 함께 수정시키고(revise_llm), 재검사는 llm이 한다."""
     for start in range(0, len(failed_idx), config.batch_size):
         idx_batch = failed_idx[start : start + config.batch_size]
         failed_items = [items[i] for i in idx_batch]
         reasons = [verdicts[i].reason for i in idx_batch]
 
-        raw = await llm.generate(build_revision_prompt(failed_items, reasons))
+        raw = await revise_llm.generate(build_revision_prompt(failed_items, reasons))
         revisions = parsing.parse_revisions(raw, len(idx_batch))
 
         retry_items: list[CandidateItem] = []

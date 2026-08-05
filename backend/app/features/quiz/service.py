@@ -43,13 +43,19 @@ class QuizGenerationResult:
 
 class QuizService:
     quality_config: QualityConfig = QualityConfig()  # __new__ 생성(테스트) 대비 기본값
+    verify_llm: LLMClient | None = None  # 교차 검증 모델 (없으면 생성 모델이 검증까지)
 
     def __init__(
-        self, db: Session, llm: LLMClient, quality_config: QualityConfig | None = None
+        self,
+        db: Session,
+        llm: LLMClient,
+        quality_config: QualityConfig | None = None,
+        verify_llm: LLMClient | None = None,
     ) -> None:
         self.repo = QuizRepository(db)
         self.llm = llm
         self.quality_config = quality_config or QualityConfig()
+        self.verify_llm = verify_llm
 
     # ── 배치 (파싱 완료 트리거) ──────────────────────────
 
@@ -144,7 +150,13 @@ class QuizService:
             )
             for item in checked
         ]
-        verdicts = await validate_items(candidates, self.llm, self.quality_config)
+        # 교차 검증: 심판·풀이는 verify_llm(다른 모델), 수정은 생성 모델(self.llm)
+        verdicts = await validate_items(
+            candidates,
+            self.verify_llm or self.llm,
+            self.quality_config,
+            revise_llm=self.llm,
+        )
 
         passed: list[GeneratedItem] = []
         for item, verdict in zip(checked, verdicts):

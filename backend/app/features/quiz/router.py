@@ -10,8 +10,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import get_db
+from app.core.llm.exaone import exaone_client
 from app.core.llm.solar import solar_client
+
+
+def _verify_llm():
+    """EXAONE 키가 설정돼 있으면 교차 검증 모델로 사용, 없으면 Solar 단일."""
+    return exaone_client if settings.EXAONE_API_KEY else None
 from app.features.quiz.schemas import (
     AttemptRequest,
     AttemptResponse,
@@ -43,7 +50,7 @@ class GenerateBankResponse(BaseModel):
 async def generate_bank(
     course_id: uuid.UUID, req: GenerateBankRequest, db: Session = Depends(get_db)
 ) -> GenerateBankResponse:
-    service = QuizService(db, solar_client)
+    service = QuizService(db, solar_client, verify_llm=_verify_llm())
     result = await service.generate_bank(
         course_id,
         req.document_id,

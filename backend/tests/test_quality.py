@@ -141,6 +141,16 @@ async def test_validator_skips_solve_for_unknown_types():
     assert verdicts[0].ok  # solve 미적용이라 통과
 
 
+async def test_validator_cross_model_split():
+    """교차 검증: 심판·풀이는 verify 모델, 수정은 revise 모델이 맡는다."""
+    verify = ScriptedLLM(solver_answer="false")  # 풀이 탈락 유도 → 수정 루프 진입
+    revise = ScriptedLLM()
+    await validate_items([_tf_item()], verify, revise_llm=revise)
+    assert "judge" in verify.calls and "solve" in verify.calls
+    assert verify.calls.count("revise") == 0
+    assert revise.calls == ["revise"]  # 수정 콜만 revise 모델로
+
+
 async def test_validator_mechanical_failure_revived_by_revision():
     bad = CandidateItem(
         type="trueFalse",

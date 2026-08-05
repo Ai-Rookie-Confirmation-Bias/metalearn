@@ -29,7 +29,7 @@ class MemRepo:
         MemRepo.rows = items
 
 
-async def main(n_chunks: int, budget: int) -> None:
+async def main(n_chunks: int, budget: int, verifier: str = "solar") -> None:
     doc = ParsedDocument.model_validate(json.loads(FIXTURE.read_text(encoding="utf-8")))
 
     # 앞에서 n_chunks개 조각만 사용 (비용 제한)
@@ -49,8 +49,17 @@ async def main(n_chunks: int, budget: int) -> None:
     svc = QuizService.__new__(QuizService)
     svc.repo = MemRepo()
     svc.llm = solar_client
+    svc.verify_llm = None
+    if verifier == "exaone":
+        from app.core.config import settings
+        from app.core.llm.exaone import exaone_client
 
-    print(f"조각 {len(doc.chunks)}개 · 목차당 예산 {budget}문항 — Solar 호출 시작…\n")
+        if not settings.EXAONE_API_KEY:
+            raise SystemExit("EXAONE_API_KEY가 .env에 없습니다 (UTF-8 인코딩 주의)")
+        svc.verify_llm = exaone_client
+
+    label = "생성 Solar + 검증 EXAONE (교차)" if svc.verify_llm else "Solar 단일"
+    print(f"조각 {len(doc.chunks)}개 · 목차당 예산 {budget}문항 · {label} — 호출 시작…\n")
     result = await svc.generate_bank(uuid.uuid4(), uuid.uuid4(), doc, config=config)
 
     print(f"{'=' * 60}\n저장된 문항: {result.saved}개 · 폐기: {len(result.discarded)}건\n")
@@ -68,5 +77,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--chunks", type=int, default=1, help="사용할 조각 수 (기본 1)")
     ap.add_argument("--budget", type=int, default=6, help="목차당 문항 예산 (기본 6)")
+    ap.add_argument(
+        "--verifier",
+        choices=["solar", "exaone"],
+        default="solar",
+        help="심판·풀이자 모델 (exaone = 교차 검증)",
+    )
     args = ap.parse_args()
-    asyncio.run(main(args.chunks, args.budget))
+    asyncio.run(main(args.chunks, args.budget, args.verifier))
