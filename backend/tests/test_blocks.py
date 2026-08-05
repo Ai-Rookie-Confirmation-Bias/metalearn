@@ -355,21 +355,52 @@ def test_객관식이_없어도_나머지는_살린다():
 
 
 def test_인출_누락을_잡는다():
-    # 설명에 언급만 되고 한 번도 안 꺼낸 개념은 안다/모른다를 판정할 수 없다.
-    blocks = parse_response(_raw(), CONCEPTS)  # cloze가 XP 하나뿐
-    assert retrieval_gap(blocks, CONCEPTS) == ["애자일 개발 4가지 핵심 가치"]
+    # 기본 fixture cloze는 answer='존중'(성질)이라 이름 인출이 아니다.
+    # 라벨만 세면 XP가 "물어본 것"으로 잡히지만, 오측정이므로 둘 다 누락이다.
+    blocks = parse_response(_raw(), CONCEPTS)  # cloze가 XP 성질 하나뿐
+    assert retrieval_gap(blocks, CONCEPTS) == [
+        "XP의 핵심 가치",
+        "애자일 개발 4가지 핵심 가치",
+    ]
 
 
-def test_개념마다_빈칸이_있으면_누락이_없다():
+def test_개념마다_이름_인출이_있으면_누락이_없다():
     both = [
-        {"sentence": "XP의 다섯 가치 중 하나는 ____ 이다.", "answer": "존중",
-         "concept": "XP의 핵심 가치"},
-        {"sentence": "개인과 상호작용을 중시하는 것은 ____ 이다.", "answer": "애자일",
-         "concept": "애자일 개발 4가지 핵심 가치"},
+        {
+            "sentence": "다섯 가지 핵심 가치를 강조하는 개발법은 ____ 이다.",
+            "answer": "XP의 핵심 가치",
+            "concept": "XP의 핵심 가치",
+            "kind": "상황",
+        },
+        {
+            "sentence": "개인과 상호작용을 중시하는 것은 ____ 이다.",
+            "answer": "애자일 개발 4가지 핵심 가치",
+            "concept": "애자일 개발 4가지 핵심 가치",
+            "kind": "상황",
+        },
     ]
     blocks = parse_response(_raw(cloze=both), CONCEPTS)
     assert retrieval_gap(blocks, CONCEPTS) == []
 
+
+def test_성질_빈칸만으로는_누락을_못_메운다():
+    # answer가 개념명이 아니면 라벨이 있어도 이름 인출이 아니다.
+    prop = [
+        {
+            "sentence": "XP의 핵심 가치 중 ____ 은 팀원 간 신뢰를 뜻한다.",
+            "answer": "존중",
+            "concept": "XP의 핵심 가치",
+            "kind": "성질",
+        },
+        {
+            "sentence": "개인과 상호작용을 중시하는 것은 ____ 이다.",
+            "answer": "애자일 개발 4가지 핵심 가치",
+            "concept": "애자일 개발 4가지 핵심 가치",
+            "kind": "상황",
+        },
+    ]
+    blocks = parse_response(_raw(cloze=prop), CONCEPTS)
+    assert retrieval_gap(blocks, CONCEPTS) == ["XP의 핵심 가치"]
 
 def test_프롬프트가_개념_수만큼_빈칸을_요구한다():
     p = build_prompt("절", CONCEPTS, "", "")

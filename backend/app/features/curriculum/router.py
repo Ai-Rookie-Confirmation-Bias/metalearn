@@ -225,8 +225,12 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
 
     all_keys = [k for ch in doc.chapters for s in ch.sections for k in s.concept_keys]
     weak = weak_for_section(section, store.progress.recent_wrong, all_keys)
+    # 이 화면에 없는 문서 개념 — 인출 정답이 여기 걸리면 라벨 사고로 폐기
+    foreign = tuple(k for k in all_keys if k not in section.concept_keys)
 
-    lesson = await build_lesson(section, "", weak, refresh=refresh)
+    lesson = await build_lesson(
+        section, "", weak, foreign_keys=foreign, refresh=refresh
+    )
     m = store.progress.of(section_id)
     return LessonOut(
         section_id=section.section_id,

@@ -486,13 +486,18 @@ def parse_response(
 
 
 def retrieval_gap(blocks: list[Block], concepts: list[ConceptBrief]) -> list[str]:
-    """빈칸이 한 번도 안 걸린 개념 — **인출 누락**.
+    """이름 인출이 한 번도 없는 개념 — **인출 누락**.
 
     설명에 언급되기만 하고 꺼내보지 않은 개념은 "안다/모른다"를 판정할 수
     없다. 커리큘럼을 개인화할 데이터가 그만큼 비는 것이므로 커버리지와 별개로
     따로 센다.
+
+    ⚠️ 라벨만 보고 세면 안 된다. 성질 유형은 답이 개념명이 아닌데
+    `concept` 라벨로 세면 미측정이 오측정으로 바뀐다(`retrieval_label`).
     """
-    asked = {k for b in blocks if b.type == "cloze" for k in b.concept_keys}
+    from .retrieval_label import recall_asked
+
+    asked = recall_asked(blocks, concepts)
     return [c.key for c in concepts if c.key not in asked]
 
 

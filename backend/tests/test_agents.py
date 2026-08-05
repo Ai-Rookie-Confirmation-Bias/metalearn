@@ -13,8 +13,13 @@ from app.features.curriculum.agents.explanation import (  # noqa: E402
     build_prompt,
     tied_in,
 )
-from app.features.curriculum.agents.retrieval import build_fill_prompt  # noqa: E402
+from app.features.curriculum.agents.retrieval import (  # noqa: E402
+    _levels_of,
+    build_fill_prompt,
+)
 from app.features.curriculum.blocks import Block, ConceptBrief  # noqa: E402
+from app.features.curriculum.retrieval_label import scrub_blocks  # noqa: E402
+from app.features.curriculum.retrieval_level import L1_RECALL  # noqa: E402
 
 CONCEPTS = [
     ConceptBrief("결합도", "모듈 사이의 관련 정도"),
@@ -47,6 +52,26 @@ def test_보충_예시는_빠진_개념으로_완성돼_있다():
     # 추상 자리(`"…____…"`)를 주면 모델이 그대로 낸다 — 다섯 번 겪었다.
     p = build_fill_prompt("모듈", CONCEPTS, [CONCEPTS[2]], "설명")
     assert '"answer": "팬인"' in p and '"concept": "팬인"' in p
+
+
+def test_보충은_이름_인출만_시킨다():
+    # 누락 보충은 성질로 메우면 안 된다 — 숙련도에 쓸 이름 인출이 목적이다.
+    p = build_fill_prompt("모듈", CONCEPTS, [CONCEPTS[2]], "설명")
+    assert "상황 또는 정의" in p
+    assert "성질 유형은 만들지 마라" in p
+
+
+def test_라벨_검증_뒤에도_L1_게이트가_성질_문항을_잰다():
+    # scrub이 성질 문항의 concept_keys를 비운다. 그때 정의문을 못 찾으면
+    # `assess_cloze`가 "잴 수 없으면 L2"로 올려 **정의문을 통째로 베낀 문항이
+    # 게이트를 통과한다.** 라벨은 content.concept에 남아야 한다.
+    copied = Block(
+        "cloze",
+        {"sentence": "모듈 사이의 ____ 정도", "answer": "관련", "kind": "성질"},
+        concept_keys=("결합도",),
+    )
+    assert _levels_of([copied], CONCEPTS, "") == [L1_RECALL]
+    assert _levels_of(scrub_blocks([copied], CONCEPTS), CONCEPTS, "") == [L1_RECALL]
 
 
 def test_전부_빠졌으면_전부_요구한다():

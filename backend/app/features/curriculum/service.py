@@ -73,12 +73,16 @@ async def build_lesson(
     profile_block: str = "",
     weak_concepts: tuple[str, ...] = (),
     *,
+    foreign_keys: tuple[str, ...] = (),
     refresh: bool = False,
 ) -> Lesson:
     """절의 학습 콘텐츠를 만든다(캐시됨).
 
     weak_concepts: 이 학습자가 최근 틀린 개념 중 **이 절과 이어지는 것**만.
     고르는 일은 `planner.weak_for_section`이 한다 — 여기는 조립만 하는 자리다.
+
+    foreign_keys: 문서 전체 개념 중 이 화면에 없는 것. 인출 라벨 검증이
+    "다른 화면 개념이 정답"인 문항을 버릴 때 쓴다.
 
     생성이 실패하거나 응답이 깨져도 **예외를 올리지 않는다** — 블록이 빈 Lesson을
     돌려주고 화면이 "생성하지 못했습니다"를 보여주게 한다. 절 하나가 실패했다고
@@ -102,7 +106,11 @@ async def build_lesson(
             return Lesson(blocks=(), covered=0, missing=(), retrieval_gap=())
 
         ret = await retrieval_agent.generate(
-            section.title, briefs, exp.text, section.source
+            section.title,
+            briefs,
+            exp.text,
+            section.source,
+            foreign_keys=foreign_keys,
         )
 
         lesson = Lesson(

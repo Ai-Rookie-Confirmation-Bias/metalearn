@@ -33,6 +33,14 @@
 ⚠️ 재시도 결과가 더 나쁘면 처음 것을 쓴다. 개선하려다 문항을 잃으면 손해다.
 보충은 덧붙이기라 이 위험이 없다 — 그래서 재생성이 아니라 보충으로 짰다.
 
+## 라벨 검증 (오측정 > 미측정)
+
+개수 게이트만으로는 부족하다. `concept` 라벨로 세면 "라벨 ≠ 실제 묻는 것"이
+통과한다. `retrieval_label.scrub_blocks`가 생성·보충 직후 한 번 더 거른다.
+  · 정답이 다른(화면 밖) 개념 → 폐기
+  · 성질(답이 개념명 아님) → 문항은 살리고 `concept_keys`를 비워 숙련도 오귀속 차단
+  · 누락 = **이름 인출**이 없는 개념 (성질만 있으면 미측정으로 남김 → 보충)
+
 ## 왜 게이트가 필요한가 (실측)
 
 "빈칸은 개념마다 하나씩"이라고 **프롬프트로 요구만 하고 강제가 없었다.**
@@ -58,6 +66,7 @@ from ..blocks import (
     parse_response,
     retrieval_gap,
 )
+from ..retrieval_label import scrub_blocks
 from ..retrieval_level import L1_RECALL, assess_cloze, assess_mcq, mix
 
 # L1이 이 비율을 넘으면 재시도한다. 절반이 넘으면 "정의문 시험"이나 다름없다.
@@ -161,10 +170,12 @@ def build_prompt(
    확인받는다. 같은 내용을 **다른 말로** 다시 써라.
 
 3. **kind를 넣고, 전부 같은 kind면 안 된다.**
-   "정의"  개념의 뜻을 **다른 표현으로** 풀어 묻는다
-   "상황"  그 개념이 실제로 벌어지는 **장면**을 묘사하고 이름을 묻는다
+   "정의"  개념의 뜻을 **다른 표현으로** 풀어 묻는다 — 답은 **그 개념명**
+   "상황"  그 개념이 실제로 벌어지는 **장면**을 묘사하고 이름을 묻는다 — 답은 **그 개념명**
    "성질"  개념명을 문장에 두고 그 개념의 **성질·수치·순서**를 비운다.
            답은 개념명이 아니라 설명이나 원문에 있는 말이다
+   ★ **개념마다 정의 또는 상황 중 최소 하나.** 성질은 그 위에만 추가한다.
+   정의/상황의 answer를 **다른 개념명**으로 쓰지 마라(이 화면 밖 개념도 금지).
    "정의"는 절반을 넘기지 마라.
 
 4. **조사나 서술어를 비우지 마라** — 문법으로 풀려 인출이 안 된다.
@@ -227,11 +238,12 @@ def build_fill_prompt(
 
 [규칙]
 1. **위 {len(missing)}개 개념에 대해 빈칸을 하나씩, 정확히 {len(missing)}개** 만든다.
-   다른 개념 문항은 만들지 마라.
+   다른 개념 문항은 만들지 마라. **kind는 상황 또는 정의**, answer는 **그 개념명**.
+   성질 유형은 만들지 마라 — 이름 인출이 빠진 개념만 채운다.
 2. ★ **설명이나 정의를 그대로 옮겨 적지 마라.** 문장을 복사해 이름만 비우면
    학습자는 개념이 아니라 그 문장을 외웠는지만 확인받는다. 다른 말로 다시 써라.
 3. **조사나 서술어를 비우지 마라** — 문법으로 풀려 인출이 안 된다.
-4. 문장 하나에 빈칸은 하나. concept에 어느 개념인지 정확히 적는다.
+4. 문장 하나에 빈칸은 하나. concept·answer에 어느 개념인지 정확히 적는다.
 
 아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
 {{
@@ -248,6 +260,7 @@ async def _fill(
     explanation: str,
     source_text: str,
     grounds: str,
+    foreign_keys: tuple[str, ...] = (),
 ) -> list[Block]:
     """빠진 개념의 빈칸만 받아 온다. 실패하면 빈 목록 — 기존 문항은 안 건드린다."""
     missing = [c for c in concepts if c.key in gap]
@@ -261,12 +274,14 @@ async def _fill(
     except Exception as e:  # noqa: BLE001
         print(f"[retrieval] 보충 실패 {section_title}: {type(e).__name__}: {e}")
         return []
-    # 빠진 개념 것만 받는다. 이미 있는 개념을 또 만들어 오면 버린다 —
-    # 안 그러면 한 개념에 빈칸 둘이 붙어 다른 개념 자리를 먹는다.
+    # 빠진 개념의 **이름 인출**만 받는다. 라벨 검증 후 concept_keys가 비면(성질)
+    # 또는 다른 개념이면 버린다 — 보충은 누락을 메우는 자리라 성질로는 부족하다.
     want = set(gap)
     return [
         b
-        for b in parse_response(raw, concepts, grounds)
+        for b in scrub_blocks(
+            parse_response(raw, concepts, grounds), concepts, foreign_keys=foreign_keys
+        )
         if b.type == "cloze" and set(b.concept_keys) & want
     ]
 
@@ -278,6 +293,10 @@ def _levels_of(blocks: list[Block], concepts: list[ConceptBrief], source: str) -
     for b in blocks:
         if b.type == "cloze":
             key = b.concept_keys[0] if len(b.concept_keys) == 1 else ""
+            # 성질 문항은 라벨 검증이 `concept_keys`를 비운다(숙련도 오귀속 차단).
+            # 정의문 대조는 계속 해야 하므로 남겨 둔 라벨을 쓴다 — 안 그러면
+            # 정의를 통째로 베낀 성질 문항이 "잴 수 없으면 L2"로 게이트를 통과한다.
+            key = key or str(b.content.get("concept") or "")
             out.append(assess_cloze(b.content["sentence"], defs.get(key, ""), source))
         elif b.type == "mcq":
             out.append(assess_mcq(b.content["options"], keys))
@@ -307,11 +326,19 @@ async def generate(
     concepts: list[ConceptBrief],
     explanation: str,
     source_text: str = "",
+    foreign_keys: tuple[str, ...] = (),
 ) -> RetrievalResult:
-    """인출 문항을 만들고 **스스로 재서** 품질은 다시 만들고 누락은 채운다."""
+    """인출 문항을 만들고 **스스로 재서** 품질은 다시 만들고 누락은 채운다.
+
+    foreign_keys: 이 화면에 없는 문서 개념명. 정답이 여기 걸리면 폐기한다
+    (다른 화면 개념을 이 화면 라벨에 붙이는 사고).
+    """
     best: RetrievalResult | None = None
     feedback = ""
     grounds = "\n".join(x for x in (source_text, explanation) if x)
+    # 이 화면 개념은 foreign이 아니다 — 중복되면 이름 인출로 살아야 한다.
+    section_keys = {c.key for c in concepts}
+    foreign = tuple(k for k in foreign_keys if k not in section_keys)
 
     for attempt in range(MAX_RETRY + 1):
         prompt = build_prompt(section_title, concepts, explanation, source_text, feedback)
@@ -327,9 +354,12 @@ async def generate(
         #   설명이 1차 근거다. 원문만 보면 "성질" 유형이 전부 걸린다 —
         #   실측에서 답이 `계획부터 유지보수까지`·`위에서 아래로`처럼 개념명이
         #   아닌 것들이 다 잘려 6절 중 4절이 빈칸 0개가 됐다.
-        blocks = [
-            b for b in parse_response(raw, concepts, grounds) if b.type in ("cloze", "mcq")
-        ]
+        # ★ 라벨 검증: 다른 개념이 정답이거나(폐기), 성질이면 숙련도 키를 비운다.
+        blocks = scrub_blocks(
+            [b for b in parse_response(raw, concepts, grounds) if b.type in ("cloze", "mcq")],
+            concepts,
+            foreign_keys=foreign,
+        )
         levels = _levels_of(blocks, concepts, source_text)
         result = RetrievalResult(
             blocks=tuple(blocks),
@@ -351,16 +381,25 @@ async def generate(
             break
 
     if best is None or not best.blocks:
-        return best or RetrievalResult(blocks=(), levels=mix([]), gap=())
+        return best or RetrievalResult(
+            blocks=(), levels=mix([]), gap=tuple(c.key for c in concepts)
+        )
 
     # ── 누락 보충 ──────────────────────────────────────────────────
     # 여기가 없어서 "개념마다 하나씩"이 프롬프트의 부탁으로만 남아 있었다.
     # 실측 81% → 아래 참조. 덧붙이기라 결과가 나빠질 수 없다.
+    # 성질만 있고 이름 인출이 없는 개념도 gap에 들어간다(라벨 검증 후).
     for _ in range(MAX_FILL):
         if not best.gap:
             break
         added = await _fill(
-            section_title, concepts, best.gap, explanation, source_text, grounds
+            section_title,
+            concepts,
+            best.gap,
+            explanation,
+            source_text,
+            grounds,
+            foreign_keys=foreign,
         )
         if not added:
             break  # 두 번 시켜도 같다. 그 개념은 설명에 재료가 없는 것이다
