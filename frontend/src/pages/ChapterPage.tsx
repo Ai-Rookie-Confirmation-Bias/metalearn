@@ -58,6 +58,25 @@ export function ChapterPage() {
         )}
       </header>
 
+      {/* 🔒 잠금은 평가에만. 잠겨 있어도 **입구는 보여준다** — 무엇을 향해
+          학습하는지가 보여야 진도가 의미를 갖는다. 잠금 사유는 평가 화면이 말한다. */}
+      <Link
+        to={`/curriculum/${encodeURIComponent(docId)}/chapters/${chapterIndex}/formative`}
+        className="mb-6 flex items-center justify-between rounded-lg border border-border-primary p-4 transition-colors hover:bg-bg-secondary"
+      >
+        <div>
+          <p className="font-semibold text-text-primary">
+            {data.progress >= 0.6 ? "📝" : "🔒"} 단원 평가
+          </p>
+          <p className="mt-0.5 text-[0.75rem] text-text-tertiary">
+            {data.progress >= 0.6
+              ? "화면을 가로질러 구별할 수 있는지 확인합니다"
+              : `화면을 60% 이상 학습하면 열립니다 (지금 ${pct(data.progress)})`}
+          </p>
+        </div>
+        <span className="text-[0.8rem] text-text-tertiary">→</span>
+      </Link>
+
       <h2 className="mb-3 text-sm font-bold text-text-secondary">다음 학습 순서</h2>
       <ol className="space-y-3">
         {data.sections.map((s) => (

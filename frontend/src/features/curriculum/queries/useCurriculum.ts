@@ -5,10 +5,12 @@
 // "학습 → 분석 → 커리큘럼 변경"이 눈에 보이는 게 이 화면의 목적이다.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
+import type { AttemptKind } from "@/features/curriculum/api/curriculum";
 import {
   fetchChapter,
   fetchDocument,
   fetchDocuments,
+  fetchFormative,
   fetchLesson,
   submitAnswer,
 } from "@/features/curriculum/api/curriculum";
@@ -20,6 +22,8 @@ export const curriculumKeys = {
     ["curriculum", "chapter", docId, index] as const,
   lesson: (docId: string, sectionId: string) =>
     ["curriculum", "lesson", docId, sectionId] as const,
+  formative: (docId: string, index: number) =>
+    ["curriculum", "formative", docId, index] as const,
 };
 
 export function useDocuments() {
@@ -52,14 +56,30 @@ export function useLesson(docId: string | undefined, sectionId: string | undefin
   });
 }
 
+/** 단원 평가. 잠겨 있으면 blocks가 비고 reason이 얼마나 더 해야 하는지 말한다. */
+export function useFormative(docId: string | undefined, index: number | undefined) {
+  return useQuery({
+    queryKey: curriculumKeys.formative(docId ?? "", index ?? -1),
+    queryFn: () => fetchFormative(docId as string, index as number),
+    enabled: Boolean(docId) && index !== undefined,
+    // 풀고 있는 도중에 문항이 바뀌면 안 된다.
+    staleTime: Infinity,
+  });
+}
+
 export function useAnswer(docId: string) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (args: { sectionId: string; correct: boolean; conceptKey?: string }) =>
-      submitAnswer({ docId, ...args }),
+    mutationFn: (args: {
+      sectionId: string;
+      correct: boolean;
+      conceptKey?: string;
+      kind?: AttemptKind;
+    }) => submitAnswer({ docId, ...args }),
     onSuccess: () => {
-      // 절 하나의 결과가 목차 분량과 문서 준비도까지 바꾼다. 다만 lesson은
-      // 다시 안 부른다 — 방금 읽은 설명이 답을 맞혔다고 바뀌면 안 된다.
+      // 화면 하나의 결과가 목차 분량과 문서 준비도까지 바꾼다. 다만 lesson과
+      // formative는 다시 안 부른다 — 방금 읽은 설명이나 풀고 있는 문항이
+      // 답을 맞혔다고 바뀌면 안 된다.
       qc.invalidateQueries({ queryKey: ["curriculum", "document"] });
       qc.invalidateQueries({ queryKey: ["curriculum", "chapter"] });
     },

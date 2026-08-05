@@ -174,10 +174,24 @@ async def get_formative(
     ev = await build_formative(
         chapter.title, screens, summary.weak_concepts, refresh=refresh
     )
+
+    # 문항은 화면을 가로지르는데 숙련도는 화면 단위다. **정답 개념을 가진 화면**에
+    # 기록한다 — "단원 평가에서 이 화면 개념을 틀렸다"가 정확한 뜻이다.
+    # 프론트가 고르게 두면 화면이 판단을 하게 되고, 그건 이 설계가 피하는 것이다.
+    owner = {c.key: s.section_id for s in chapter.sections for c in s.concepts}
+    fallback = chapter.sections[0].section_id if chapter.sections else ""
+
     return FormativeOut(
         **base,
         blocks=[
-            BlockOut(type=b.type, content=b.content, concept_keys=list(b.concept_keys))
+            BlockOut(
+                type=b.type,
+                content={
+                    **b.content,
+                    "sectionId": owner.get(str(b.content.get("concept") or ""), fallback),
+                },
+                concept_keys=list(b.concept_keys),
+            )
             for b in ev.blocks
         ],
         crossing=ev.crossing,

@@ -12,6 +12,7 @@ import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
 import { CurriculumPage } from "@/pages/CurriculumPage";
 import { ChapterPage } from "@/pages/ChapterPage";
+import { FormativePage } from "@/pages/FormativePage";
 import { SectionPage } from "@/pages/SectionPage";
 
 // URL 기반 페이지 매핑 지도
@@ -42,6 +43,7 @@ export const router = createBrowserRouter([
       { path: "curriculum", element: <CurriculumPage /> },
       { path: "curriculum/:docId", element: <CurriculumPage /> },
       { path: "curriculum/:docId/chapters/:index", element: <ChapterPage /> },
+      { path: "curriculum/:docId/chapters/:index/formative", element: <FormativePage /> },
       { path: "curriculum/:docId/sections/:sectionId", element: <SectionPage /> },
     ],
   },

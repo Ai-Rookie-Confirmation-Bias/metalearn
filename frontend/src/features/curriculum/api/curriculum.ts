@@ -118,6 +118,21 @@ export interface LessonOut {
   generated: boolean;
 }
 
+export interface FormativeOut {
+  docId: string;
+  chapterIndex: number;
+  chapterTitle: string;
+  // 🔒 학습은 안 잠그고 평가만 잠근다. 진도로만 — 이해도로 잠그면 못 하는
+  // 사람일수록 확인할 기회가 사라진다
+  locked: boolean;
+  reason: string; // 잠겼을 때 얼마나 더 해야 하는지. 열려 있으면 빈 문자열
+  progress: number;
+  blocks: BlockOut[];
+  crossing: number; // 화면을 가로지른 문항 수. 낮으면 인출 몰아보기와 같다
+  coveredWeak: string[]; // 이 평가가 실제로 확인하는 약점(요청이 아니라 들어간 것)
+  generated: boolean;
+}
+
 export interface AnswerOut {
   sectionId: string;
   status: MasteryStatus;
@@ -149,6 +164,16 @@ export async function fetchDocument(docId: string): Promise<DocumentOut> {
 export async function fetchChapter(docId: string, index: number): Promise<ChapterOut> {
   const { data } = await apiClient.get<ChapterOut>(
     `${base}/documents/${encodeURIComponent(docId)}/chapters/${index}`,
+  );
+  return data;
+}
+
+export async function fetchFormative(
+  docId: string,
+  index: number,
+): Promise<FormativeOut> {
+  const { data } = await apiClient.get<FormativeOut>(
+    `${base}/documents/${encodeURIComponent(docId)}/chapters/${index}/formative`,
   );
   return data;
 }
