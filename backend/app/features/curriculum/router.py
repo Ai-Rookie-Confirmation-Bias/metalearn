@@ -115,6 +115,7 @@ def get_chapter(doc_id: str, index: int) -> ChapterOut:
         raise HTTPException(404, f"목차를 찾을 수 없습니다: {index}")
     course, plans = summarize(doc, store.progress)
     summary, plan = course.chapters[index], plans[index]
+    ready, why = formative_ready(summary)
     return ChapterOut(
         doc_id=doc.doc_id,
         doc_title=doc.title,
@@ -130,6 +131,10 @@ def get_chapter(doc_id: str, index: int) -> ChapterOut:
         reason=plan.reason,
         weak_concepts=list(plan.weak_concepts),
         sections=_sections_out(chapter),
+        # 목차 마지막 항목(단원 평가)의 잠금 여부. 여기서 판정해 보내야
+        # 화면이 문턱을 알 필요가 없다. 평가 자체를 부르면 생성이 돌아 비싸다.
+        formative_ready=ready,
+        formative_reason=why,
     )
 
 

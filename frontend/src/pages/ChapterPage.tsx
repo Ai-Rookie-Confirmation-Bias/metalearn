@@ -58,25 +58,6 @@ export function ChapterPage() {
         )}
       </header>
 
-      {/* 🔒 잠금은 평가에만. 잠겨 있어도 **입구는 보여준다** — 무엇을 향해
-          학습하는지가 보여야 진도가 의미를 갖는다. 잠금 사유는 평가 화면이 말한다. */}
-      <Link
-        to={`/curriculum/${encodeURIComponent(docId)}/chapters/${chapterIndex}/formative`}
-        className="mb-6 flex items-center justify-between rounded-lg border border-border-primary p-4 transition-colors hover:bg-bg-secondary"
-      >
-        <div>
-          <p className="font-semibold text-text-primary">
-            {data.progress >= 0.6 ? "📝" : "🔒"} 단원 평가
-          </p>
-          <p className="mt-0.5 text-[0.75rem] text-text-tertiary">
-            {data.progress >= 0.6
-              ? "화면을 가로질러 구별할 수 있는지 확인합니다"
-              : `화면을 60% 이상 학습하면 열립니다 (지금 ${pct(data.progress)})`}
-          </p>
-        </div>
-        <span className="text-[0.8rem] text-text-tertiary">→</span>
-      </Link>
-
       <h2 className="mb-3 text-sm font-bold text-text-secondary">다음 학습 순서</h2>
       <ol className="space-y-3">
         {data.sections.map((s) => (
@@ -143,6 +124,60 @@ export function ChapterPage() {
             </div>
           </li>
         ))}
+
+        {/* 목차의 **마지막 항목**은 언제나 단원 평가다. 커리큘럼이 만들어지는
+            순간부터 자리를 잡고 있어야 "이 단원은 여기서 끝난다"가 보인다 —
+            끝이 안 보이면 화면이 몇 개 남았는지만 세게 된다.
+
+            🔒 **잠기는 건 여기뿐이다.** 학습 화면은 순서와 무관하게 언제나
+            열려 있다(integration 목업은 안 배운 강의에 `cursor-not-allowed`를
+            걸어뒀는데, 그쪽이 학습을 잠갔다가 이탈을 겪은 자리다).
+            잠겨 있어도 **보여준다** — 무엇을 향해 가는지가 진도의 의미다. */}
+        <li
+          className={[
+            "rounded-lg border-2 border-dashed p-4",
+            data.formativeReady ? "border-accent bg-accent/5" : "border-border-primary",
+          ].join(" ")}
+        >
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[0.7rem] font-semibold text-text-tertiary">
+                마지막 — 단원 마무리
+              </p>
+              <p className="font-semibold text-text-primary">
+                {data.formativeReady ? "📝" : "🔒"} 단원 평가
+              </p>
+            </div>
+            {!data.formativeReady && (
+              <span className="flex-shrink-0 text-[0.7rem] font-semibold text-text-tertiary">
+                잠김
+              </span>
+            )}
+          </div>
+
+          <p className="mt-2 text-[0.8rem] text-text-secondary">
+            여기까지 배운 것들을 <strong>섞어서</strong> 묻습니다. 하나씩은 알아도 같이
+            놓으면 헷갈리는 지점을 찾습니다.
+          </p>
+
+          <div className="mt-3 border-t border-border-primary pt-3">
+            {data.formativeReady ? (
+              <Link
+                to={`/curriculum/${encodeURIComponent(docId)}/chapters/${chapterIndex}/formative`}
+                className="inline-block rounded bg-primary px-3 py-1.5 text-[0.8rem] font-medium text-white hover:bg-primary-hover"
+              >
+                평가 시작하기 →
+              </Link>
+            ) : (
+              // 잠금 사유는 여기서도 말한다. 눌러야 알 수 있으면 잠김이 벌처럼
+              // 보인다. 문장은 백엔드가 만든 것을 그대로 싣는다.
+              <p className="text-[0.8rem] text-text-tertiary">
+                {data.formativeReason} · 지금{" "}
+                <strong className="text-text-secondary">{pct(data.progress)}</strong>
+              </p>
+            )}
+          </div>
+        </li>
       </ol>
     </div>
   );

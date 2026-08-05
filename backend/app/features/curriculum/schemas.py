@@ -107,6 +107,11 @@ class ChapterOut(_Camel):
     reason: str = ""
     weak_concepts: list[str] = []
     sections: list[SectionOut]
+    # 목차 마지막 항목(단원 평가)이 열렸는가. **화면이 판정하지 않는다** —
+    # 문턱을 프론트에도 두면 규칙이 두 곳에 생기고 언젠가 갈라진다.
+    formative_ready: bool = False
+    # 잠겼을 때 얼마나 더 해야 하는지. 열려 있으면 빈 문자열
+    formative_reason: str = ""
 
 
 class BlockOut(_Camel):
