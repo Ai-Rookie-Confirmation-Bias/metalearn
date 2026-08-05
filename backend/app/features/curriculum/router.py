@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
+from .blocks import ConceptBrief
 from .mastery import WEIGHT, label
-from .planner import weak_for_section
+from .planner import formative_ready, weak_for_section
 from .schemas import (
     AnswerIn,
     AnswerOut,
@@ -16,10 +17,11 @@ from .schemas import (
     ChapterBrief,
     ChapterOut,
     DocumentOut,
+    FormativeOut,
     LessonOut,
     SectionOut,
 )
-from .service import build_lesson
+from .service import build_formative, build_lesson
 from .store import Chapter, Document, store, summarize
 
 router = APIRouter()
@@ -128,6 +130,59 @@ def get_chapter(doc_id: str, index: int) -> ChapterOut:
         reason=plan.reason,
         weak_concepts=list(plan.weak_concepts),
         sections=_sections_out(chapter),
+    )
+
+
+@router.get(
+    "/documents/{doc_id}/chapters/{index}/formative", response_model=FormativeOut
+)
+async def get_formative(
+    doc_id: str, index: int, refresh: bool = False
+) -> FormativeOut:
+    """[화면 4] 단원 평가 — 화면을 가로질러 구별할 수 있는가.
+
+    **여기만 잠근다.** 학습은 절대 안 잠근다(integration이 학습을 잠갔다가
+    이탈을 겪었다). 잠금 판정은 `planner.formative_ready` — 진도로만 본다.
+    """
+    doc = _doc(doc_id)
+    chapter = doc.chapter(index)
+    if chapter is None:
+        raise HTTPException(404, f"목차를 찾을 수 없습니다: {index}")
+
+    course, _plans = summarize(doc, store.progress)
+    summary = course.chapters[index]
+    ready, reason = formative_ready(summary)
+
+    base = dict(
+        doc_id=doc.doc_id,
+        chapter_index=index,
+        chapter_title=chapter.title,
+        progress=round(summary.progress, 3),
+    )
+    if not ready:
+        # 잠긴 상태로 문항을 만들면 돈만 쓰고 안 보여준다.
+        return FormativeOut(**base, locked=True, reason=reason)
+
+    screens = [
+        (
+            s.title,
+            tuple(ConceptBrief(c.key, c.definition) for c in s.concepts),
+            store.progress.of(s.section_id).attempts,
+        )
+        for s in chapter.sections
+    ]
+    ev = await build_formative(
+        chapter.title, screens, summary.weak_concepts, refresh=refresh
+    )
+    return FormativeOut(
+        **base,
+        blocks=[
+            BlockOut(type=b.type, content=b.content, concept_keys=list(b.concept_keys))
+            for b in ev.blocks
+        ],
+        crossing=ev.crossing,
+        covered_weak=list(ev.covered_weak),
+        generated=ev.ok,
     )
 
 

@@ -150,6 +150,29 @@ class LessonOut(_Camel):
     generated: bool = True
 
 
+class FormativeOut(_Camel):
+    """[화면 4] 단원 평가 — 화면을 가로질러 구별할 수 있는가.
+
+    **학습은 안 잠그고 평가만 잠근다.** `locked`가 참이면 `blocks`는 비어 있고
+    `reason`이 얼마나 더 봐야 하는지 말한다. 진도로만 잠근다 — 이해도로 잠그면
+    못 하는 사람일수록 확인할 기회가 사라진다.
+    """
+
+    doc_id: str
+    chapter_index: int
+    chapter_title: str
+    locked: bool = False
+    # 🔒 왜 잠겼는지 + 얼마나 더 해야 하는지. 열려 있으면 빈 문자열
+    reason: str = ""
+    progress: float = 0.0
+    blocks: list[BlockOut] = []
+    # 화면을 가로지른 문항 수 / 전체. 낮으면 인출 몰아보기와 다르지 않다
+    crossing: int = 0
+    # 이 평가가 실제로 확인하는 약점 개념(요청이 아니라 문항에 들어간 것)
+    covered_weak: list[str] = []
+    generated: bool = True
+
+
 class AnswerIn(_Camel):
     """시도 한 건. **네 출처가 전부 이 문으로 들어온다.**
 

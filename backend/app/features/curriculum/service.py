@@ -25,6 +25,7 @@ import asyncio
 from dataclasses import dataclass, field
 
 from .agents import explanation as explain_agent
+from .agents import formative as formative_agent
 from .agents import retrieval as retrieval_agent
 from .blocks import Block, ConceptBrief
 from .grouping import Section
@@ -116,3 +117,69 @@ async def build_lesson(
         if lesson.ok:  # 실패한 생성을 캐시에 남기면 계속 실패한 걸 보게 된다
             _cache[key] = lesson
         return lesson
+
+
+# ── 형성평가 ────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True)
+class Formative:
+    """목차 하나의 형성평가 + 품질 지표."""
+
+    blocks: tuple[Block, ...]
+    # 화면을 가로지른 문항 수. 이게 낮으면 인출 몰아보기와 다르지 않다
+    crossing: int = 0
+    # 이 평가가 실제로 확인하는 약점 개념. 요청이 아니라 들어간 것
+    covered_weak: tuple[str, ...] = ()
+    levels: dict[str, int] = field(default_factory=dict)
+    retried: bool = False
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.blocks)
+
+
+_formative_cache: dict[str, Formative] = {}
+
+
+def _formative_key(chapter_title: str, weak: tuple[str, ...]) -> str:
+    """약점이 바뀌면 다시 만든다 — 형성평가는 **지금의 약점**을 확인하는 자리다.
+
+    진도(어느 화면을 봤는지)는 키에 안 넣는다. 넣으면 화면 하나 볼 때마다 평가가
+    새로 만들어져, 열어놓고 푸는 도중에 문항이 바뀐다.
+    """
+    return f"{chapter_title}|{hash(weak)}"
+
+
+async def build_formative(
+    chapter_title: str,
+    screens: list[tuple[str, tuple[ConceptBrief, ...], int]],
+    weak: tuple[str, ...] = (),
+    *,
+    refresh: bool = False,
+) -> Formative:
+    """목차 하나의 형성평가(캐시됨).
+
+    screens: (화면 제목, 개념들, 그 화면의 시도 횟수) — 시도 횟수가 있어야
+    **아직 안 풀어본 화면**을 우선해서 물을 수 있다(미측정 자리 메우기).
+    """
+    key = _formative_key(chapter_title, weak)
+    if not refresh and key in _formative_cache:
+        return _formative_cache[key]
+
+    lock = _locks.setdefault(f"f:{key}", asyncio.Lock())
+    async with lock:
+        if not refresh and key in _formative_cache:
+            return _formative_cache[key]
+
+        res = await formative_agent.generate(chapter_title, screens, weak)
+        out = Formative(
+            blocks=res.blocks,
+            crossing=res.crossing,
+            covered_weak=res.covered_weak,
+            levels=res.levels,
+            retried=res.retried,
+        )
+        if out.ok:
+            _formative_cache[key] = out
+        return out

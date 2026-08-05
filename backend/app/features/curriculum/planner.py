@@ -139,6 +139,33 @@ def bar(plan: ChapterPlan, width: int = 12) -> str:
     return "▓" * min(filled, width * 2)
 
 
+# 형성평가가 열리는 진도. 이 비율 이상의 화면을 봐야 "단원을 마쳤다"로 친다.
+FORMATIVE_UNLOCK = 0.6
+
+
+def formative_ready(summary: ChapterMastery) -> tuple[bool, str]:
+    """형성평가를 열어도 되는가. **잠그는 것은 평가뿐이다.**
+
+    서비스 정의: 학습은 절대 잠그지 않는다(integration이 학습을 잠갔다가 이탈을
+    겪었다). 대신 평가는 잠근다 — 안 배운 걸 묻는 시험은 측정이 아니라 좌절이다.
+
+    진도로만 본다. **이해도로 잠그면 안 된다** — 못 하는 사람일수록 확인할 기회가
+    사라져서, 도와야 할 사람에게서 도구를 뺏는 꼴이 된다.
+
+    돌려주는 문장은 화면에 그대로 나간다. 잠갔으면 **얼마나 더 해야 하는지**까지
+    말해야 한다. "잠김"만 띄우면 무엇을 하라는 건지 알 수 없다.
+    """
+    if summary.sections_total == 0:
+        return False, "이 단원에는 학습할 화면이 없습니다."
+    if summary.progress >= FORMATIVE_UNLOCK:
+        return True, ""
+    need = -(-int(summary.sections_total * FORMATIVE_UNLOCK) // 1) - summary.sections_touched
+    return False, (
+        f"단원 평가는 화면을 {FORMATIVE_UNLOCK:.0%} 이상 학습하면 열립니다. "
+        f"{max(1, need)}개 더 보시면 됩니다."
+    )
+
+
 def weak_for_section(
     section: Section, recent_wrong: list[str], all_keys: list[str]
 ) -> tuple[str, ...]:

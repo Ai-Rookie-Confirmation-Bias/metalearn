@@ -442,8 +442,13 @@ def parse_response(
             )
         )
 
-    mcq = data.get("mcq")
-    if isinstance(mcq, dict):
+    # 인출은 화면당 객관식 하나(dict)라 그 모양으로 시작했는데, 형성평가는 단원당
+    # 여러 개(list)다. 둘 다 받는다 — dict 하나면 원소 하나짜리 목록과 같다.
+    raw_mcq = data.get("mcq")
+    mcqs = [raw_mcq] if isinstance(raw_mcq, dict) else raw_mcq or []
+    for mcq in mcqs:
+        if not isinstance(mcq, dict):
+            continue
         question = _clean_optional(mcq.get("question"))
         options = [
             _clean_optional(o) for o in (mcq.get("options") or []) if _clean_optional(o)
