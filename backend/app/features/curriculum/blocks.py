@@ -393,6 +393,16 @@ def parse_response(
             Block("analogy", {"text": analogy, "label": "비유"}, concept_keys=all_keys)
         )
 
+    # 최근 틀린 개념을 지금 배우는 것과 엮어 짚는 문단. **본문과 따로 받는다** —
+    # 비유를 분리한 것과 같은 이유다. 이건 학습자 이력에서 온 정보라 "원문 사실만
+    # 써라"와 프롬프트 안에서 충돌하고, 본문 안에 섞으라고 하면 모델이 안전한 쪽
+    # (그냥 안 씀)을 택한다. 실측: 본문 안 지시로는 관련 있는 절에서도 0회.
+    tie_in = _clean_optional(data.get("tie_in"))
+    if tie_in:
+        blocks.append(
+            Block("tie_in", {"text": tie_in, "label": "여기서 잠깐"}, concept_keys=all_keys)
+        )
+
     for item in data.get("cloze") or []:
         if not isinstance(item, dict):
             continue

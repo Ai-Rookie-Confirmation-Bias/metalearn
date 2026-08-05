@@ -170,6 +170,9 @@ export function SectionPage() {
 
   const explanation = data.blocks.find((b) => b.type === "concept");
   const analogy = data.blocks.find((b) => b.type === "analogy");
+  // ⚡ 최근 틀린 개념을 엮은 문단. tiedIn이 비면 블록도 없다(백엔드가 버린다) —
+  // "AI가 나를 보고 바꿨다"고 말하려면 바뀐 본문이 실제로 있어야 하기 때문이다.
+  const tieIn = data.blocks.find((b) => b.type === "tie_in");
   const clozes = data.blocks.filter((b) => b.type === "cloze");
   const mcq = data.blocks.find((b) => b.type === "mcq");
 
@@ -223,9 +226,21 @@ export function SectionPage() {
       )}
 
       {explanation && (
-        <article className="mb-8 leading-loose whitespace-pre-line text-text-primary">
+        <article className="mb-5 leading-loose whitespace-pre-line text-text-primary">
           {String(explanation.content.text ?? "")}
         </article>
+      )}
+
+      {tieIn && (
+        <div className="mb-8 rounded-lg border-l-4 border-accent bg-accent/5 p-4">
+          <p className="text-[0.7rem] font-semibold text-accent">
+            ⚡ {String(tieIn.content.label ?? "여기서 잠깐")} —{" "}
+            {data.tiedIn.join(" · ")}을(를) 최근 틀리셔서 여기에 엮었습니다
+          </p>
+          <p className="mt-1 leading-relaxed text-text-primary">
+            {String(tieIn.content.text ?? "")}
+          </p>
+        </div>
       )}
 
       {(clozes.length > 0 || mcq) && (

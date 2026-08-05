@@ -21,11 +21,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.features.curriculum.excerpt import category_words
+from app.features.curriculum.grouping import Section
 from app.features.curriculum.mastery import (
     SHAKY,
     SOLID,
     ChapterMastery,
 )
+
+# 한 절 설명에 녹일 약점 개념 상한. 많으면 설명이 산만해져 본 내용이 묻힌다.
+MAX_TIE_IN = 2
 
 # 배분 단계. 이해도가 낮을수록 절을 더 본다.
 DEEP = "deep"  # 약함 — 절을 늘리고 약점 개념을 녹인다
@@ -132,3 +137,49 @@ def bar(plan: ChapterPlan, width: int = 12) -> str:
         return ""
     filled = max(1, round(width * plan.sections_planned / plan.sections_total))
     return "▓" * min(filled, width * 2)
+
+
+def weak_for_section(
+    section: Section, recent_wrong: list[str], all_keys: list[str]
+) -> tuple[str, ...]:
+    """이 절 설명에 녹일 약점 개념 — **이어지는 것만** 고른다.
+
+    yoonhs 지적: 약점을 목차 단위로만 넘기면 목차 하나가 절 20개라 반영이
+    20절 뒤에 나타난다. 학습자는 체감을 못 한다. 절 단위로 바로 짚어야 한다.
+
+    다만 아무 절에나 끌고 오면 설명이 산만해진다. **이어지는 지점이 있을 때만**
+    녹인다. 이어지는지는 절 묶기에서 쓰는 정보로 판단한다:
+
+      ① 선수 관계   약점이 이 절 개념의 선수이거나, 그 반대이거나
+      ② 분류어 공유  `자료 결합도`와 `제어 결합도`는 `결합도`를 공유한다
+
+    ⚠️ 이 절에 이미 들어 있는 개념은 뺀다 — 지금 배우는 걸 "지난번에 틀렸다"고
+    짚는 건 이상하다. 그건 이 절 안에서 다시 물으면 된다.
+
+    최근 것부터 본다(`recent_wrong`은 뒤가 최신).
+    """
+    if not recent_wrong:
+        return ()
+    mine = set(section.concept_keys)
+    prereq = {p for c in section.concepts for p in c.prerequisites}
+    cats = category_words(all_keys, min_share=2)
+
+    def tail(key: str) -> str:
+        parts = key.split()
+        return parts[-1] if len(parts) >= 2 and parts[-1] in cats else ""
+
+    my_tails = {t for k in mine if (t := tail(k))}
+
+    out: list[str] = []
+    for key in reversed(recent_wrong):
+        if key in mine:
+            continue  # 지금 배우는 개념이면 이 절에서 다시 물으면 된다
+        linked = key in prereq or any(
+            key in c.prerequisites for c in section.concepts
+        )
+        shares = bool((t := tail(key)) and t in my_tails)
+        if linked or shares:
+            out.append(key)
+        if len(out) >= MAX_TIE_IN:
+            break
+    return tuple(out)

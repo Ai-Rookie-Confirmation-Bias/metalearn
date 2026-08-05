@@ -74,11 +74,19 @@ class Document:
         return None
 
 
+# 최근 오답을 몇 개까지 들고 다니는가. 너무 길면 오래된 실수가 계속 따라온다.
+RECENT_WRONG = 8
+
+
 @dataclass
 class Progress:
     """한 사용자의 학습 상태. 절 id → 숙련도."""
 
     sections: dict[str, SectionMastery] = field(default_factory=dict)
+    # **방금 틀린 개념**. 절별 누적(`wrong_by_concept`)과 따로 둔다 —
+    # 누적은 "이 사람의 약점"이고 이건 "바로 다음 절에서 짚을 것"이다.
+    # 목차 단위로만 반영하면 목차 하나가 절 20개라 20절 뒤에 나타난다.
+    recent_wrong: list[str] = field(default_factory=list)
 
     def of(self, section_id: str) -> SectionMastery:
         return self.sections.get(section_id) or SectionMastery(section_id=section_id)
@@ -163,6 +171,12 @@ class Store:
 
         state = record(self.progress.of(section_id), correct, concept_key)
         self.progress.sections[section_id] = state
+        if not correct and concept_key:
+            rw = self.progress.recent_wrong
+            if concept_key in rw:
+                rw.remove(concept_key)  # 다시 틀렸으면 맨 뒤로 — 더 최근이다
+            rw.append(concept_key)
+            del rw[:-RECENT_WRONG]
         return state
 
 

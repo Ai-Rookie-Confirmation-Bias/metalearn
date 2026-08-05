@@ -44,6 +44,9 @@ class Lesson:
     # 인출 수준 분포(L1 재인 / L2 적용 / L3 구별). 화면엔 안 쓰고 품질 확인용.
     levels: dict[str, int] = field(default_factory=dict)
     retried: bool = False
+    # 이 설명이 **실제로 엮은** 약점 개념. 화면 ⚡의 근거이자, 비어 있으면
+    # ⚡를 안 띄우는 근거이기도 하다.
+    tied_in: tuple[str, ...] = ()
 
     @property
     def ok(self) -> bool:
@@ -54,20 +57,33 @@ class Lesson:
 _cache: dict[str, Lesson] = {}
 
 
-def _key(section: Section, profile_block: str) -> str:
-    return f"{section.section_id}|{hash(profile_block)}"
+def _key(section: Section, profile_block: str, weak: tuple[str, ...]) -> str:
+    """캐시 키.
+
+    약점을 키에 넣는 이유: 안 넣으면 처음 연 절이 계속 나온다. 문항을 틀리고
+    다시 열었는데 어제와 똑같은 글이면 "AI가 나를 보고 바꿨다"가 거짓이 된다.
+    반대로 약점이 그대로면 같은 글이 나와야 한다 — 열 때마다 바뀌어도 안 된다.
+    """
+    return f"{section.section_id}|{hash(profile_block)}|{hash(weak)}"
 
 
 async def build_lesson(
-    section: Section, profile_block: str = "", *, refresh: bool = False
+    section: Section,
+    profile_block: str = "",
+    weak_concepts: tuple[str, ...] = (),
+    *,
+    refresh: bool = False,
 ) -> Lesson:
     """절의 학습 콘텐츠를 만든다(캐시됨).
+
+    weak_concepts: 이 학습자가 최근 틀린 개념 중 **이 절과 이어지는 것**만.
+    고르는 일은 `planner.weak_for_section`이 한다 — 여기는 조립만 하는 자리다.
 
     생성이 실패하거나 응답이 깨져도 **예외를 올리지 않는다** — 블록이 빈 Lesson을
     돌려주고 화면이 "생성하지 못했습니다"를 보여주게 한다. 절 하나가 실패했다고
     목차 화면 전체가 죽으면 손해가 크다.
     """
-    key = _key(section, profile_block)
+    key = _key(section, profile_block, weak_concepts)
     if not refresh and key in _cache:
         return _cache[key]
 
@@ -79,7 +95,7 @@ async def build_lesson(
         briefs = [ConceptBrief(c.key, c.definition) for c in section.concepts]
 
         exp = await explain_agent.generate(
-            section.title, briefs, profile_block, section.source
+            section.title, briefs, profile_block, section.source, weak_concepts
         )
         if not exp.ok:
             return Lesson(blocks=(), covered=0, missing=(), retrieval_gap=())
@@ -95,6 +111,7 @@ async def build_lesson(
             retrieval_gap=ret.gap,
             levels=ret.levels,
             retried=ret.retried,
+            tied_in=exp.tied_in,
         )
         if lesson.ok:  # 실패한 생성을 캐시에 남기면 계속 실패한 걸 보게 된다
             _cache[key] = lesson

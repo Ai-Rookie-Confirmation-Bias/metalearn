@@ -22,12 +22,30 @@ from dataclasses import dataclass
 
 from app.core.llm.solar import solar_client
 
-from ..blocks import Block, ConceptBrief, clip_around, coverage, parse_response
+from ..blocks import (
+    Block,
+    ConceptBrief,
+    _mentions,
+    clip_around,
+    coverage,
+    parse_response,
+)
 
 _SCHEMA = """{
   "explanation": "설명 본문 (여러 문단 가능)",
   "analogy": "비유 — 쓰지 않을 거면 JSON null (문자열 \\"null\\" 아님)"
 }"""
+
+# 약점을 짚을 때만 붙는 필드. 본문(`explanation`)과 분리한다 —
+# 비유를 분리한 것과 같은 이유이고, 실측으로도 본문 안 지시는 안 먹혔다.
+_SCHEMA_WITH_TIE_IN = """{
+  "explanation": "설명 본문 (여러 문단 가능)",
+  "analogy": "비유 — 쓰지 않을 거면 JSON null (문자열 \\"null\\" 아님)",
+  "tie_in": "최근 틀린 개념을 지금 배우는 것과 엮어 짚는 문단 — 엮을 게 없으면 JSON null"
+}"""
+
+# 화면에서 이 문단에 붙는 라벨.
+TIE_IN_LABEL = "여기서 잠깐"
 
 
 @dataclass(frozen=True)
@@ -35,6 +53,8 @@ class ExplanationResult:
     blocks: tuple[Block, ...]
     covered: int
     missing: tuple[str, ...]
+    # 실제로 본문에서 엮은 약점 개념. **요청한 것이 아니라 들어간 것**이다.
+    tied_in: tuple[str, ...] = ()
 
     @property
     def text(self) -> str:
@@ -50,6 +70,7 @@ def build_prompt(
     concepts: list[ConceptBrief],
     profile_block: str = "",
     source_text: str = "",
+    weak_concepts: tuple[str, ...] = (),
 ) -> str:
     listing = "\n".join(f"- **{c.key}** — {c.definition}" for c in concepts)
 
@@ -61,6 +82,17 @@ def build_prompt(
             "  섞여 있을 수 있다. 읽어서 이해하되 잡음은 버려라.\n"
         )
     profile_part = f"\n{profile_block}\n" if profile_block else "\n"
+
+    # 이 학습자가 최근 틀린 개념 중 이 절과 이어지는 것. 없으면 아무 말도 안 한다.
+    weak_part = ""
+    if weak_concepts:
+        names = " · ".join(f"**{k}**" for k in weak_concepts)
+        weak_part = f"""5. **tie_in**: 이 학습자가 최근 {names}을(를) 틀렸다.
+   이 절 내용과 **이어지는 지점**을 찾아 한 문단으로 짚어라. 지금 배우는 것과
+   엮어서 설명해야 붙는다(따로 떼어 다시 설명하는 게 아니다).
+   개념 이름을 그대로 써라 — 학습자가 "그때 그거"라고 알아봐야 한다.
+   ⚠️ 이어지는 지점이 정말 없으면 JSON null을 넣어라. 억지로 엮으면 방해가 된다.
+"""
 
     return f"""너는 학습 콘텐츠를 쓰는 에이전트다. 아래 개념들을 한 묶음으로 설명하라.
 문항은 만들지 마라 — 다른 에이전트가 맡는다.
@@ -78,9 +110,9 @@ def build_prompt(
 3. **비유**: 이해를 돕는 장치이므로 **원문 밖에서 가져와도 된다.** 일상 경험에
    빗대라. 쓰지 않을 거면 JSON null을 넣어라.
 4. 학습자가 읽을 글이다. "정의에 따르면" 같은 메타 표현은 쓰지 마라.
-{profile_part}
+{weak_part}{profile_part}
 아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
-{_SCHEMA}"""
+{_SCHEMA_WITH_TIE_IN if weak_concepts else _SCHEMA}"""
 
 
 async def generate(
@@ -88,8 +120,11 @@ async def generate(
     concepts: list[ConceptBrief],
     profile_block: str = "",
     source_text: str = "",
+    weak_concepts: tuple[str, ...] = (),
 ) -> ExplanationResult:
-    prompt = build_prompt(section_title, concepts, profile_block, source_text)
+    prompt = build_prompt(
+        section_title, concepts, profile_block, source_text, weak_concepts
+    )
     try:
         raw = await solar_client.generate(
             prompt, response_format={"type": "json_object"}, temperature=0.3
@@ -99,7 +134,35 @@ async def generate(
         return ExplanationResult(blocks=(), covered=0, missing=())
 
     blocks = [
-        b for b in parse_response(raw, concepts, source_text) if b.type in ("concept", "analogy")
+        b
+        for b in parse_response(raw, concepts, source_text)
+        if b.type in ("concept", "analogy", "tie_in")
     ]
-    covered, missing = coverage(blocks, concepts)
-    return ExplanationResult(blocks=tuple(blocks), covered=covered, missing=tuple(missing))
+    hit = tied_in(blocks, weak_concepts)
+    if weak_concepts and not hit:
+        # 엮을 게 없다고 판단했거나 개념명을 안 썼다. 문단은 버린다 —
+        # 남겨두면 "약점을 짚었다"고 화면이 말하는데 정작 뭘 짚었는지 없다.
+        blocks = [b for b in blocks if b.type != "tie_in"]
+
+    # 커버리지는 tie_in을 빼고 센다 — 그 문단은 **지난 개념**을 짚는 자리라,
+    # 거기서 이 절 개념이 스쳤다고 "설명했다"로 세면 손실이 가려진다.
+    covered, missing = coverage([b for b in blocks if b.type != "tie_in"], concepts)
+    return ExplanationResult(
+        blocks=tuple(blocks), covered=covered, missing=tuple(missing), tied_in=hit
+    )
+
+
+def tied_in(blocks: list[Block], weak_concepts: tuple[str, ...]) -> tuple[str, ...]:
+    """**실제로** 엮인 약점 개념.
+
+    요청했다고 반영된 게 아니다. 모델은 "엮을 게 없으면 null"을 따를 수도,
+    문단은 쓰면서 개념 이름은 안 쓸 수도 있다. 화면의 ⚡는 여기서 나온 것만 보고
+    띄운다 — **이유만 있고 본문이 그대로면 거짓말**이기 때문이다.
+
+    문단과 개념명이 **둘 다** 있어야 인정한다. 개념명이 없으면 학습자가 "그때
+    그거"라고 알아볼 수 없어서 짚어준 게 아니다.
+    """
+    text = next((b.content["text"] for b in blocks if b.type == "tie_in"), "")
+    if not weak_concepts or not text:
+        return ()
+    return tuple(k for k in weak_concepts if _mentions(text, k))

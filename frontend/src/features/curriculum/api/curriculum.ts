@@ -63,13 +63,13 @@ export interface ChapterOut {
   sections: SectionOut[];
 }
 
-export type BlockType = "concept" | "analogy" | "cloze" | "mcq";
+export type BlockType = "concept" | "analogy" | "tie_in" | "cloze" | "mcq";
 
 export interface BlockOut {
   type: BlockType;
   // 종류마다 모양이 다르다:
-  //   concept {text} · analogy {text,label} · cloze {sentence,answer}
-  //   mcq {question,options,answer,explanation}
+  //   concept {text} · analogy {text,label} · tie_in {text,label}
+  //   cloze {sentence,answer} · mcq {question,options,answer,explanation}
   content: Record<string, unknown>;
   conceptKeys: string[];
 }
@@ -87,6 +87,8 @@ export interface LessonOut {
   statusLabel: string;
   blocks: BlockOut[];
   source: string; // 📎 교재 원문 그대로. 요약이 아니다
+  // ⚡ 최근 틀린 개념 중 이 설명이 **실제로 엮은 것**. 비어 있으면 ⚡를 안 띄운다
+  tiedIn: string[];
   covered: number;
   missing: string[];
   retrievalGap: string[];

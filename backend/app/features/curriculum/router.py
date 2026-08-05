@@ -8,6 +8,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from .mastery import label
+from .planner import weak_for_section
 from .schemas import (
     AnswerIn,
     AnswerOut,
@@ -128,6 +129,9 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
 
     생성이 5~7초라 캐시한다. `?refresh=true`로 다시 만들 수 있다(개발용).
     성향은 아직 안 붙인다 — 온보딩이 없으므로 중립으로 생성한다.
+
+    **최근 틀린 개념은 여기서 붙는다.** 이 절과 이어지는 것만 골라 설명
+    에이전트에 넘긴다. 캐시 키에도 들어가므로, 틀린 뒤 다시 열면 다시 생성된다.
     """
     doc = _doc(doc_id)
     found = doc.section(section_id)
@@ -135,7 +139,10 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
         raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")
     chapter, section = found
 
-    lesson = await build_lesson(section, "", refresh=refresh)
+    all_keys = [k for ch in doc.chapters for s in ch.sections for k in s.concept_keys]
+    weak = weak_for_section(section, store.progress.recent_wrong, all_keys)
+
+    lesson = await build_lesson(section, "", weak, refresh=refresh)
     m = store.progress.of(section_id)
     return LessonOut(
         section_id=section.section_id,
@@ -157,6 +164,9 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
         missing=list(lesson.missing),
         retrieval_gap=list(lesson.retrieval_gap),
         generated=lesson.ok,
+        # 요청한 약점(weak)이 아니라 **본문에 실제로 들어간 것**을 보낸다.
+        # 화면의 ⚡는 이 값이 있을 때만 뜬다.
+        tied_in=list(lesson.tied_in),
     )
 
 
