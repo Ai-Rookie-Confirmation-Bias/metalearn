@@ -69,6 +69,39 @@ def test_mechanical_check_rejects_bad_answer_index():
     assert "answerIndex" in mechanical_check(bad, CHUNK)
 
 
+def test_mechanical_check_rejects_mcq_without_exactly_4_options():
+    bad = _item()
+    bad.data["options"] = ["델파이 기법", "LOC 기법", "전문가 감정", "폭포수", "나선형"]
+    assert "4개가 아님" in mechanical_check(bad, CHUNK)
+
+
+def test_mechanical_check_rejects_cloze_answer_leaked_in_text():
+    """QUIZ_TUNING §5-②: 빈칸 정답이 지문에 그대로 보이면 문항이 무의미."""
+    item = _item(
+        type="cloze",
+        data={"segments": [
+            {"kind": "text", "text": "델파이 기법은 조정자와 전문가 의견을 종합한다. 이때 "},
+            {"kind": "blank", "answer": "조정자"},
+            {"kind": "text", "text": "가 의견을 모은다."},
+        ]},
+        evidence_sentence_ids=[0],
+    )
+    assert "지문에 노출" in mechanical_check(item, CHUNK)
+
+
+def test_mechanical_check_strips_alias_equal_to_answer():
+    item = _item(
+        type="cloze",
+        data={"segments": [
+            {"kind": "text", "text": "의견을 종합하는 사람은 "},
+            {"kind": "blank", "answer": "조정자", "aliases": ["조정자", "coordinator"]},
+        ]},
+        evidence_sentence_ids=[0],
+    )
+    assert mechanical_check(item, CHUNK) is None
+    assert item.data["segments"][1]["aliases"] == ["coordinator"]
+
+
 def test_mechanical_check_cloze_answer_must_be_in_evidence():
     item = _item(
         type="cloze",

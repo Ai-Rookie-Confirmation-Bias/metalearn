@@ -90,6 +90,45 @@ async def test_generate_bank_rejects_bad_version_only_when_gate_configured(servi
     assert result.saved == 0
 
 
+async def test_generation_parse_failure_retries_then_reports(service):
+    """QUIZ_TUNING §4: 응답 파싱 실패는 1회 재시도, 그래도 비면 리포트에 남는다."""
+    from app.features.quiz.schemas import (
+        ParsedChunk,
+        ParsedConcept,
+        ParsedDocument,
+        ParsedToc,
+        SentenceAnchor,
+    )
+
+    doc = ParsedDocument(
+        parser_version="3.0",
+        tocs=[ParsedToc(index=0, title="1장", chunk_indexes=[0])],
+        chunks=[
+            ParsedChunk(
+                index=0,
+                page_from=1,
+                page_to=1,
+                raw_text="폭포수 모형은 고전적 생명 주기 모형이다.",
+                sentences=[SentenceAnchor(start=0, end=22)],
+                concepts=[ParsedConcept(name="폭포수 모형", definition="고전적 모형")],
+            )
+        ],
+    )
+
+    class GarbageLLM(FakeLLM):
+        async def generate(self, prompt: str, **kwargs: object) -> str:
+            if "출제 검수자" in prompt:
+                return await super().generate(prompt)
+            self.generation_calls += 1
+            return "JSON이 아닌 잡담"
+
+    service.llm = GarbageLLM()
+    result = await service.generate_bank(uuid.uuid4(), uuid.uuid4(), doc)
+    assert service.llm.generation_calls == 2  # 재시도 1회
+    assert result.saved == 0
+    assert any("파싱 실패" in d for d in result.discarded)
+
+
 async def test_session_and_attempt_flow(service, parsed_doc):
     course_id, document_id = uuid.uuid4(), uuid.uuid4()
     await service.generate_bank(course_id, document_id, parsed_doc)

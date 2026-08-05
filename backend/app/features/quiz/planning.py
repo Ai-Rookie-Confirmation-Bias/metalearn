@@ -24,7 +24,10 @@ def classify_form(definition: str, evidence_text: str) -> ContentForm:
     docs/QUIZ.md §2-⑤ 표의 판정 신호를 그대로 코드로 옮긴 것.
     """
     text = f"{definition} {evidence_text}"
-    if re.search(r"(?:→|➔|->)[^→➔\n]{1,40}(?:→|➔|->)", text) or re.search(r"단계|순서(?:로|대로)", text):
+    # sequence는 근거 원문에 실제 절차 나열(화살표류 구분자 2회 이상: A→B→C)이
+    # 있을 때만. "단계"·"순서" 키워드 매칭은 개념 이름만으로 오분류를 일으켜 제거
+    # (예: "개발 단계별 인월 수" — docs/QUIZ_TUNING.md §5-①).
+    if len(re.findall(r"(?:→|➔|▶|->)", evidence_text)) >= 2:
         return "sequence"
     # 나열: 쉼표/가운뎃점 구분 항목 3개 이상, 혹은 "N가지" 패턴
     if re.search(r"\d+\s*가지", text) or len(re.findall(r"[,·]", evidence_text)) >= 3:

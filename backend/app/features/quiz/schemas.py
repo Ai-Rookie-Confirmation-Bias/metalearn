@@ -15,7 +15,8 @@ ContentForm = Literal["definition", "enumeration", "sequence", "contrast"]
 FORM_TYPE_CANDIDATES: dict[ContentForm, list[QuizType]] = {
     "definition": ["shortAnswer", "mcq", "trueFalse"],
     "enumeration": ["mcq"],
-    "sequence": ["cloze"],
+    # cloze 단일 강제였으나, cloze가 완전일치 채점에 가장 취약해 mcq를 대안으로 허용
+    "sequence": ["cloze", "mcq"],
     "contrast": ["trueFalse", "mcq"],
 }
 

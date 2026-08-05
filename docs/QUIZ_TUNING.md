@@ -128,6 +128,24 @@ cloze가 강제된다. 설정값(`type_ratio` = mcq 0.4 / cloze 0.25)과 정반�
 
 ---
 
+## 5.5 후속 처리 완료 (08-05, 웹 세션)
+
+§5의 ①②③ 모두 코드로 반영했다:
+
+- **① classify_form**: "단계|순서" 키워드 매칭 제거 → 근거 원문에 화살표류(→▶) 구분자
+  2회 이상일 때만 `sequence`. 추가로 `sequence → ["cloze","mcq"]`로 후보를 넓혀 cloze
+  강제를 해소. 픽스처 기준 오분류 4건 전부 해소, cloze 비중 6/6 → 1/6.
+- **② mechanical_check**: mcq 선지 정확히 4개 강제(≠4 폐기), cloze 정답/별칭이 지문
+  text에 노출되면 폐기, answer와 동일한 alias 자동 정리.
+- **③ 생성 실패**: 응답 파싱 실패 시 `logger.warning` + 조각 단위 1회 재시도, 그래도
+  비면 리포트(`discarded`)에 "생성 응답 파싱 실패"로 명시 — 조용한 실패 제거.
+
+회귀 테스트로 고정: `test_classify_form_does_not_overfire_sequence`,
+`test_mechanical_check_rejects_cloze_answer_leaked_in_text`,
+`test_generation_parse_failure_retries_then_reports` 외 (총 42개 통과).
+
+→ 다음 스모크 실행에서 "저장분 중 실사용 가능 비율"이 실제로 오르는지 확인 필요.
+
 ## 6. 재현 방법
 
 ```bash

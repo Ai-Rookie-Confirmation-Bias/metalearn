@@ -15,6 +15,19 @@ def test_classify_form():
     assert classify_form("조정자와 전문가 의견을 종합하는 기법", "델파이 기법이다") == "definition"
 
 
+def test_classify_form_does_not_overfire_sequence():
+    """QUIZ_TUNING §5-① 오분류 회귀: '단계' 키워드만으로 sequence가 되면 안 된다."""
+    assert (
+        classify_form(
+            "LOC 기법을 보완하는 방법으로 생명 주기 각 단계별로 소요되는 인월 수를 산정",
+            "개발 단계별 인월 수 (Effort Per Task) : LOC 기법 보완",
+        )
+        != "sequence"
+    )
+    # 화살표 1개는 절차 나열이 아님 (인과 표시 등)
+    assert classify_form("", "델파이 기법 → 전문가 감정 기법의 편견 보완") != "sequence"
+
+
 def test_every_planned_type_is_a_form_candidate(parsed_doc):
     for order in _plan(parsed_doc):
         for plan in order.concept_plans:

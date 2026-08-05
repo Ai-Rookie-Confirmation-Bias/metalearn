@@ -103,10 +103,23 @@ class QuizService:
     async def _generate_and_verify(
         self, order: ChunkWorkOrder, chunk, stem_patterns, result: QuizGenerationResult
     ) -> list[GeneratedItem]:
-        raw = await self.llm.generate(
-            build_generation_prompt(order, chunk, stem_patterns)
-        )
-        items = generation.parse_generation_response(raw)
+        # LLM 응답 1회 실패(파싱 불가·빈 응답)는 "만들 문항 없음"과 다르다 —
+        # 조각 단위 1회 재시도 후에도 비면 리포트에 남긴다 (QUIZ_TUNING §4).
+        prompt = build_generation_prompt(order, chunk, stem_patterns)
+        items: list[GeneratedItem] = []
+        for attempt in range(2):
+            raw = await self.llm.generate(prompt)
+            items = generation.parse_generation_response(raw)
+            if items:
+                break
+            logger.warning(
+                "조각 #%s 생성 응답에서 문항 0개 (시도 %d/2)", chunk.index, attempt + 1
+            )
+        if not items and order.concept_plans:
+            result.discarded.append(
+                f"조각 #{chunk.index}: 생성 응답 파싱 실패 — 재시도 후에도 문항 0개"
+            )
+            return []
 
         # 기계 검사 (코드) — 심판 콜 전에 싸게 거른다
         checked: list[GeneratedItem] = []

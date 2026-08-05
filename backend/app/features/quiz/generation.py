@@ -93,20 +93,33 @@ def mechanical_check(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
     if item.type == "mcq":
         options = d.get("options")
         idx = d.get("answerIndex")
-        if not isinstance(options, list) or len(options) < 2:
-            return "mcq 선지 부족"
+        if not isinstance(options, list) or len(options) != 4:
+            return "mcq 선지가 4개가 아님"
         if not isinstance(idx, int) or not (0 <= idx < len(options)):
             return "mcq answerIndex 불량"
         if len(set(map(str, options))) != len(options):
             return "mcq 선지 중복"
     elif item.type == "cloze":
-        blanks = [s for s in d.get("segments", []) if isinstance(s, dict) and s.get("kind") == "blank"]
+        segments = [s for s in d.get("segments", []) if isinstance(s, dict)]
+        blanks = [s for s in segments if s.get("kind") == "blank"]
         if not blanks:
             return "cloze에 빈칸 없음"
+        text_norm = re.sub(
+            r"\s+", "", " ".join(str(s.get("text", "")) for s in segments if s.get("kind") == "text")
+        )
         for b in blanks:
             ans = re.sub(r"\s+", "", str(b.get("answer", "")))
             if not ans or ans not in evidence_norm:
                 return f"cloze 정답 '{b.get('answer')}'이 근거 문장에 없음"
+            # answer와 동일한 alias 정리 (프롬프트로 못 막는 중복 — QUIZ_TUNING §5-②)
+            aliases = [
+                a for a in b.get("aliases", []) if re.sub(r"\s+", "", str(a)) != ans
+            ]
+            b["aliases"] = aliases
+            # 정답(또는 별칭)이 지문에 그대로 보이면 문항이 무의미 — 폐기
+            for leak in [ans, *(re.sub(r"\s+", "", str(a)) for a in aliases)]:
+                if len(leak) >= 2 and leak in text_norm:
+                    return f"cloze 정답 '{b.get('answer')}'이 지문에 노출됨"
     elif item.type == "shortAnswer":
         if not d.get("prompt") or not d.get("accepted"):
             return "shortAnswer prompt/accepted 누락"
