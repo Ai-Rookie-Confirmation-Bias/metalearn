@@ -67,6 +67,10 @@ export interface SectionOut {
   recall: number;
   needsReview: boolean; // 🔁 맞힌 적 있는데 잊혀가는 절
   byKind: Partial<Record<AttemptKind, number>>;
+  // ↻ 반복해서 틀린 선수 개념 때문에 **우리가 끼운 보충 화면**.
+  // 교재에 원래 있던 화면과 구분해 보여준다 — 안 그러면 원문이라고 오해한다.
+  // 진도 분모에는 안 들어간다(백엔드에서 이미 빠져 나온다).
+  inserted: boolean;
 }
 
 export interface ChapterOut {

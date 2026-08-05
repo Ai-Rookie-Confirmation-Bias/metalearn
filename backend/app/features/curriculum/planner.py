@@ -19,10 +19,11 @@ DB·LLM 비의존. **여기가 "AI가 나를 보고 바꿨다"의 실체다.**
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, replace
 
 from app.features.curriculum.excerpt import category_words
-from app.features.curriculum.grouping import Section
+from app.features.curriculum.grouping import Concept, Section
 from app.features.curriculum.mastery import (
     SHAKY,
     SOLID,
@@ -31,6 +32,16 @@ from app.features.curriculum.mastery import (
 
 # 한 절 설명에 녹일 약점 개념 상한. 많으면 설명이 산만해져 본 내용이 묻힌다.
 MAX_TIE_IN = 2
+
+# ── 보충 화면 삽입 ────────────────────────────────────────────────
+# 몇 번 틀려야 화면을 하나 끼우나. 한두 번은 설명 안 tie_in으로 짚고 넘어간다 —
+# **한 번 틀렸다고 화면을 만들면 실수 한 번이 진도를 막는다.** 절에 MIN_WEIGHT를
+# 걸고 목차에 judged를 건 것과 같은 원리다: 측정이 부족하면 판정하지 않는다.
+INSERT_AFTER_WRONG = 3
+# 목차 하나에 끼울 수 있는 보충 화면 수. 넘으면 보충이 본 내용을 덮는다.
+MAX_INSERT_PER_CHAPTER = 2
+# 보충 화면 하나에 담을 개념 수. 결손을 짚는 자리라 원래 화면(3)보다 좁게 본다.
+SUPPLEMENT_SIZE = 2
 
 # 배분 단계. 이해도가 낮을수록 절을 더 본다.
 DEEP = "deep"  # 약함 — 절을 늘리고 약점 개념을 녹인다
@@ -163,6 +174,96 @@ def formative_ready(summary: ChapterMastery) -> tuple[bool, str]:
     return False, (
         f"단원 평가는 화면을 {FORMATIVE_UNLOCK:.0%} 이상 학습하면 열립니다. "
         f"{max(1, need)}개 더 보시면 됩니다."
+    )
+
+
+def supplement_sections(
+    sections: Sequence[Section],
+    wrong_by_concept: Mapping[str, int],
+    pool: Mapping[str, Concept],
+) -> list[Section]:
+    """원문 화면 목록 → **보충 화면이 끼워진 목록.**
+
+    반복해서 틀린 개념이 다음 화면의 **선수**이면, 그 화면 바로 앞에 그 개념만
+    담은 화면을 하나 끼운다. 결손을 안고 다음 개념으로 넘어가면 거기서도 틀리고,
+    그게 쌓이면 어디서부터 막혔는지 학습자가 못 찾는다.
+
+    ## 단원은 만들지 않는다
+
+    파싱팀 `origin: inserted`(**단원** 삽입)를 거절한 건 그대로다 — 목차 목록이
+    바뀌면 "목차는 고정"이 깨진다. **화면은 다르다.** 1단원이 1.29에서 1.30이
+    되는 건 목차가 안 바뀐 것이고, 담는 개념도 이미 문서 안에 있는 것이라
+    없던 내용을 지어내지 않는다.
+
+    ## 순수 함수다
+
+    같은 상태면 같은 결과가 나와야 한다. 화면을 새로고침할 때마다 보충이
+    생겼다 사라지면 학습자는 자기가 뭘 보고 있는지 알 수 없다. 그래서
+    `section_id`도 개념명에서 결정적으로 만든다(`supp::개념명`) — 진도 기록이
+    붙어 있어야 다시 열어도 이어진다.
+
+    ⚠️ 진도 분모에는 안 들어간다(`Section.origin` → `chapter_summary`).
+       끼울수록 진도가 뒤로 가면 학습을 한 사람이 벌을 받는다.
+
+    wrong_by_concept: 문서 전체에서 개념별로 틀린 횟수.
+    pool: 개념명 → 개념. **이 목차 밖 개념도 들어 있어야 한다** — 선수는 앞
+          목차에 있는 경우가 흔하다.
+    """
+    out: list[Section] = []
+    used: set[str] = set()
+    inserted = 0
+
+    for section in sections:
+        if inserted < MAX_INSERT_PER_CHAPTER:
+            mine = set(section.concept_keys)
+            # 이 화면의 선수 중, 반복해서 틀렸고, 아직 안 짚은 것.
+            picks = [
+                key
+                for c in section.concepts
+                for key in c.prerequisites
+                if key not in mine
+                and key not in used
+                and key in pool
+                and wrong_by_concept.get(key, 0) >= INSERT_AFTER_WRONG
+            ]
+            # 같은 화면을 위한 보충은 **하나로 묶는다.** 개념마다 화면을 만들면
+            # 목차가 보충으로 뒤덮인다.
+            picks = list(dict.fromkeys(picks))[:SUPPLEMENT_SIZE]
+            if picks:
+                used.update(picks)
+                inserted += 1
+                out.append(_supplement(picks, pool, wrong_by_concept, section, len(out)))
+
+        out.append(replace(section, order=len(out)))
+
+    return out
+
+
+def _supplement(
+    keys: list[str],
+    pool: Mapping[str, Concept],
+    wrong_by_concept: Mapping[str, int],
+    before: Section,
+    order: int,
+) -> Section:
+    """보충 화면 하나. 제목과 이유는 규칙이 쓴다 — LLM이 아니라."""
+    concepts = tuple(pool[k] for k in keys)
+    head = keys[0]
+    times = wrong_by_concept.get(head, 0)
+    label = head if len(keys) == 1 else f"{head} 외 {len(keys) - 1}개"
+    return Section(
+        title=f"{label} 다시 보기",
+        concepts=concepts,
+        # 화면에 그대로 나간다. **왜 여기 있는지**를 말해주지 않으면
+        # 교재에 원래 있던 내용이라고 오해한다.
+        reason=(
+            f"'{head}'을(를) {times}번 틀리셨습니다. "
+            f"다음 화면 '{before.title}'의 선수 개념이라 먼저 짚고 갑니다."
+        ),
+        order=order,
+        source="\n\n".join(c.definition for c in concepts if c.definition),
+        section_id=f"supp::{head}",
+        origin="inserted",
     )
 
 

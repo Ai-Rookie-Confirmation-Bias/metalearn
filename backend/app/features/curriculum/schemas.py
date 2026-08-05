@@ -88,6 +88,9 @@ class SectionOut(_Camel):
     needs_review: bool = False  # 🔁 복습 대상
     # 출처별 푼 문항 수. "진단 2 · 학습 5 · 복습 1"로 쓴다
     by_kind: dict[str, int] = {}
+    # ↻ 우리가 끼운 보충 화면. 교재에 원래 있던 화면과 **구분해서** 보여준다 —
+    # 안 그러면 학습자가 원문에 있던 내용이라고 오해한다. 진도 분모에도 안 든다.
+    inserted: bool = False
 
 
 class ChapterOut(_Camel):

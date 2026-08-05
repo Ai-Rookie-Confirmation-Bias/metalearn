@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 from .adapters.parsing_tree import document_from_tree
@@ -31,10 +31,10 @@ from .mastery import (
 )
 from .models import Chapter, Document
 from .parsing_md import parse
-from .planner import ChapterPlan, plan_course
+from .planner import ChapterPlan, plan_course, supplement_sections
 
 # 재export — router·벤치가 store에서 Document를 가져가던 경로 유지
-__all__ = ["Chapter", "Document", "Progress", "Store", "build_document", "store", "summarize"]
+__all__ = ["Chapter", "Document", "Progress", "Store", "build_document", "store", "summarize", "with_supplements"]
 
 FIXTURE_DIR = Path(
     os.getenv("CURRICULUM_FIXTURES", Path(__file__).resolve().parents[3] / "tests/fixtures")
@@ -52,6 +52,19 @@ class Progress:
 
     def of(self, section_id: str) -> SectionMastery:
         return self.sections.get(section_id) or SectionMastery(section_id=section_id)
+
+    def wrong_by_concept(self) -> dict[str, int]:
+        """개념별 오답 횟수 — **화면을 넘나들며** 누적한다.
+
+        보충 화면 삽입이 이걸 본다. 목차 단위 집계(`ChapterMastery.weak_concepts`)로는
+        안 되는 이유: 선수 개념은 앞 목차에 있는 게 흔한데, 목차별로 끊어 세면
+        1단원에서 틀린 게 3단원 보충의 근거가 되지 못한다.
+        """
+        out: dict[str, int] = {}
+        for state in self.sections.values():
+            for key, n in state.wrong_by_concept.items():
+                out[key] = out.get(key, 0) + n
+        return out
 
 
 def build_document(md_path: Path) -> Document:
@@ -98,6 +111,29 @@ def build_document_from_tree(path: Path) -> Document:
 
 
 CARRY_LIMIT = 3
+
+
+def with_supplements(doc: Document, progress: Progress) -> Document:
+    """보충 화면이 끼워진 문서.
+
+    **파싱이 준 문서는 안 건드린다.** 읽을 때마다 다시 계산한다 —
+    `supplement_sections`가 순수 함수라 같은 상태면 같은 결과가 나오고,
+    보충이 생기고 사라지는 시점이 오답 누적 하나로만 정해진다.
+
+    개념 풀에 **문서 전체**를 넣는다. 선수는 앞 목차에 있는 경우가 흔해서
+    목차 안에서만 찾으면 정작 필요한 걸 못 찾는다.
+    """
+    wrong = progress.wrong_by_concept()
+    if not wrong:
+        return doc
+    pool = {c.key: c for ch in doc.chapters for s in ch.sections for c in s.concepts}
+    return replace(
+        doc,
+        chapters=tuple(
+            replace(ch, sections=tuple(supplement_sections(ch.sections, wrong, pool)))
+            for ch in doc.chapters
+        ),
+    )
 
 
 def summarize(doc: Document, progress: Progress) -> tuple[CourseMastery, list[ChapterPlan]]:

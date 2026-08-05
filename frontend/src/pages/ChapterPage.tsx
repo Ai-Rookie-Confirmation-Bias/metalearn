@@ -5,6 +5,7 @@
 //
 // 채점은 여기서 안 한다 — 화면 상세에서 실제로 꺼내보고 그 결과가 올라온다.
 import { Link, useParams } from "react-router-dom";
+import { clsx } from "clsx";
 
 import { Bar, ModeBadge, Reason, StatusBadge, pct } from "@/features/curriculum/components/bits";
 import { useChapter } from "@/features/curriculum/queries/useCurriculum";
@@ -61,11 +62,25 @@ export function ChapterPage() {
       <h2 className="mb-3 text-sm font-bold text-text-secondary">다음 학습 순서</h2>
       <ol className="space-y-3">
         {data.sections.map((s) => (
-          <li key={s.sectionId} className="rounded-lg border border-border-primary p-4">
+          <li
+            key={s.sectionId}
+            className={clsx(
+              "rounded-lg border p-4",
+              // 보충 화면은 교재에 원래 있던 화면이 아니다. 같은 모양으로 두면
+              // 원문이라고 오해한다 — 왜 여기 있는지는 아래 reason이 말한다.
+              s.inserted
+                ? "border-violet-300 bg-violet-50/40"
+                : "border-border-primary",
+            )}
+          >
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[0.7rem] font-semibold text-text-tertiary">
-                  {s.order + 1}번째 화면
+                  {s.inserted ? (
+                    <span className="text-violet-700">↻ 보충 화면 · 진도에 안 들어갑니다</span>
+                  ) : (
+                    <>{s.order + 1}번째 화면</>
+                  )}
                 </p>
                 <p className="font-semibold text-text-primary">{s.title}</p>
                 <p className="mt-0.5 text-[0.75rem] text-text-tertiary">

@@ -22,16 +22,22 @@ from .schemas import (
     SectionOut,
 )
 from .service import build_formative, build_lesson
-from .store import Chapter, Document, store, summarize
+from .store import Chapter, Document, store, summarize, with_supplements
 
 router = APIRouter()
 
 
 def _doc(doc_id: str) -> Document:
+    """이 자료 — **보충 화면이 끼워진 상태로.**
+
+    파싱이 준 문서(`store.documents`)는 그대로 두고 읽을 때 계산한다. 순수
+    함수라 같은 상태면 같은 결과가 나오고, 어느 엔드포인트로 들어와도 같은
+    화면 목록을 본다. 여기 한 곳만 지나면 목차·학습·평가·채점이 다 따라온다.
+    """
     doc = store.documents.get(doc_id)
     if doc is None:
         raise HTTPException(404, f"자료를 찾을 수 없습니다: {doc_id}")
-    return doc
+    return with_supplements(doc, store.progress)
 
 
 def _sections_out(chapter: Chapter) -> list[SectionOut]:
@@ -54,6 +60,9 @@ def _sections_out(chapter: Chapter) -> list[SectionOut]:
                 recall=round(m.recall(), 3),
                 needs_review=m.needs_review(),
                 by_kind=dict(m.by_kind),
+                # 우리가 끼운 보충 화면인가. 화면이 구분해 보여줘야 학습자가
+                # 교재에 원래 있던 내용이라고 오해하지 않는다.
+                inserted=s.inserted,
             )
         )
     return out
@@ -79,7 +88,8 @@ def get_document(doc_id: str) -> DocumentOut:
         readiness=course.readiness,
         understanding=course.understanding,
         complete=course.complete,
-        sections_total=sum(len(c.sections) for c in doc.chapters),
+        # 보충 화면은 빼고 센다 — 진도 분모와 같은 기준이어야 한다.
+        sections_total=sum(c.sections_total for c in course.chapters),
         remaining_sections=course.remaining_sections,
         sections_due=course.sections_due,
         estimated_minutes=course.estimated_minutes(),

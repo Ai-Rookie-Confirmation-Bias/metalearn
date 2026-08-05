@@ -14,6 +14,7 @@ import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { clsx } from "clsx";
 import {
+  ArrowUUpLeftIcon,
   ArrowsClockwiseIcon,
   CaretDownIcon,
   CaretUpIcon,
@@ -31,6 +32,10 @@ const base = (docId: string) => `/curriculum/${encodeURIComponent(docId)}`;
 
 /** 화면 하나의 상태 아이콘. 색과 모양은 백엔드 판정을 그대로 옮긴 것이다. */
 function SectionIcon({ s }: { s: SectionOut }) {
+  // 보충 화면은 상태보다 **출처**가 먼저다 — 왜 여기 있는지가 안 보이면
+  // 교재에 원래 있던 화면이라고 오해한다.
+  if (s.inserted && s.attempts === 0)
+    return <ArrowUUpLeftIcon weight="bold" className="shrink-0 text-lg text-violet-600" />;
   if (s.needsReview)
     return <ArrowsClockwiseIcon weight="bold" className="shrink-0 text-lg text-amber-600" />;
   if (s.status === "solid")
@@ -69,6 +74,9 @@ function ChapterBody({
             className={clsx(
               "flex items-center gap-2.5 px-6 py-2 transition-colors hover:bg-bg-secondary",
               active && "bg-accent/5",
+              // 보충 화면은 살짝 들여 쓴다 — 원래 목차의 한 줄이 아니라
+              // **앞 화면을 위해 끼운 것**이라는 게 눈으로 읽혀야 한다.
+              s.inserted && "border-l-2 border-violet-300 bg-violet-50/40 pl-[22px]",
             )}
           >
             <SectionIcon s={s} />
