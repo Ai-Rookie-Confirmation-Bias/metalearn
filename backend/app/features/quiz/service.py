@@ -1,7 +1,7 @@
 """[3.Service] 문제 생성 배치 + 서빙 로직 (docs/QUIZ.md §1 파이프라인).
 
-배치: 수신검증 → 선별 → 계획 → 조각별 생성(LLM) → 기계검사 → 심판(LLM)
-      → 재생성 1회 → verified만 저장(전체 교체).
+배치: 수신검증 → 선별 → 계획 → 조각별 생성(LLM) → core/quality 검증
+      (기계검사 → 심판 → 풀이 왕복 → 불합격 수정 1회) → verified만 저장(전체 교체).
 서빙: DB 조회만 — LLM 호출 없음.
 """
 import logging
@@ -10,11 +10,12 @@ import uuid
 from sqlalchemy.orm import Session
 
 from app.core.llm.base import LLMClient
+from app.core.quality import CandidateItem, QualityConfig, validate_items
 from app.features.quiz import generation, grading, serving
 from app.features.quiz.intake import validate_document
 from app.features.quiz.models import QuizItem
 from app.features.quiz.planning import plan_document
-from app.features.quiz.prompts import build_generation_prompt, build_verification_prompt
+from app.features.quiz.prompts import build_generation_prompt
 from app.features.quiz.repository import QuizRepository
 from app.features.quiz.schemas import (
     AttemptResponse,
@@ -32,20 +33,23 @@ from app.features.quiz.selection import select_chunk
 
 logger = logging.getLogger(__name__)
 
-VERIFY_BATCH_SIZE = 5
-
 
 class QuizGenerationResult:
     def __init__(self, report: ParseReport) -> None:
         self.report = report
         self.saved = 0
-        self.discarded: list[str] = []  # "개념/유형: 사유"
+        self.discarded: list[str] = []  # "개념/유형: [단계] 사유"
 
 
 class QuizService:
-    def __init__(self, db: Session, llm: LLMClient) -> None:
+    quality_config: QualityConfig = QualityConfig()  # __new__ 생성(테스트) 대비 기본값
+
+    def __init__(
+        self, db: Session, llm: LLMClient, quality_config: QualityConfig | None = None
+    ) -> None:
         self.repo = QuizRepository(db)
         self.llm = llm
+        self.quality_config = quality_config or QualityConfig()
 
     # ── 배치 (파싱 완료 트리거) ──────────────────────────
 
@@ -121,28 +125,36 @@ class QuizService:
             )
             return []
 
-        # 기계 검사 (코드) — 심판 콜 전에 싸게 거른다
+        # quiz 고유 사전 검사: 근거 문장 번호 실존 (여기서 걸리면 core로 갈 수 없음)
         checked: list[GeneratedItem] = []
         for item in items:
-            reason = generation.mechanical_check(item, chunk)
+            reason = generation.evidence_ids_reason(item, chunk)
             if reason:
                 result.discarded.append(f"{item.concept}/{item.type}: {reason}")
             else:
                 checked.append(item)
 
-        # LLM 심판 — 5개 묶음, 불합격은 폐기 (재생성은 조각 단위 재호출로 갈음)
-        passed: list[GeneratedItem] = []
-        for i in range(0, len(checked), VERIFY_BATCH_SIZE):
-            batch = checked[i : i + VERIFY_BATCH_SIZE]
-            raw_verdict = await self.llm.generate(
-                build_verification_prompt(batch, chunk)
+        # core 공통 검증기: 기계 → 심판 → 풀이 왕복 → 불합격 수정 1회 → 재검사.
+        # 학습 페이지(JIT·형성평가) 생성도 같은 validate_items를 쓰게 된다.
+        candidates = [
+            CandidateItem(
+                type=item.type,
+                data=item.data,
+                evidence_text=generation.evidence_text(item, chunk),
             )
-            verdicts = generation.parse_verification_response(raw_verdict, len(batch))
-            for item, (ok, reason) in zip(batch, verdicts):
-                if ok:
-                    passed.append(item)
-                else:
-                    result.discarded.append(f"{item.concept}/{item.type}: 심판 불합격 — {reason}")
+            for item in checked
+        ]
+        verdicts = await validate_items(candidates, self.llm, self.quality_config)
+
+        passed: list[GeneratedItem] = []
+        for item, verdict in zip(checked, verdicts):
+            if verdict.ok:
+                item.data = verdict.item.data  # polish·수정 반영본
+                passed.append(item)
+            else:
+                result.discarded.append(
+                    f"{item.concept}/{item.type}: [{verdict.stage}] {verdict.reason}"
+                )
         return passed
 
     # ── 서빙 (LLM 없음) ──────────────────────────────────

@@ -1,0 +1,182 @@
+"""코드 레벨 검사 — LLM을 설득하는 것보다 코드로 막는 쪽이 확실하다 (QUIZ_TUNING §5-②).
+
+전부 (type, data, evidence_text)만 받는 순수 함수. 조각·문장번호 개념 없음.
+"""
+import random
+import re
+import zlib
+
+from app.core.quality.grading import grade
+
+# 내부 문장 번호(s27) 유출 검사. \b는 한글이 단어문자라 "s27에"를 못 잡음 → 룩비하인드.
+# 소문자 s만: 대문자(AWS S3 등)는 정상 용어일 수 있다.
+_SENTENCE_REF = re.compile(r"(?<![0-9A-Za-z])s\d+")
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", "", str(s))
+
+
+def visible_texts(item_type: str, d: dict) -> list[str]:
+    """학습자에게 그대로 노출되는 텍스트 필드 (문장 번호 유출 검사 대상)."""
+    if item_type == "mcq":
+        wrong = d.get("wrongExplanations") or {}
+        opts = d.get("options") if isinstance(d.get("options"), list) else []
+        return [d.get("question", ""), d.get("explanation", ""), *wrong.values(), *opts]
+    if item_type == "cloze":
+        return [s.get("text", "") for s in d.get("segments", []) if isinstance(s, dict)]
+    if item_type == "shortAnswer":
+        return [d.get("prompt", ""), d.get("explanation", "")]
+    if item_type == "trueFalse":
+        return [d.get("statement", ""), d.get("explanation", "")]
+    return []
+
+
+def polish_mcq(data: dict) -> None:
+    """오답 선지 과생성 후 선별 (overgenerate-and-rank, arXiv:2405.05144 방식의 경량판).
+
+    생성 프롬프트가 distractorPool(추가 오답 후보 {text, why})을 주면:
+    기존 오답 + 후보를 합쳐 중복·정답 동치 제거 → 정답과 길이가 비슷한 순으로
+    3개 선별(길이 이질성은 정답 티가 나는 고전적 단서) → 결정적 셔플로 재배치.
+    풀이 없으면 아무것도 안 한다 (하위 호환).
+    """
+    pool = data.pop("distractorPool", None)
+    options = data.get("options")
+    idx = data.get("answerIndex")
+    if not pool or not isinstance(options, list) or not isinstance(idx, int):
+        return
+    if not (0 <= idx < len(options)):
+        return
+
+    answer = str(options[idx])
+    old_wrong = data.get("wrongExplanations") or {}
+    # 기존 오답의 해설을 선지 문자열 기준으로 보존
+    why_by_text: dict[str, str] = {}
+    for i, opt in enumerate(options):
+        if i != idx and str(i) in old_wrong:
+            why_by_text[_norm(opt)] = old_wrong[str(i)]
+
+    candidates: list[str] = [str(o) for i, o in enumerate(options) if i != idx]
+    for entry in pool:
+        if isinstance(entry, dict):
+            text = str(entry.get("text", "")).strip()
+            if entry.get("why"):
+                why_by_text.setdefault(_norm(text), str(entry["why"]))
+        else:
+            text = str(entry).strip()
+        if text:
+            candidates.append(text)
+
+    seen: set[str] = set()
+    distractors: list[str] = []
+    for c in candidates:
+        n = _norm(c).lower()
+        if not n or n == _norm(answer).lower() or n in seen:
+            continue
+        seen.add(n)
+        distractors.append(c)
+    if len(distractors) < 3:
+        return  # 후보 부족 — 원본 유지, 판단은 mechanical_check에
+
+    distractors.sort(key=lambda c: abs(len(c) - len(answer)))
+    opts = distractors[:3] + [answer]
+    # 결정적 셔플 (같은 문항 = 항상 같은 배치, 문항끼리는 다르게)
+    rng = random.Random(zlib.crc32(str(data.get("question", "")).encode("utf-8")))
+    rng.shuffle(opts)
+
+    data["options"] = opts
+    data["answerIndex"] = opts.index(answer)
+    data["wrongExplanations"] = {
+        str(i): why_by_text[_norm(o)]
+        for i, o in enumerate(opts)
+        if i != data["answerIndex"] and _norm(o) in why_by_text
+    }
+
+
+def mechanical_check(item_type: str, d: dict, evidence_text: str) -> str | None:
+    """불량 사유를 반환. None = 통과."""
+    evidence_norm = _norm(evidence_text)
+
+    if item_type == "mcq":
+        options = d.get("options")
+        idx = d.get("answerIndex")
+        if not isinstance(options, list) or len(options) != 4:
+            return "mcq 선지가 4개가 아님"
+        if not isinstance(idx, int) or not (0 <= idx < len(options)):
+            return "mcq answerIndex 불량"
+        if len(set(map(str, options))) != len(options):
+            return "mcq 선지 중복"
+    elif item_type == "cloze":
+        segments = [s for s in d.get("segments", []) if isinstance(s, dict)]
+        blanks = [s for s in segments if s.get("kind") == "blank"]
+        if not blanks:
+            return "cloze에 빈칸 없음"
+        text_norm = _norm(" ".join(str(s.get("text", "")) for s in segments if s.get("kind") == "text"))
+        for b in blanks:
+            ans = _norm(str(b.get("answer", "")))
+            if not ans or ans not in evidence_norm:
+                return f"cloze 정답 '{b.get('answer')}'이 근거 문장에 없음"
+            # answer와 동일한 alias 정리 (프롬프트로 못 막는 중복 — QUIZ_TUNING §5-②)
+            aliases = [a for a in b.get("aliases", []) if _norm(str(a)) != ans]
+            b["aliases"] = aliases
+            # 정답(또는 별칭)이 지문에 그대로 보이면 문항이 무의미 — 폐기
+            for leak in [ans, *(_norm(str(a)) for a in aliases)]:
+                if len(leak) >= 2 and leak in text_norm:
+                    return f"cloze 정답 '{b.get('answer')}'이 지문에 노출됨"
+    elif item_type == "shortAnswer":
+        if not d.get("prompt") or not d.get("accepted"):
+            return "shortAnswer prompt/accepted 누락"
+    elif item_type == "trueFalse":
+        if not d.get("statement") or not isinstance(d.get("answer"), bool):
+            return "trueFalse statement/answer 불량"
+
+    # 프롬프트로 못 막는 LLM 편차 — 생성 콜 1회가 규칙을 통째로 무시할 수 있다 (QUIZ_TUNING §7)
+    for text in visible_texts(item_type, d):
+        if text and (m := _SENTENCE_REF.search(str(text))):
+            return f"본문에 내부 문장 번호({m.group(0)}) 노출"
+    return None
+
+
+def strip_answers(item_type: str, data: dict) -> dict:
+    """정답·해설을 제거한 출제용 data — 서빙과 풀이자 프롬프트가 공유."""
+    if item_type == "mcq":
+        return {"question": data.get("question"), "options": data.get("options")}
+    if item_type == "trueFalse":
+        return {"statement": data.get("statement")}
+    if item_type == "shortAnswer":
+        return {"prompt": data.get("prompt")}
+    if item_type == "cloze":
+        segments = []
+        for s in data.get("segments", []):
+            if s.get("kind") == "blank":
+                segments.append({"kind": "blank"})  # 자리만 — 정답·별칭 제거
+            else:
+                segments.append({"kind": "text", "text": s.get("text")})
+        return {"segments": segments}
+    return {}
+
+
+def check_solution(item_type: str, data: dict, solver_answer) -> str | None:
+    """풀이 왕복 검증 판정 (answerability round-trip).
+
+    근거를 보고 푼 풀이자가 키 정답에 도달하지 못하면 문항이 모호하거나
+    근거로 풀 수 없다는 실험적 증거다. 불량 사유 반환, None = 통과.
+    """
+    if solver_answer is None:
+        return "풀이자 응답 없음"
+
+    if item_type == "mcq":
+        answers = solver_answer if isinstance(solver_answer, list) else [solver_answer]
+        try:
+            picked = sorted({int(a) for a in answers})
+        except (TypeError, ValueError):
+            return f"풀이자 응답 형식 불량: {solver_answer!r}"
+        if len(picked) > 1:
+            return f"풀이자가 복수 정답으로 판단: {picked} (정답 유일성 붕괴)"
+        if not picked or picked[0] != data.get("answerIndex"):
+            return f"풀이자가 다른 답을 고름: {picked} ≠ 정답 {data.get('answerIndex')}"
+        return None
+
+    if grade(item_type, data, solver_answer):
+        return None
+    return f"풀이자 답 '{solver_answer}'이 채점 기준 불일치"

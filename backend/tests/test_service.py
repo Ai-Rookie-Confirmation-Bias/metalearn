@@ -9,11 +9,13 @@ from app.features.quiz.service import QuizService
 
 
 class FakeLLM(LLMClient):
-    """생성 프롬프트 → 지시된 개념마다 trueFalse 1개 / 심판 프롬프트 → 전원 합격."""
+    """생성 → 개념마다 trueFalse 1개 / 심판 → 전원 합격 / 풀이자 → 정답(true) / 수정 → 없음."""
 
     def __init__(self) -> None:
         self.generation_calls = 0
         self.verification_calls = 0
+        self.solve_calls = 0
+        self.revision_calls = 0
 
     async def generate(self, prompt: str, **kwargs: object) -> str:
         if "출제 검수자" in prompt:
@@ -21,6 +23,15 @@ class FakeLLM(LLMClient):
             n = prompt.count("[문항 ")
             entries = ",".join(f'{{"index":{i},"pass":true,"reason":""}}' for i in range(n))
             return f"[{entries}]"
+        if "너는 수험생이다" in prompt:
+            self.solve_calls += 1
+            n = prompt.count("[문항 ")
+            # FakeLLM이 만드는 문항은 전부 trueFalse(answer=true) — 정답을 답한다
+            entries = ",".join(f'{{"index":{i},"answer":true}}' for i in range(n))
+            return f"[{entries}]"
+        if "검수 불합격" in prompt:
+            self.revision_calls += 1
+            return "[]"
 
         self.generation_calls += 1
         items = []
@@ -75,9 +86,63 @@ async def test_generate_bank_end_to_end(service, parsed_doc):
     for r in rows:
         assert r.evidence["text"]
         assert r.evidence["sentenceRanges"]
-    # 조각 3개 = 생성 콜 3회
+    # 조각 3개 = 생성 콜 3회, 심판·풀이 왕복이 실제로 돌았는지
     assert service.llm.generation_calls == 3
     assert service.llm.verification_calls >= 1
+    assert service.llm.solve_calls >= 1
+
+
+async def test_failed_item_revived_by_revision_loop(service):
+    """critique-revise: 심판 불합격 문항이 사유 첨부 수정 1회로 살아난다."""
+    from app.features.quiz.schemas import (
+        ParsedChunk,
+        ParsedConcept,
+        ParsedDocument,
+        ParsedToc,
+        SentenceAnchor,
+    )
+
+    doc = ParsedDocument(
+        parser_version="3.0",
+        tocs=[ParsedToc(index=0, title="1장", chunk_indexes=[0])],
+        chunks=[
+            ParsedChunk(
+                index=0,
+                page_from=1,
+                page_to=1,
+                raw_text="폭포수 모형은 고전적 생명 주기 모형이다.",
+                sentences=[SentenceAnchor(start=0, end=22)],
+                concepts=[ParsedConcept(name="폭포수 모형", definition="고전적 모형")],
+            )
+        ],
+    )
+
+    class ReviseLLM(FakeLLM):
+        def __init__(self) -> None:
+            super().__init__()
+            self.judge_seen = 0
+
+        async def generate(self, prompt: str, **kwargs: object) -> str:
+            if "출제 검수자" in prompt:
+                self.judge_seen += 1
+                if self.judge_seen == 1:  # 1차 심판: 전원 불합격
+                    n = prompt.count("[문항 ")
+                    entries = ",".join(
+                        f'{{"index":{i},"pass":false,"reason":"발문 모호"}}' for i in range(n)
+                    )
+                    return f"[{entries}]"
+                return await super().generate(prompt)  # 재검사: 합격
+            if "검수 불합격" in prompt:
+                self.revision_calls += 1
+                return ('[{"index":0,"data":{"statement":"폭포수 모형은 고전적 생명 주기 '
+                        '모형이다","answer":true,"explanation":"수정본"}}]')
+            return await super().generate(prompt)
+
+    service.llm = ReviseLLM()
+    result = await service.generate_bank(uuid.uuid4(), uuid.uuid4(), doc)
+    assert service.llm.revision_calls == 1
+    assert result.saved == 1  # 불합격 → 수정 → 재검사 통과 → 저장
+    assert service.repo.rows[0].data["explanation"] == "수정본"
 
 
 async def test_generate_bank_rejects_bad_version_only_when_gate_configured(service, parsed_doc):

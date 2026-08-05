@@ -2,14 +2,15 @@
 
 틀은 과목 내용을 언급하지 않는다. 과목 지식은 전부 슬롯(파싱 결과)에서 온다.
 """
-import json
-
-from app.features.quiz.schemas import ChunkWorkOrder, GeneratedItem, ParsedChunk
+from app.features.quiz.schemas import ChunkWorkOrder, ParsedChunk
 
 _TYPE_GUIDE = {
     "mcq": '객관식. data={"question":str,"options":[str,정확히 4개],"answerIndex":int,'
-    '"explanation":str,"wrongExplanations":{"선지번호":str}}\n'
+    '"explanation":str,"wrongExplanations":{"선지번호":str},'
+    '"distractorPool":[{"text":str,"why":str}]}\n'
     "  · 선지는 반드시 4개. 오답 선지마다 왜 아닌지 필수\n"
+    "  · distractorPool에 선지로 안 쓴 추가 오답 후보 3~4개를 why(왜 오답인지)와 함께 넣어라\n"
+    "    — 시스템이 전체 후보 중에서 최선의 오답 3개를 고른다 (과생성 후 선별)\n"
     '  · 발문 끝은 "~은?" 또는 "~이 아닌 것은?"',
     "cloze": '빈칸. data={"segments":[{"kind":"text","text":str}|{"kind":"blank","answer":str,"aliases":[str]}]}\n'
     "  · 빈칸은 1개, 많아도 2개. 3개 이상 뚫지 마라\n"
@@ -93,42 +94,5 @@ def build_generation_prompt(
 [{{"type":"...","concept":"...","data":{{...}},"evidence":["s3","s4"],"difficulty":2}}]"""
 
 
-def build_verification_prompt(
-    items: list[GeneratedItem], chunk: ParsedChunk
-) -> str:
-    """문항 묶음(≤5개) 심판 프롬프트. 정답 유일성 + 근거 대조."""
-    blocks = []
-    for i, item in enumerate(items):
-        evidence = " / ".join(
-            chunk.raw_text[chunk.sentences[s].start : chunk.sentences[s].end].strip()
-            for s in item.evidence_sentence_ids
-            if 0 <= s < len(chunk.sentences)
-        )
-        blocks.append(
-            f"[문항 {i}] ({item.type})\n"
-            f"내용: {json.dumps(item.data, ensure_ascii=False)}\n"
-            f"근거: {evidence}"
-        )
-
-    return f"""너는 출제 검수자다. 각 문항을 근거 원문과 대조해 판정하라.
-
-{chr(10).join(blocks)}
-
-채점은 사람이 아니라 문자열 완전일치로 이뤄진다. 아래를 하나라도 어기면 불합격이다.
-
-- Q1. 정답이 근거 원문으로 뒷받침되는가?
-- Q2. (객관식) 오답 선지 중 원문에서 사실상 참이 되는 것이 있는가? 있으면 불합격 (정답이 2개가 됨)
-- Q3. (객관식) 선지가 정확히 4개인가? 아니면 불합격
-- Q4. 정답을 그대로 받아쓸 수 있는가? 정답이 한 문장만큼 길거나, 같은 뜻을 여러 표현으로
-      쓸 수 있어 완전일치가 사실상 불가능하면 불합격
-- Q5. (빈칸) 빈칸이 3개 이상이거나, 빈칸들이 순서가 바뀌어도 맞는 나열이면 불합격
-      (채점이 빈칸 순서를 따지므로 정답이 유일하지 않게 된다)
-- Q6. (빈칸) 빈칸을 정답으로 채운 문장이 자연스러운 한국어 문장인가? 비문이면 불합격
-- Q7. 발문이 시험 문체인가? 구어체·경어체("~인가요?", "~합니다")면 불합격
-- Q8. 발문의 설명에 들어맞는 답이 원문에 둘 이상 있지 않은가? 있으면 불합격 (정답이 유일하지 않다)
-- Q9. 발문·해설에 문장 번호(s38 같은 표기)가 노출되지 않았는가? 노출되면 불합격
-- Q10. (빈칸) 빈칸이 번호·기호처럼 의미 없는 자리가 아닌가? 그렇다면 불합격
-- Q11. 문항 표현에 모순·모호함이 없는가?
-
-[출력] JSON 배열만 출력하라:
-[{{"index":0,"pass":true,"reason":""}},{{"index":1,"pass":false,"reason":"오답 선지 '피드백'이 원문에서 참"}}]"""
+# 심판·풀이자·수정 프롬프트는 core/quality/prompts.py로 이동 —
+# 검증은 기능(quiz/learning)에 묶이지 않는 공통 모듈이 담당한다.
