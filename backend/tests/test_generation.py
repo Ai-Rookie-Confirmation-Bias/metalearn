@@ -117,6 +117,24 @@ def test_mechanical_check_cloze_answer_must_be_in_evidence():
     assert mechanical_check(item, CHUNK) is None
 
 
+def test_mechanical_check_rejects_sentence_id_leak_in_explanation():
+    """QUIZ_TUNING §7: 해설에 내부 문장 번호(s27)가 노출되면 폐기. 한글 뒤에서도 잡혀야 한다."""
+    bad = _item()
+    bad.data["explanation"] = "s27에 따라 델파이 기법은 의견을 종합한다."
+    assert "문장 번호" in mechanical_check(bad, CHUNK)
+
+    bad = _item()
+    bad.data["wrongExplanations"]["1"] = "LOC 기법은 s3, s4의 설명이다."
+    assert "문장 번호" in mechanical_check(bad, CHUNK)
+
+
+def test_mechanical_check_sentence_ref_ignores_normal_words():
+    """bus, os 같은 s+숫자 아닌 표기·영단어 내부의 s는 오탐하면 안 된다."""
+    ok = _item()
+    ok.data["explanation"] = "OS와 DBMS, windows10 환경에서도 동작한다."
+    assert mechanical_check(ok, CHUNK) is None
+
+
 def test_verification_parse_is_conservative_on_garbage():
     verdicts = parse_verification_response("판정 불가", 2)
     assert verdicts == [(False, "심판 응답 파싱 실패")] * 2

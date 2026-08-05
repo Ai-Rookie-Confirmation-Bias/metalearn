@@ -72,6 +72,25 @@ def _sentence_ids(evidence) -> list[int]:
 
 # ── 기계 검사 ─────────────────────────────────────────────
 
+# 내부 문장 번호(s27) 유출 검사. \b는 한글이 단어문자라 "s27에"를 못 잡음 → 룩비하인드.
+# 소문자 s만: 대문자(AWS S3 등)는 정상 용어일 수 있다.
+_SENTENCE_REF = re.compile(r"(?<![0-9A-Za-z])s\d+")
+
+
+def _visible_texts(item_type: str, d: dict) -> list[str]:
+    """학습자에게 그대로 노출되는 텍스트 필드 (문장 번호 유출 검사 대상)."""
+    if item_type == "mcq":
+        wrong = d.get("wrongExplanations") or {}
+        opts = d.get("options") if isinstance(d.get("options"), list) else []
+        return [d.get("question", ""), d.get("explanation", ""), *wrong.values(), *opts]
+    if item_type == "cloze":
+        return [s.get("text", "") for s in d.get("segments", []) if isinstance(s, dict)]
+    if item_type == "shortAnswer":
+        return [d.get("prompt", ""), d.get("explanation", "")]
+    if item_type == "trueFalse":
+        return [d.get("statement", ""), d.get("explanation", "")]
+    return []
+
 
 def mechanical_check(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
     """불량 사유를 반환. None = 통과."""
@@ -126,6 +145,11 @@ def mechanical_check(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
     elif item.type == "trueFalse":
         if not d.get("statement") or not isinstance(d.get("answer"), bool):
             return "trueFalse statement/answer 불량"
+
+    # 프롬프트로 못 막는 LLM 편차 — 생성 콜 1회가 규칙을 통째로 무시할 수 있다 (QUIZ_TUNING §7)
+    for text in _visible_texts(item.type, d):
+        if text and (m := _SENTENCE_REF.search(str(text))):
+            return f"본문에 내부 문장 번호({m.group(0)}) 노출"
     return None
 
 
