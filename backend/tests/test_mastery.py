@@ -240,6 +240,29 @@ def test_목차도_출처별로_센다():
     assert c.attempts == 3 and c.weight == 2.5
 
 
+def test_보충_화면은_진도_분모에_안_들어간다():
+    # 분모에 넣으면 보충을 끼울수록 진도가 뒤로 가고, 열려 있던 단원 평가가
+    # 다시 잠긴다. 학습을 했는데 벌을 받는 그림이라 절대 안 된다.
+    states = [_run("s1", [True]), _run("s2", [True]), SectionMastery("s3")]
+    before = chapter_summary("1장", states)
+
+    states.append(_run("x1", [True]))  # 보충 화면이 끼어들었다
+    after = chapter_summary("1장", states, extra_ids=frozenset({"x1"}))
+
+    assert after.sections_total == before.sections_total == 3
+    assert after.progress == before.progress
+    assert after.sections_extra == 1 and after.sections_extra_touched == 1
+
+
+def test_보충_화면에서_푼_것도_실력이다():
+    # 진도만 원문 기준이다. 이해도·복습은 보충도 똑같이 센다 —
+    # 거기서 맞힌 것도 실력이고, 잊는 것도 마찬가지다.
+    states = [_run("s1", [False, False]), _run("x1", [True, True, True])]
+    c = chapter_summary("1장", states, extra_ids=frozenset({"x1"}))
+    assert c.attempts == 5
+    assert c.ratio > 0.5, c.ratio  # 보충에서 맞힌 게 반영된다
+
+
 def test_목차가_복습_대상_절을_센다():
     states = [_run("s1", [True]), _run("s2", [True]), SectionMastery("s3")]
     assert chapter_summary("1장", states, NOW).sections_due == 0

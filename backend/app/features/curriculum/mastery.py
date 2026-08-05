@@ -263,8 +263,8 @@ class ChapterMastery:
     """목차 하나의 집계 — Rule Engine(분량 배분)의 입력."""
 
     chapter: str
-    sections_total: int
-    sections_touched: int
+    sections_total: int  # **파싱이 준 화면만.** 보충을 끼워도 안 움직인다
+    sections_touched: int  # 그중 시도한 것
     ratio: float  # 시도한 절들의 가중 정답률
     weak_concepts: tuple[str, ...]
     attempts: int = 0  # 이 목차에서 푼 문항 수(표시용)
@@ -272,10 +272,22 @@ class ChapterMastery:
     recall: float = 0.0  # 회상 강도 — 시도한 절들의 평균
     sections_due: int = 0  # 복습이 필요한 절 수
     by_kind: dict[str, int] = field(default_factory=dict)
+    # 우리가 끼운 보충 화면 — **진도와 따로 센다**(위 sections_total 참조).
+    sections_extra: int = 0
+    sections_extra_touched: int = 0
 
     @property
     def progress(self) -> float:
-        """진도율 — 이해도와 다르다. 얼마나 훑었는가."""
+        """진도율 — 이해도와 다르다. 얼마나 훑었는가.
+
+        ⚠️ **분모는 파싱이 준 화면 수로 고정한다.** 보충 화면을 분모에 넣으면
+        끼울 때마다 진도가 뒤로 가고, `formative_ready`(진도 0.6)가 열렸다가
+        다시 잠긴다. 학습을 했는데 벌을 받는다.
+
+        실력(`ratio`)과 복습(`sections_due`)은 반대로 **보충도 센다** — 거기서
+        푼 것도 실력이고 잊기도 마찬가지다. 진도만 원문 화면 기준이다.
+        *원문 밖 정보는 필드를 나눠라*가 여기서는 분모와 분자의 문제로 나왔다.
+        """
         return self.sections_touched / self.sections_total if self.sections_total else 0.0
 
     @property
@@ -303,9 +315,15 @@ class ChapterMastery:
 
 
 def chapter_summary(
-    chapter: str, states: list[SectionMastery], now: float | None = None
+    chapter: str,
+    states: list[SectionMastery],
+    now: float | None = None,
+    extra_ids: frozenset[str] = frozenset(),
 ) -> ChapterMastery:
     """절 상태들을 목차 단위로 묶는다.
+
+    extra_ids: 우리가 끼운 보충 화면의 section_id. **진도 분모에서만 뺀다** —
+    실력·복습·약점은 원문 화면과 똑같이 센다(거기서 푼 것도 실력이다).
 
     이해도는 **시도한 절만**으로 낸다. 안 푼 절을 0점으로 세면 진도가 곧
     이해도가 되어, "많이 봤지만 잘 모른다"와 "조금 봤지만 잘 안다"를 구분할 수
@@ -334,10 +352,16 @@ def chapter_summary(
 
     recall = sum(s.recall(now) for s in touched) / len(touched) if touched else 0.0
 
+    # 진도는 원문 화면만 센다. 실력(ratio)·복습(sections_due)은 위에서 전부 셌다.
+    origin_states = [s for s in states if s.section_id not in extra_ids]
+    extra_states = [s for s in states if s.section_id in extra_ids]
+
     return ChapterMastery(
         chapter=chapter,
-        sections_total=len(states),
-        sections_touched=len(touched),
+        sections_total=len(origin_states),
+        sections_touched=sum(1 for s in origin_states if s.attempts > 0),
+        sections_extra=len(extra_states),
+        sections_extra_touched=sum(1 for s in extra_states if s.attempts > 0),
         ratio=round(ratio, 3),
         weak_concepts=tuple(weak),
         attempts=sum(s.attempts for s in touched),

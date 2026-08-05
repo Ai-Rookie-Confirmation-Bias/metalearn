@@ -64,6 +64,21 @@ class Section:
     source: str = ""  # 이 화면 개념들의 원문 구간(있으면)
     page: str = ""
     section_id: str = ""  # 진도 키. 내용이 바뀌면 새 화면으로 본다.
+    # 이 화면이 어디서 왔는가. 빈 값이면 파싱이 준 원래 화면이다.
+    #   "inserted"  반복해서 틀린 선수 개념을 위해 **우리가 끼운 보충 화면**
+    #
+    # ⚠️ **목차(단원)는 절대 안 만든다.** 파싱팀 `origin: inserted`(단원 삽입)를
+    #    거절한 이유가 그것이다 — 목차 목록이 바뀌면 "목차는 고정" 원칙이 깨진다.
+    #    화면은 다르다. 단원 1이 1.1~1.29에서 1.30이 되는 건 목차가 안 바뀐 것이다.
+    #
+    # ⚠️ 삽입 화면은 **진도 분모에서 뺀다**(`mastery.chapter_summary`). 안 그러면
+    #    보충을 끼울수록 진도가 뒤로 가고 열려 있던 단원 평가가 다시 잠긴다 —
+    #    학습을 했는데 벌을 받는 그림이다.
+    origin: str = ""
+
+    @property
+    def inserted(self) -> bool:
+        return self.origin == "inserted"
 
     @property
     def size(self) -> int:

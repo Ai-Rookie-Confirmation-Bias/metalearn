@@ -103,7 +103,12 @@ CARRY_LIMIT = 3
 def summarize(doc: Document, progress: Progress) -> tuple[CourseMastery, list[ChapterPlan]]:
     """문서 전체 숙련도와 목차별 배분."""
     summaries: list[ChapterMastery] = [
-        chapter_summary(ch.title, [progress.of(s.section_id) for s in ch.sections])
+        chapter_summary(
+            ch.title,
+            [progress.of(s.section_id) for s in ch.sections],
+            # 보충 화면은 진도 분모에서 뺀다 — 끼울수록 진도가 뒤로 가면 안 된다.
+            extra_ids=frozenset(s.section_id for s in ch.sections if s.inserted),
+        )
         for ch in doc.chapters
     ]
 
