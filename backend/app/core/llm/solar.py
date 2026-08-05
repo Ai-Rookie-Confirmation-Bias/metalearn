@@ -14,7 +14,10 @@ class SolarClient(LLMClient):
         self._base = settings.SOLAR_BASE_URL
 
     async def generate(self, prompt: str, **kwargs: object) -> str:
-        async with httpx.AsyncClient(base_url=self._base, headers=self._headers) as c:
+        # 생성 콜은 수십 초 걸릴 수 있음 — httpx 기본 5초로는 항상 타임아웃
+        async with httpx.AsyncClient(
+            base_url=self._base, headers=self._headers, timeout=120.0
+        ) as c:
             resp = await c.post(
                 "/chat/completions",
                 json={

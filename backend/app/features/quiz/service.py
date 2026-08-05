@@ -1,0 +1,183 @@
+"""[3.Service] 문제 생성 배치 + 서빙 로직 (docs/QUIZ.md §1 파이프라인).
+
+배치: 수신검증 → 선별 → 계획 → 조각별 생성(LLM) → 기계검사 → 심판(LLM)
+      → 재생성 1회 → verified만 저장(전체 교체).
+서빙: DB 조회만 — LLM 호출 없음.
+"""
+import logging
+import uuid
+
+from sqlalchemy.orm import Session
+
+from app.core.llm.base import LLMClient
+from app.features.quiz import generation, grading, serving
+from app.features.quiz.intake import validate_document
+from app.features.quiz.models import QuizItem
+from app.features.quiz.planning import plan_document
+from app.features.quiz.prompts import build_generation_prompt, build_verification_prompt
+from app.features.quiz.repository import QuizRepository
+from app.features.quiz.schemas import (
+    AttemptResponse,
+    ChunkWorkOrder,
+    GeneratedItem,
+    ParsedDocument,
+    ParseReport,
+    QuizBankSummary,
+    QuizGenConfig,
+    SessionItem,
+    SessionResponse,
+    TocSummary,
+)
+from app.features.quiz.selection import select_chunk
+
+logger = logging.getLogger(__name__)
+
+VERIFY_BATCH_SIZE = 5
+
+
+class QuizGenerationResult:
+    def __init__(self, report: ParseReport) -> None:
+        self.report = report
+        self.saved = 0
+        self.discarded: list[str] = []  # "개념/유형: 사유"
+
+
+class QuizService:
+    def __init__(self, db: Session, llm: LLMClient) -> None:
+        self.repo = QuizRepository(db)
+        self.llm = llm
+
+    # ── 배치 (파싱 완료 트리거) ──────────────────────────
+
+    async def generate_bank(
+        self,
+        course_id: uuid.UUID,
+        document_id: uuid.UUID,
+        doc: ParsedDocument,
+        config: QuizGenConfig | None = None,
+        exam_frequency: dict[str, int] | None = None,
+        stem_patterns: list[str] | None = None,
+    ) -> QuizGenerationResult:
+        config = config or QuizGenConfig()
+
+        report = validate_document(doc, config)
+        result = QuizGenerationResult(report)
+        if not report.ok:
+            return result
+
+        selections = {c.index: select_chunk(c) for c in doc.chunks}
+        for sel in selections.values():
+            for name, reason in sel.excluded_concepts.items():
+                result.discarded.append(f"{name}: {reason}")
+
+        orders = plan_document(doc, selections, config, exam_frequency)
+        chunk_by_index = {c.index: c for c in doc.chunks}
+        toc_title = {t.index: t.title for t in doc.tocs}
+
+        rows: list[QuizItem] = []
+        for order in orders:
+            chunk = chunk_by_index[order.chunk_index]
+            verified_items = await self._generate_and_verify(
+                order, chunk, stem_patterns, result
+            )
+            for item in verified_items:
+                rows.append(
+                    QuizItem(
+                        course_id=course_id,
+                        document_id=document_id,
+                        toc_index=order.toc_index,
+                        toc_title=toc_title.get(order.toc_index, ""),
+                        type=item.type,
+                        concept_name=item.concept,
+                        data=item.data,
+                        evidence=generation.resolve_evidence(item, chunk),
+                        difficulty=item.difficulty,
+                        verified=True,
+                    )
+                )
+
+        self.repo.replace_document_items(course_id, document_id, rows)
+        result.saved = len(rows)
+        return result
+
+    async def _generate_and_verify(
+        self, order: ChunkWorkOrder, chunk, stem_patterns, result: QuizGenerationResult
+    ) -> list[GeneratedItem]:
+        raw = await self.llm.generate(
+            build_generation_prompt(order, chunk, stem_patterns)
+        )
+        items = generation.parse_generation_response(raw)
+
+        # 기계 검사 (코드) — 심판 콜 전에 싸게 거른다
+        checked: list[GeneratedItem] = []
+        for item in items:
+            reason = generation.mechanical_check(item, chunk)
+            if reason:
+                result.discarded.append(f"{item.concept}/{item.type}: {reason}")
+            else:
+                checked.append(item)
+
+        # LLM 심판 — 5개 묶음, 불합격은 폐기 (재생성은 조각 단위 재호출로 갈음)
+        passed: list[GeneratedItem] = []
+        for i in range(0, len(checked), VERIFY_BATCH_SIZE):
+            batch = checked[i : i + VERIFY_BATCH_SIZE]
+            raw_verdict = await self.llm.generate(
+                build_verification_prompt(batch, chunk)
+            )
+            verdicts = generation.parse_verification_response(raw_verdict, len(batch))
+            for item, (ok, reason) in zip(batch, verdicts):
+                if ok:
+                    passed.append(item)
+                else:
+                    result.discarded.append(f"{item.concept}/{item.type}: 심판 불합격 — {reason}")
+        return passed
+
+    # ── 서빙 (LLM 없음) ──────────────────────────────────
+
+    def bank_summary(self, course_id: uuid.UUID) -> list[QuizBankSummary]:
+        rows = self.repo.toc_summary(course_id)
+        by_doc: dict[uuid.UUID, list[TocSummary]] = {}
+        for document_id, toc_index, toc_title, count in rows:
+            by_doc.setdefault(document_id, []).append(
+                TocSummary(toc_index=toc_index, title=toc_title or "", item_count=count)
+            )
+        return [
+            QuizBankSummary(
+                course_id=str(course_id),
+                document_id=str(doc_id),
+                tocs=tocs,
+                total=sum(t.item_count for t in tocs),
+            )
+            for doc_id, tocs in by_doc.items()
+        ]
+
+    def start_session(
+        self, course_id: uuid.UUID, document_id: uuid.UUID, toc_indexes: list[int], count: int
+    ) -> SessionResponse:
+        items = self.repo.sample_items(course_id, document_id, toc_indexes, count)
+        return SessionResponse(
+            items=[
+                SessionItem(
+                    id=str(i.id),
+                    toc_index=i.toc_index,
+                    type=i.type,
+                    data=serving.strip_answers(i.type, i.data),
+                )
+                for i in items
+            ]
+        )
+
+    def submit_attempt(
+        self, item_id: uuid.UUID, user_input, user_id: uuid.UUID | None = None
+    ) -> AttemptResponse | None:
+        item = self.repo.get_item(item_id)
+        if item is None:
+            return None
+        correct = grading.grade(item.type, item.data, user_input)
+        self.repo.record_attempt(item.id, correct, user_input, user_id)
+        return AttemptResponse(
+            correct=correct,
+            answer=grading.answer_payload(item.type, item.data),
+            explanation=grading.chosen_explanation(item.type, item.data, user_input, correct),
+            evidence=item.evidence,
+        )
