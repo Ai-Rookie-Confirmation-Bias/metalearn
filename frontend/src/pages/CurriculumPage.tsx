@@ -5,6 +5,7 @@
 // 어디쯤 왔는지 감각이 사라진다.
 import { Link, useParams } from "react-router-dom";
 
+import { KIND_LABEL, type AttemptKind } from "@/features/curriculum/api/curriculum";
 import { Bar, ModeBadge, Reason, StatusBadge, pct } from "@/features/curriculum/components/bits";
 import { useDocument, useDocuments } from "@/features/curriculum/queries/useCurriculum";
 
@@ -47,6 +48,14 @@ export function CurriculumPage() {
   const hours = Math.floor(data.estimatedMinutes / 60);
   const mins = data.estimatedMinutes % 60;
 
+  // 준비도 = 이해도 × 진도 × 회상. 준비도만 낮고 이해도는 높으면 **잊은 것**이라
+  // 처방이 "복습"이고, 둘 다 낮으면 아직 모르는 것이라 "다시 학습"이다.
+  const forgotten = data.understanding - data.readiness;
+  const kinds = Object.entries(data.byKind).filter(([, n]) => n > 0) as [
+    AttemptKind,
+    number,
+  ][];
+
   return (
     <div className="mx-auto max-w-3xl p-8">
       <Link to="/curriculum" className="text-[0.8rem] text-text-tertiary hover:underline">
@@ -69,6 +78,26 @@ export function CurriculumPage() {
           {hours > 0 ? `${hours}시간 ` : ""}
           {mins}분
         </p>
+
+        {/* 이 숫자가 어디서 왔는지 — 진단·학습·복습·평가가 전부 여기로 모인다.
+            근거를 안 보여주면 준비도가 그냥 떨어진 숫자로 보인다. */}
+        {kinds.length > 0 && (
+          <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[0.75rem] text-text-tertiary">
+            {kinds.map(([k, n]) => (
+              <span key={k}>
+                {KIND_LABEL[k]} <span className="tabular-nums font-medium">{n}</span>
+              </span>
+            ))}
+          </p>
+        )}
+
+        {/* 잊어서 낮은 것과 아직 몰라서 낮은 것은 처방이 다르다. */}
+        {forgotten >= 0.05 && (
+          <p className="mt-2 rounded-lg bg-amber-50/70 px-3 py-2 text-[0.8rem] text-amber-800">
+            🔁 이해한 건 {pct(data.understanding)}인데 지금 꺼낼 수 있는 건{" "}
+            {pct(data.readiness)}입니다. 복습이 필요한 절 {data.sectionsDue}개.
+          </p>
+        )}
       </header>
 
       <ul className="space-y-3">
@@ -87,6 +116,11 @@ export function CurriculumPage() {
                   </p>
                 </div>
                 <div className="flex flex-shrink-0 items-center gap-1.5">
+                  {ch.sectionsDue > 0 && (
+                    <span className="text-[0.7rem] font-semibold text-amber-700">
+                      🔁 복습 {ch.sectionsDue}
+                    </span>
+                  )}
                   {data.weakestChapter === ch.index && (
                     <span className="text-[0.7rem] font-semibold text-red-600">🔴 가장 약함</span>
                   )}

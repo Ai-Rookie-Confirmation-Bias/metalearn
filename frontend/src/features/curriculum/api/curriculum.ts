@@ -8,6 +8,17 @@ import { apiClient } from "@/shared/api/client";
 export type MasteryStatus = "untouched" | "learning" | "weak" | "shaky" | "solid";
 export type PlanMode = "deep" | "normal" | "compressed";
 
+// 문항을 푸는 자리 넷. 전부 같은 문으로 들어와 하나의 누적값이 된다.
+// 한 문항이 담는 정보량이 달라 백엔드가 출처별로 가중한다.
+export type AttemptKind = "diagnostic" | "retrieval" | "review" | "formative";
+
+export const KIND_LABEL: Record<AttemptKind, string> = {
+  diagnostic: "진단",
+  retrieval: "학습",
+  review: "복습",
+  formative: "평가",
+};
+
 export interface ChapterBrief {
   index: number;
   title: string;
@@ -18,6 +29,8 @@ export interface ChapterBrief {
   statusLabel: string;
   ratio: number; // 이해도 — 시도한 절만으로
   progress: number; // 진도 — 얼마나 훑었나
+  recall: number; // 회상 강도 — 지금도 꺼내지나
+  sectionsDue: number; // 🔁 복습이 필요한 절 수
   mode: PlanMode;
   reason: string; // ⚡ 비어 있으면 아직 판단 근거가 없다는 뜻
 }
@@ -25,12 +38,17 @@ export interface ChapterBrief {
 export interface DocumentOut {
   docId: string;
   title: string;
+  // 준비도 = 이해도 × 진도 × 회상. 네 출처가 모여 나오는 하나의 값
   readiness: number;
+  // 망각을 뺀 값. 준비도가 낮은 게 "잊은 것"인지 "아직 모르는 것"인지 가른다
+  understanding: number;
   complete: boolean;
   sectionsTotal: number;
   remainingSections: number;
+  sectionsDue: number;
   estimatedMinutes: number;
   weakestChapter: number | null;
+  byKind: Partial<Record<AttemptKind, number>>; // 누적이 어디서 왔는지
   chapters: ChapterBrief[];
 }
 
@@ -46,6 +64,9 @@ export interface SectionOut {
   attempts: number;
   improving: boolean;
   weakConcepts: string[];
+  recall: number;
+  needsReview: boolean; // 🔁 맞힌 적 있는데 잊혀가는 절
+  byKind: Partial<Record<AttemptKind, number>>;
 }
 
 export interface ChapterOut {
@@ -57,6 +78,8 @@ export interface ChapterOut {
   readiness: number;
   ratio: number;
   progress: number;
+  recall: number;
+  sectionsDue: number;
   mode: PlanMode;
   reason: string;
   weakConcepts: string[];
@@ -101,10 +124,12 @@ export interface AnswerOut {
   statusLabel: string;
   attempts: number;
   improving: boolean;
+  recall: number;
   chapterRatio: number;
   chapterMode: PlanMode;
   chapterReason: string;
   readiness: number;
+  understanding: number;
 }
 
 const base = "/api/curriculum";
@@ -135,15 +160,22 @@ export async function fetchLesson(docId: string, sectionId: string): Promise<Les
   return data;
 }
 
+// 네 출처가 전부 이 문으로 들어간다. kind를 안 넘기면 인출로 친다 —
+// 지금 화면에서 오는 건 전부 인출이고, 진단·복습·형성은 붙을 때 명시하면 된다.
 export async function submitAnswer(args: {
   docId: string;
   sectionId: string;
   correct: boolean;
   conceptKey?: string;
+  kind?: AttemptKind;
 }): Promise<AnswerOut> {
   const { data } = await apiClient.post<AnswerOut>(
     `${base}/documents/${encodeURIComponent(args.docId)}/sections/${args.sectionId}/answer`,
-    { correct: args.correct, conceptKey: args.conceptKey ?? null },
+    {
+      correct: args.correct,
+      conceptKey: args.conceptKey ?? null,
+      kind: args.kind ?? "retrieval",
+    },
   );
   return data;
 }

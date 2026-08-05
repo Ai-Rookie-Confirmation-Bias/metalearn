@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from .mastery import label
+from .mastery import WEIGHT, label
 from .planner import weak_for_section
 from .schemas import (
     AnswerIn,
@@ -49,6 +49,9 @@ def _sections_out(chapter: Chapter) -> list[SectionOut]:
                 attempts=m.attempts,
                 improving=m.improving,
                 weak_concepts=list(m.weak_concepts),
+                recall=round(m.recall(), 3),
+                needs_review=m.needs_review(),
+                by_kind=dict(m.by_kind),
             )
         )
     return out
@@ -72,11 +75,14 @@ def get_document(doc_id: str) -> DocumentOut:
         doc_id=doc.doc_id,
         title=doc.title,
         readiness=course.readiness,
+        understanding=course.understanding,
         complete=course.complete,
         sections_total=sum(len(c.sections) for c in doc.chapters),
         remaining_sections=course.remaining_sections,
+        sections_due=course.sections_due,
         estimated_minutes=course.estimated_minutes(),
         weakest_chapter=weakest_index,
+        by_kind=course.by_kind,
         chapters=[
             ChapterBrief(
                 index=ch.index,
@@ -88,6 +94,8 @@ def get_document(doc_id: str) -> DocumentOut:
                 status_label=label(summary.status),
                 ratio=summary.ratio,
                 progress=round(summary.progress, 3),
+                recall=summary.recall,
+                sections_due=summary.sections_due,
                 mode=plan.mode,
                 reason=plan.reason,
             )
@@ -114,6 +122,8 @@ def get_chapter(doc_id: str, index: int) -> ChapterOut:
         readiness=course.readiness,
         ratio=summary.ratio,
         progress=round(summary.progress, 3),
+        recall=summary.recall,
+        sections_due=summary.sections_due,
         mode=plan.mode,
         reason=plan.reason,
         weak_concepts=list(plan.weak_concepts),
@@ -172,17 +182,20 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
 
 @router.post("/documents/{doc_id}/sections/{section_id}/answer", response_model=AnswerOut)
 def answer(doc_id: str, section_id: str, body: AnswerIn) -> AnswerOut:
-    """인출 결과 한 건을 기록하고 **바뀐 값을 그 자리에서** 돌려준다.
+    """시도 한 건을 기록하고 **바뀐 값을 그 자리에서** 돌려준다.
 
     이게 있어야 "학습 → 분석 → 커리큘럼 변경"이 화면에서 눈에 보인다.
+    진단·인출·복습·형성이 전부 여기로 들어와 하나의 누적으로 쌓인다(`body.kind`).
     """
     doc = _doc(doc_id)
     found = doc.section(section_id)
     if found is None:
         raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")
+    if body.kind not in WEIGHT:
+        raise HTTPException(422, f"알 수 없는 출처입니다: {body.kind}")
     chapter, _ = found
 
-    state = store.record(section_id, body.correct, body.concept_key)
+    state = store.record(section_id, body.correct, body.concept_key, body.kind)
     course, plans = summarize(doc, store.progress)
     summary, plan = course.chapters[chapter.index], plans[chapter.index]
     return AnswerOut(
@@ -191,8 +204,10 @@ def answer(doc_id: str, section_id: str, body: AnswerIn) -> AnswerOut:
         status_label=label(state.status),
         attempts=state.attempts,
         improving=state.improving,
+        recall=round(state.recall(), 3),
         chapter_ratio=summary.ratio,
         chapter_mode=plan.mode,
         chapter_reason=plan.reason,
         readiness=course.readiness,
+        understanding=course.understanding,
     )

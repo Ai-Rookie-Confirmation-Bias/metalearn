@@ -39,6 +39,8 @@ class ChapterBrief(_Camel):
     status_label: str
     ratio: float  # 이해도 — 시도한 절만으로 낸다
     progress: float  # 진도 — 얼마나 훑었나. 이해도와 다르다
+    recall: float = 0.0  # 회상 강도 — 지금도 꺼내지나(망각곡선)
+    sections_due: int = 0  # 🔁 복습이 필요한 절 수
     mode: str  # deep | normal | compressed
     # ⚡ 왜 분량이 늘거나 줄었는지. 아직 근거가 없으면 빈 문자열
     reason: str = ""
@@ -49,12 +51,19 @@ class DocumentOut(_Camel):
 
     doc_id: str
     title: str
+    # 준비도 = 이해도 × 진도 × 회상 강도. **네 출처가 모여 나오는 하나의 값.**
     readiness: float
+    # 망각을 뺀 값. 준비도가 낮은 게 "잊은 것"인지 "아직 모르는 것"인지 가른다.
+    understanding: float = 0.0
     complete: bool
     sections_total: int
     remaining_sections: int
+    sections_due: int = 0  # 🔁 복습이 필요한 절 수
     estimated_minutes: int
     weakest_chapter: int | None = None
+    # 출처별 푼 문항 수 (diagnostic·retrieval·review·formative).
+    # 누적이 **어디서 왔는지** 화면에 보여주는 값이다.
+    by_kind: dict[str, int] = {}
     chapters: list[ChapterBrief]
 
 
@@ -73,6 +82,10 @@ class SectionOut(_Camel):
     attempts: int
     improving: bool
     weak_concepts: list[str] = []
+    recall: float = 0.0  # 회상 강도 — 0에 가까울수록 잊혀가는 절
+    needs_review: bool = False  # 🔁 복습 대상
+    # 출처별 푼 문항 수. "진단 2 · 학습 5 · 복습 1"로 쓴다
+    by_kind: dict[str, int] = {}
 
 
 class ChapterOut(_Camel):
@@ -86,6 +99,8 @@ class ChapterOut(_Camel):
     readiness: float  # 문서 전체 준비도(머리에 계속 보인다)
     ratio: float
     progress: float
+    recall: float = 0.0
+    sections_due: int = 0
     mode: str
     reason: str = ""
     weak_concepts: list[str] = []
@@ -134,10 +149,16 @@ class LessonOut(_Camel):
 
 
 class AnswerIn(_Camel):
-    """인출 결과 한 건."""
+    """시도 한 건. **네 출처가 전부 이 문으로 들어온다.**
+
+    `kind`를 안 받으면 나중에 진단·복습·형성을 붙일 때 가중을 못 준다. 지금
+    화면에서 오는 건 전부 인출이라 기본값을 그렇게 뒀다.
+    """
 
     correct: bool
     concept_key: str | None = None
+    # diagnostic | retrieval | review | formative
+    kind: str = "retrieval"
 
 
 class AnswerOut(_Camel):
@@ -148,7 +169,9 @@ class AnswerOut(_Camel):
     status_label: str
     attempts: int
     improving: bool
+    recall: float = 0.0
     chapter_ratio: float
     chapter_mode: str
     chapter_reason: str = ""
     readiness: float
+    understanding: float = 0.0

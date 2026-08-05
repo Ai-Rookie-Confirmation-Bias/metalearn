@@ -22,6 +22,7 @@ from pathlib import Path
 
 from .grouping import Concept, Section, group_into_sections
 from .mastery import (
+    RETRIEVAL,
     ChapterMastery,
     CourseMastery,
     SectionMastery,
@@ -166,10 +167,21 @@ class Store:
             self.documents[doc.doc_id] = doc
         return list(self.documents)
 
-    def record(self, section_id: str, correct: bool, concept_key: str | None) -> SectionMastery:
+    def record(
+        self,
+        section_id: str,
+        correct: bool,
+        concept_key: str | None,
+        kind: str = RETRIEVAL,
+    ) -> SectionMastery:
+        """시도 하나를 누적한다. **진단·인출·복습·형성이 전부 이 문을 지난다.**
+
+        지금 화면에서 오는 건 전부 인출이라 기본값을 그렇게 뒀다. 나머지 셋은
+        붙일 때 `kind`만 넘기면 되고, 여기부터 아래는 손댈 게 없다.
+        """
         from .mastery import record
 
-        state = record(self.progress.of(section_id), correct, concept_key)
+        state = record(self.progress.of(section_id), correct, concept_key, kind)
         self.progress.sections[section_id] = state
         if not correct and concept_key:
             rw = self.progress.recent_wrong

@@ -75,6 +75,11 @@ export function ChapterPage() {
                 </p>
               </div>
               <div className="flex flex-shrink-0 items-center gap-1.5">
+                {/* 맞힌 적 있는데 잊혀가는 절. 아직 못 맞힌 절은 여기가 아니라
+                    상태 배지(약함/학습 중)가 잡는다 — 처방이 다르다. */}
+                {s.needsReview && (
+                  <span className="text-[0.7rem] font-semibold text-amber-700">🔁 복습</span>
+                )}
                 {s.improving && (
                   <span className="text-[0.7rem] font-semibold text-emerald-600">↗ 나아짐</span>
                 )}

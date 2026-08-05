@@ -9,12 +9,18 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.features.curriculum.mastery import (  # noqa: E402
+    DAY,
+    DIAGNOSTIC,
+    FORMATIVE,
     LEARNING,
+    RETRIEVAL,
+    REVIEW,
     SOLID_S,
     UNTOUCHED,
     WEAK,
     SectionMastery,
     chapter_summary,
+    course_summary,
     record,
 )
 from app.features.curriculum.planner import (  # noqa: E402
@@ -26,10 +32,19 @@ from app.features.curriculum.planner import (  # noqa: E402
 )
 
 
-def _run(section_id: str, results: list[bool], concept: str | None = None):
+NOW = 1_760_000_000.0  # 시계를 고정한다 — 망각 테스트가 실행 시각에 흔들리면 안 된다
+
+
+def _run(
+    section_id: str,
+    results: list[bool],
+    concept: str | None = None,
+    kind: str = RETRIEVAL,
+    at: float = NOW,
+):
     s = SectionMastery(section_id)
     for r in results:
-        s = record(s, r, concept)
+        s = record(s, r, concept, kind, at)
     return s
 
 
@@ -90,6 +105,105 @@ def test_기록은_원본을_바꾸지_않는다():
     assert a.attempts == 0 and b.attempts == 1
 
 
+# ── 네 출처의 누적 ─────────────────────────────────────────────────
+
+
+def test_출처마다_무게가_다르다():
+    # 진단 오답은 "아직 안 배운 것"이지 무지의 증거가 아니다. 복습 정답은
+    # 시간이 지나고도 꺼낸 것이라 방금 읽고 맞힌 것보다 센 증거다.
+    assert _run("s", [True], kind=DIAGNOSTIC).weight == 0.5
+    assert _run("s", [True], kind=RETRIEVAL).weight == 1.0
+    assert _run("s", [True], kind=REVIEW).weight == 1.5
+    assert _run("s", [True], kind=FORMATIVE).weight == 2.0
+
+
+def test_진단_오답은_인출_정답에_금방_덮인다():
+    # 배우기 전 틀린 것이 영원히 발목을 잡으면 "나아졌다"를 못 보여준다.
+    s = SectionMastery("s")
+    s = record(s, False, None, DIAGNOSTIC, NOW)  # 진단에서 틀림
+    s = record(s, True, None, RETRIEVAL, NOW)  # 배우고 맞힘
+    s = record(s, True, None, RETRIEVAL, NOW)
+    s = record(s, True, None, RETRIEVAL, NOW)
+    assert s.ratio >= 0.8, s.ratio  # 같은 무게였다면 0.75로 못 넘는다
+    assert s.status == SOLID_S
+
+
+def test_네_출처가_한_값으로_쌓인다():
+    s = SectionMastery("s")
+    s = record(s, True, None, DIAGNOSTIC, NOW)
+    s = record(s, True, None, RETRIEVAL, NOW)
+    s = record(s, True, None, REVIEW, NOW)
+    s = record(s, True, None, FORMATIVE, NOW)
+    assert s.attempts == 4
+    assert s.weight == 5.0 and s.score == 5.0
+    assert s.by_kind == {DIAGNOSTIC: 1, RETRIEVAL: 1, REVIEW: 1, FORMATIVE: 1}
+
+
+def test_판정_자격은_가중으로_본다():
+    # 진단만 2문제(1.0)로는 판정 못 한다. 인출 3문제(3.0)면 한다.
+    assert _run("s", [True, True], kind=DIAGNOSTIC).status == LEARNING
+    assert _run("s", [True, True, True], kind=RETRIEVAL).status == SOLID_S
+    # 형성 2문제(4.0)면 그것만으로 충분하다
+    assert _run("s", [True, True], kind=FORMATIVE).status == SOLID_S
+
+
+# ── 망각곡선 ───────────────────────────────────────────────────────
+
+
+def test_안_풀었으면_회상_강도가_0():
+    assert SectionMastery("s").recall(NOW) == 0.0
+
+
+def test_틀리기만_했으면_회상_강도가_0():
+    # 못 꺼냈는데 "방금 꺼냈다"로 치면 복습이 안 돌아온다.
+    assert _run("s", [False, False]).recall(NOW) == 0.0
+
+
+def test_시간이_지나면_회상_강도가_떨어진다():
+    s = _run("s", [True])
+    assert s.recall(NOW) == 1.0
+    assert s.recall(NOW + 30 * DAY) < 0.2
+
+
+def test_망각은_이해도를_깎지_않는다():
+    # 가만히 있는데 이해도가 내려가면 화면에서 설명할 수 없다.
+    # 3연속 정답이면 반감기가 17.5일이라 30일 뒤 0.3 언저리다(실측).
+    s = _run("s", [True, True, True])
+    assert s.ratio == 1.0
+    assert s.recall(NOW + 30 * DAY) < 0.5
+    assert s.ratio == 1.0  # 그대로다
+
+
+def test_연속으로_맞히면_오래_간다():
+    # 한 번 맞힌 것과 세 번 연속 맞힌 것을 같은 속도로 잊는다고 보면
+    # 복습이 끝없이 돌아온다.
+    once = _run("s", [True])
+    thrice = _run("s", [True, True, True])
+    assert thrice.half_life > once.half_life
+    later = NOW + 7 * DAY
+    assert thrice.recall(later) > once.recall(later)
+
+
+def test_틀리면_연속이_끊긴다():
+    s = _run("s", [True, True, True, False])
+    assert s.streak == 0
+
+
+def test_잊혀가는_절이_복습_대상():
+    # 이해도가 낮은 절이 아니라 잊혀가는 절이다.
+    s = _run("s", [True, True, True])
+    assert not s.needs_review(NOW)
+    assert s.needs_review(NOW + 30 * DAY)
+
+
+def test_한_번도_못_맞힌_절은_복습이_아니다():
+    # 실측 사고: 형성평가 오답 1건뿐인 절이 "복습 대기"로 잡혔다.
+    # 그건 아직 모르는 것이라 처방이 다르다 — 설명부터 다시 봐야 한다.
+    s = _run("s", [False], kind=FORMATIVE)
+    assert not s.needs_review(NOW)
+    assert s.status in (LEARNING, WEAK)  # 이쪽이 잡는다
+
+
 # ── 목차 집계 ──────────────────────────────────────────────────────
 
 
@@ -114,6 +228,53 @@ def test_절을_넘나드는_약점을_모은다():
         _run("s2", [False], concept="캐시"),
     ]
     assert chapter_summary("1장", states).weak_concepts == ("캐시",)
+
+
+def test_목차도_출처별로_센다():
+    states = [
+        _run("s1", [True], kind=DIAGNOSTIC),
+        _run("s2", [True, True], kind=RETRIEVAL),
+    ]
+    c = chapter_summary("1장", states, NOW)
+    assert c.by_kind == {DIAGNOSTIC: 1, RETRIEVAL: 2}
+    assert c.attempts == 3 and c.weight == 2.5
+
+
+def test_목차가_복습_대상_절을_센다():
+    states = [_run("s1", [True]), _run("s2", [True]), SectionMastery("s3")]
+    assert chapter_summary("1장", states, NOW).sections_due == 0
+    assert chapter_summary("1장", states, NOW + 30 * DAY).sections_due == 2
+
+
+# ── 과목 전체: 하나의 누적값 ────────────────────────────────────────
+
+
+def test_준비도는_이해도_진도_회상을_곱한다():
+    # 하나라도 0이면 준비된 게 아니다.
+    states = [_run(f"s{i}", [True, True, True]) for i in range(4)]
+    course = course_summary([chapter_summary("1장", states, NOW)])
+    assert course.readiness == 1.0
+
+    # 절반만 봤으면 이해도가 만점이어도 준비는 절반
+    half = states[:2] + [SectionMastery("s2"), SectionMastery("s3")]
+    course = course_summary([chapter_summary("1장", half, NOW)])
+    assert 0.4 < course.readiness < 0.6, course.readiness
+
+
+def test_잊으면_준비도만_떨어지고_이해도는_남는다():
+    # 준비도가 낮은 게 "잊은 것"인지 "아직 모르는 것"인지 갈라야 처방이 나온다.
+    states = [_run(f"s{i}", [True, True, True]) for i in range(4)]
+    ch = chapter_summary("1장", states, NOW + 30 * DAY)
+    course = course_summary([ch])
+    assert course.understanding == 1.0  # 이해는 그대로
+    assert course.readiness < 0.5  # 지금 꺼내지진 않는다 — 절반 밑으로
+    assert course.sections_due == 4  # 전부 복습 대상
+
+
+def test_출처별_문항_수가_전체로_모인다():
+    a = chapter_summary("1장", [_run("s1", [True], kind=DIAGNOSTIC)], NOW)
+    b = chapter_summary("2장", [_run("s2", [True, True], kind=REVIEW)], NOW)
+    assert course_summary([a, b]).by_kind == {DIAGNOSTIC: 1, REVIEW: 2}
 
 
 # ── 배분 ───────────────────────────────────────────────────────────
