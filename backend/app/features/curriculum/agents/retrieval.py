@@ -16,13 +16,33 @@
   · 설명은 개념들을 **연결해서** 쓰므로 관계를 묻는 문항이 나올 수 있다
   · 정의문을 옮기지 말라고 할 근거가 생긴다(옮길 정의가 재료가 아니므로)
 
-## 자기 품질을 자기가 잰다
+## 자기 품질을 자기가 잰다 — 두 가지를 잰다
 
 `retrieval_level`이 판정한다. 시키는 쪽과 재는 쪽이 같으면 자기 채점이 되므로
-판정은 순수 로직에 두고 여기서 호출만 한다. L1(정의 되읽기)이 과하면 **어느
-문항이 왜 걸렸는지 붙여서 한 번 재시도**한다.
+판정은 순수 로직에 두고 여기서 호출만 한다.
+
+```
+품질  L1(정의 되읽기)이 과한가   → 전체를 다시 만들고 나은 쪽을 쓴다
+누락  안 물어본 개념이 있는가     → 그 개념만 다시 요청해 덧붙인다
+```
+
+**둘의 처방이 다르다.** L1이 높으면 만드는 방식이 잘못된 것이라 다시 만들어야
+하고, 누락은 나머지가 멀쩡하므로 **부족분만 채우면 된다.** 누락을 전체 재생성으로
+고치려 하면 잘 나온 문항까지 흔들린다.
 
 ⚠️ 재시도 결과가 더 나쁘면 처음 것을 쓴다. 개선하려다 문항을 잃으면 손해다.
+보충은 덧붙이기라 이 위험이 없다 — 그래서 재생성이 아니라 보충으로 짰다.
+
+## 왜 게이트가 필요한가 (실측)
+
+"빈칸은 개념마다 하나씩"이라고 **프롬프트로 요구만 하고 강제가 없었다.**
+14절 실측: 인출된 개념 39/48 = 81%, 빠짐 없는 절 6/14 = 43%. 재시도는
+**한 번도 안 걸렸다** — L1만 보고 있었고 `gap`은 계산해서 화면에 내보내기만
+했기 때문이다. 인출을 절 단위 → 개념 단위로 바꿀 때 고쳤다고 생각한 문제가
+단위만 바뀐 채 그대로 남아 있었다.
+
+안 물어본 개념은 숙련도에 **영영 미측정으로 남는다.** 누적 모델(`mastery`)의
+입력이 비는 것이라 개인화 전체가 그만큼 헐거워진다.
 """
 from __future__ import annotations
 
@@ -44,6 +64,8 @@ from ..retrieval_level import L1_RECALL, assess_cloze, assess_mcq, mix
 MAX_L1_RATIO = 0.5
 # 재시도는 한 번만. 두 번째도 안 되면 재료 문제라 프롬프트로는 못 고친다.
 MAX_RETRY = 1
+# 누락 보충도 한 번만. 두 번 요청해도 안 나오면 그 개념은 설명에 재료가 없는 것이다.
+MAX_FILL = 1
 # 설명 본문을 프롬프트에 붙일 때의 상한.
 MAX_EXPLANATION_CHARS = 1200
 
@@ -54,6 +76,8 @@ class RetrievalResult:
     levels: dict[str, int]
     gap: tuple[str, ...]
     retried: bool = False
+    # 보충으로 채운 개념. 게이트가 실제로 일했는지 보는 값이다
+    filled: tuple[str, ...] = ()
 
     @property
     def l1_ratio(self) -> float:
@@ -156,6 +180,97 @@ def build_prompt(
 answer와 concept는 {keys} 중 하나를 정확히 쓴다(성질 유형의 answer는 예외)."""
 
 
+def build_fill_prompt(
+    section_title: str,
+    concepts: list[ConceptBrief],
+    missing: list[ConceptBrief],
+    explanation: str,
+    source_text: str = "",
+) -> str:
+    """**빠진 개념만** 다시 요청하는 프롬프트.
+
+    전체 재생성이 아니라 보충인 이유: 나머지 문항은 멀쩡하다. 다시 만들면
+    잘 나온 것까지 흔들리고, 실측에서 같은 절이 생성마다 빈칸 1개↔5개로
+    출렁였다. 부족분만 받아 덧붙이면 결과가 단조 증가한다.
+
+    범위를 좁혀서 주는 것도 요점이다 — 개념 10개 중 2개가 빠졌을 때 10개를
+    다시 시키면 또 8개만 만든다. 2개만 시키면 2개를 만든다.
+    """
+    body = explanation.strip()[:MAX_EXPLANATION_CHARS]
+    listing = "\n".join(f"- **{c.key}** — {c.definition}" for c in missing)
+    others = ", ".join(c.key for c in concepts if c not in missing)
+
+    source_part = ""
+    if source_text.strip():
+        source_part = (
+            "\n<교재 원문>\n" + clip_around(source_text.strip(), missing) + "\n</교재 원문>\n"
+        )
+
+    examples = ",\n    ".join(
+        f'{{"kind": "상황", "sentence": "그런 상황에서 쓰는 것이 ____ 다.", '
+        f'"answer": "{c.key}", "concept": "{c.key}"}}'
+        for c in missing
+    )
+
+    return f"""너는 인출 문항을 만드는 에이전트다. **빠진 것만 채운다.**
+
+학습자는 아래 설명을 방금 읽었다.
+
+<학습자가 읽은 설명>
+{body}
+</학습자가 읽은 설명>
+{source_part}
+[아직 한 번도 안 물어본 개념 {len(missing)}개]
+{listing}
+
+{f"※ {others} 는 이미 문항이 있다. **다시 만들지 마라.**" if others else ""}
+
+[규칙]
+1. **위 {len(missing)}개 개념에 대해 빈칸을 하나씩, 정확히 {len(missing)}개** 만든다.
+   다른 개념 문항은 만들지 마라.
+2. ★ **설명이나 정의를 그대로 옮겨 적지 마라.** 문장을 복사해 이름만 비우면
+   학습자는 개념이 아니라 그 문장을 외웠는지만 확인받는다. 다른 말로 다시 써라.
+3. **조사나 서술어를 비우지 마라** — 문법으로 풀려 인출이 안 된다.
+4. 문장 하나에 빈칸은 하나. concept에 어느 개념인지 정확히 적는다.
+
+아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
+{{
+  "cloze": [
+    {examples}
+  ]
+}}"""
+
+
+async def _fill(
+    section_title: str,
+    concepts: list[ConceptBrief],
+    gap: tuple[str, ...],
+    explanation: str,
+    source_text: str,
+    grounds: str,
+) -> list[Block]:
+    """빠진 개념의 빈칸만 받아 온다. 실패하면 빈 목록 — 기존 문항은 안 건드린다."""
+    missing = [c for c in concepts if c.key in gap]
+    if not missing:
+        return []
+    prompt = build_fill_prompt(section_title, concepts, missing, explanation, source_text)
+    try:
+        raw = await solar_client.generate(
+            prompt, response_format={"type": "json_object"}, temperature=0.4
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[retrieval] 보충 실패 {section_title}: {type(e).__name__}: {e}")
+        return []
+    # 빠진 개념 것만 받는다. 이미 있는 개념을 또 만들어 오면 버린다 —
+    # 안 그러면 한 개념에 빈칸 둘이 붙어 다른 개념 자리를 먹는다.
+    want = set(gap)
+    return [
+        b
+        for b in parse_response(raw, concepts, grounds)
+        if b.type == "cloze" and set(b.concept_keys) & want
+    ]
+
+
 def _levels_of(blocks: list[Block], concepts: list[ConceptBrief], source: str) -> list[int]:
     defs = {c.key: c.definition for c in concepts}
     keys = [c.key for c in concepts]
@@ -193,9 +308,10 @@ async def generate(
     explanation: str,
     source_text: str = "",
 ) -> RetrievalResult:
-    """인출 문항을 만들고 **스스로 재서** 필요하면 한 번 다시 만든다."""
+    """인출 문항을 만들고 **스스로 재서** 품질은 다시 만들고 누락은 채운다."""
     best: RetrievalResult | None = None
     feedback = ""
+    grounds = "\n".join(x for x in (source_text, explanation) if x)
 
     for attempt in range(MAX_RETRY + 1):
         prompt = build_prompt(section_title, concepts, explanation, source_text, feedback)
@@ -211,7 +327,6 @@ async def generate(
         #   설명이 1차 근거다. 원문만 보면 "성질" 유형이 전부 걸린다 —
         #   실측에서 답이 `계획부터 유지보수까지`·`위에서 아래로`처럼 개념명이
         #   아닌 것들이 다 잘려 6절 중 4절이 빈칸 0개가 됐다.
-        grounds = "\n".join(x for x in (source_text, explanation) if x)
         blocks = [
             b for b in parse_response(raw, concepts, grounds) if b.type in ("cloze", "mcq")
         ]
@@ -235,4 +350,29 @@ async def generate(
         if not feedback:
             break
 
-    return best or RetrievalResult(blocks=(), levels=mix([]), gap=())
+    if best is None or not best.blocks:
+        return best or RetrievalResult(blocks=(), levels=mix([]), gap=())
+
+    # ── 누락 보충 ──────────────────────────────────────────────────
+    # 여기가 없어서 "개념마다 하나씩"이 프롬프트의 부탁으로만 남아 있었다.
+    # 실측 81% → 아래 참조. 덧붙이기라 결과가 나빠질 수 없다.
+    for _ in range(MAX_FILL):
+        if not best.gap:
+            break
+        added = await _fill(
+            section_title, concepts, best.gap, explanation, source_text, grounds
+        )
+        if not added:
+            break  # 두 번 시켜도 같다. 그 개념은 설명에 재료가 없는 것이다
+        merged = list(best.blocks) + added
+        # 객관식이 뒤에 오도록 — 화면이 빈칸 먼저 보여주고 객관식으로 닫는다
+        merged.sort(key=lambda b: b.type == "mcq")
+        best = RetrievalResult(
+            blocks=tuple(merged),
+            levels=mix(_levels_of(merged, concepts, source_text)),
+            gap=tuple(retrieval_gap(merged, concepts)),
+            retried=best.retried,
+            filled=best.filled + tuple(k for b in added for k in b.concept_keys),
+        )
+
+    return best
