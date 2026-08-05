@@ -1,10 +1,9 @@
 // [화면 2] 목차 하나 — 학습 순서와 왜 이렇게 나왔는지.
 //
-// 절마다 붙는 ⚡는 **규칙이 만든 문장 그대로**다("교재가 이 6개를 같은 표에 묶어
-// 설명합니다"). 판단을 LLM이 했다면 못 쓰는 문장이고, 이게 화면에 보이는 게
-// "AI가 내 커리큘럼을 만들었다"를 느끼게 하는 지점이다.
+// 화면(슬라이스)마다 붙는 ⚡는 **규칙이 만든 문장 그대로**다. 단순 자르기에는
+// reason이 비어 있어 ⚡가 안 뜬다. plan·tie_in처럼 실제로 바뀐 것만 표시한다.
 //
-// 채점은 여기서 안 한다 — 절 상세 화면에서 실제로 꺼내보고 그 결과가 올라온다.
+// 채점은 여기서 안 한다 — 화면 상세에서 실제로 꺼내보고 그 결과가 올라온다.
 import { Link, useParams } from "react-router-dom";
 
 import { Bar, ModeBadge, Reason, StatusBadge, pct } from "@/features/curriculum/components/bits";
@@ -33,7 +32,7 @@ export function ChapterPage() {
           <ModeBadge mode={data.mode} />
         </div>
         <p className="mt-1 text-[0.8rem] text-text-tertiary">
-          절 {data.sections.length}개{data.pages && <> · 📖 {data.pages}</>}
+          화면 {data.sections.length}개{data.pages && <> · 📖 {data.pages}</>}
         </p>
 
         <div className="mt-4 flex gap-8">
@@ -66,7 +65,7 @@ export function ChapterPage() {
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-[0.7rem] font-semibold text-text-tertiary">
-                  {s.order + 1}번째 절
+                  {s.order + 1}번째 화면
                 </p>
                 <p className="font-semibold text-text-primary">{s.title}</p>
                 <p className="mt-0.5 text-[0.75rem] text-text-tertiary">
@@ -75,7 +74,7 @@ export function ChapterPage() {
                 </p>
               </div>
               <div className="flex flex-shrink-0 items-center gap-1.5">
-                {/* 맞힌 적 있는데 잊혀가는 절. 아직 못 맞힌 절은 여기가 아니라
+                {/* 맞힌 적 있는데 잊혀가는 화면. 아직 못 맞힌 건 여기가 아니라
                     상태 배지(약함/학습 중)가 잡는다 — 처방이 다르다. */}
                 {s.needsReview && (
                   <span className="text-[0.7rem] font-semibold text-amber-700">🔁 복습</span>
@@ -87,11 +86,11 @@ export function ChapterPage() {
               </div>
             </div>
 
-            {/* 절 제목은 대표 개념 이름을 그대로 쓰는 일이 많다(실측 54%).
+            {/* 화면 제목은 대표 개념 이름을 그대로 쓰는 일이 많다.
                 라벨 없이 나열하면 제목과 개념이 구분이 안 된다. */}
             <div className="mt-2">
               <p className="text-[0.7rem] font-semibold text-text-tertiary">
-                이 절에서 배우는 개념
+                이 화면에서 배우는 개념
               </p>
               <p className="mt-0.5 text-[0.8rem] text-text-secondary">
                 {s.concepts.map((c, i) => (

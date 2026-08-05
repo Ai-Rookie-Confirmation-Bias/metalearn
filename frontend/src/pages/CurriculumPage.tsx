@@ -74,7 +74,7 @@ export function CurriculumPage() {
           <Bar value={data.readiness} />
         </div>
         <p className="mt-2 text-[0.8rem] text-text-tertiary">
-          남은 절 {data.remainingSections} / {data.sectionsTotal} · 예상{" "}
+          남은 화면 {data.remainingSections} / {data.sectionsTotal} · 예상{" "}
           {hours > 0 ? `${hours}시간 ` : ""}
           {mins}분
         </p>
@@ -95,7 +95,7 @@ export function CurriculumPage() {
         {forgotten >= 0.05 && (
           <p className="mt-2 rounded-lg bg-amber-50/70 px-3 py-2 text-[0.8rem] text-amber-800">
             🔁 이해한 건 {pct(data.understanding)}인데 지금 꺼낼 수 있는 건{" "}
-            {pct(data.readiness)}입니다. 복습이 필요한 절 {data.sectionsDue}개.
+            {pct(data.readiness)}입니다. 복습이 필요한 화면 {data.sectionsDue}개.
           </p>
         )}
       </header>
@@ -111,7 +111,7 @@ export function CurriculumPage() {
                 <div className="min-w-0">
                   <p className="truncate font-semibold text-text-primary">{ch.title}</p>
                   <p className="mt-0.5 text-[0.75rem] text-text-tertiary">
-                    절 {ch.sectionsDone}/{ch.sectionsTotal}
+                    화면 {ch.sectionsDone}/{ch.sectionsTotal}
                     {ch.pages && <> · 📖 {ch.pages}</>}
                   </p>
                 </div>
