@@ -19,6 +19,9 @@ from app.features.curriculum.agents.retrieval import (  # noqa: E402
     _levels_of,
     build_fill_prompt,
 )
+from app.features.curriculum.agents.retrieval import (  # noqa: E402
+    build_prompt as build_prompt_retrieval,
+)
 from app.features.curriculum.blocks import Block, ConceptBrief, parse_response  # noqa: E402
 from app.features.curriculum.planner import COMPRESSED, mode_block  # noqa: E402
 from app.features.curriculum.retrieval_label import scrub_blocks  # noqa: E402
@@ -169,6 +172,29 @@ def test_보충_예시가_스스로_필터를_통과한다():
     raw = json.dumps({"cloze": [json.loads(e) for e in examples]}, ensure_ascii=False)
     blocks = [b for b in parse_response(raw, CONCEPTS, "설명") if b.type == "cloze"]
     assert len(blocks) == len(CONCEPTS), f"예시를 베끼면 {len(blocks)}개만 남는다"
+
+
+def test_인출_예시가_스스로_필터를_통과한다():
+    # ★ 여덟 번째. 보충 프롬프트는 위 테스트로 잠갔는데 **인출 본체는 안 잠겨
+    # 있었다.** "상황" 예시가 아래 문장으로 하드코딩돼 있었다:
+    #     "팀이 그런 방식으로 일하고 있다면 그것은 ____ 다."
+    # 공통점 없는 두 교재가 이 문장을 글자 그대로 냈다(12화면 44빈칸 중 8개).
+    # 지시어가 문장 **중간**에 있어 `_DEICTIC_STARTS`(시작만 검사)를 통과하고,
+    # 완성된 문장이라 `_TEMPLATE_MARKERS`도 안 걸린다.
+    p = build_prompt_retrieval("모듈", CONCEPTS, "설명", "결합도는 모듈 사이의 관련 정도다.")
+    examples = re.findall(r'\{"kind".*?\}', p, re.S)
+    assert examples, "예시가 프롬프트에 없다"
+
+    # ① 예시 문장에 개념 정의에서 온 단서가 실제로 들어갔는가 (하드코딩 회귀 방지)
+    first = json.loads(examples[0])
+    assert CONCEPTS[0].definition.rstrip(".") in first["sentence"], (
+        f"상황 예시가 개념으로 완성되지 않았다: {first['sentence']}"
+    )
+
+    # ② 베껴도 통과하는가 — 예시를 그대로 응답인 척 넣어본다.
+    raw = json.dumps({"cloze": [json.loads(e) for e in examples]}, ensure_ascii=False)
+    kept = [b for b in parse_response(raw, CONCEPTS, "설명") if b.type == "cloze"]
+    assert kept, f"예시를 베끼면 전부 버려진다: {[json.loads(e)['sentence'] for e in examples]}"
 
 
 # ⚠️ 새 테스트는 **이 위에** 쓴다. 아래 `__main__` 블록보다 뒤에 정의하면
