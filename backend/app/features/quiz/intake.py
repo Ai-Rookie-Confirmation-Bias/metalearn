@@ -44,6 +44,22 @@ def validate_document(doc: ParsedDocument, config: QuizGenConfig) -> ParseReport
 def _validate_chunk(chunk, report: ParseReport) -> None:
     n = len(chunk.raw_text)
     prev_end = 0
+
+    # 원문이 있는데 앵커가 하나도 없으면 **하드 실패다.**
+    #
+    # ⚠️ 예전엔 아래 커버리지 검사가 `if chunk.sentences and …`라서, 빈 배열이면
+    #    검사를 통째로 건너뛰고 **오류 0·경고 0**이 나왔다. 실측으로 확인했다:
+    #    문장 없는 문서를 넣었더니 "무결성 통과"가 떴다.
+    #    이 파일이 존재하는 이유가 "하류가 전부 앵커 offset을 믿고 동작하므로
+    #    어긋난 데이터를 조기에 거른다"인데, 앵커가 아예 없는 건 가장 크게
+    #    어긋난 경우다. **미측정이 합격으로 보이면 안 된다.**
+    if n and not chunk.sentences:
+        report.errors.append(
+            f"조각 #{chunk.index}: 원문 {n}자인데 문장 앵커가 0개 "
+            f"— 근거 표시가 전부 offset에 의존한다"
+        )
+        return
+
     for i, a in enumerate(chunk.sentences):
         if not (0 <= a.start < a.end <= n):
             report.errors.append(
@@ -55,6 +71,7 @@ def _validate_chunk(chunk, report: ParseReport) -> None:
         prev_end = a.end
 
     # 커버리지: 앵커가 원문 끝까지 닿는지 (파서의 '커버리지 100%' 주장 검증)
+    # 위에서 빈 앵커를 이미 걸렀으므로 여기 `chunk.sentences`는 항상 참이다.
     if chunk.sentences and prev_end < n * 0.95:
         report.warnings.append(
             f"조각 #{chunk.index}: 앵커 커버리지 {prev_end}/{n}자 — 뒷부분 문장 누락 의심"

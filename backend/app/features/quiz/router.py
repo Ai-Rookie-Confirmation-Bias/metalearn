@@ -1,12 +1,15 @@
 """[1.Controller] 문제 페이지 API (docs/QUIZ.md §2-⑧).
 
 풀이 경로(요약·세션·채점)는 LLM 호출 0 — DB 조회만.
-생성 트리거는 파싱 완료 시 내부 호출이 정석이나, 파이프라인이 붙기 전까지
-파싱 결과 JSON을 직접 받는 엔드포인트로 노출한다 (팀원 계약 = 요청 바디).
+
+생성은 두 문이 있다.
+  · `/quiz/generate`               파싱 결과 JSON을 **요청 바디로** 받는다
+  · `/quiz/from-parsing/{doc_id}`  파싱 DB에서 **서버가 직접** 읽어 온다
+앞의 것은 파싱이 붙기 전에 쓰던 문이고, 지금 정상 경로는 뒤쪽이다.
 """
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
@@ -14,11 +17,7 @@ from app.core.config import settings
 from app.core.database import get_db
 from app.core.llm.exaone import exaone_client
 from app.core.llm.solar import solar_client
-
-
-def _verify_llm():
-    """EXAONE 키가 설정돼 있으면 교차 검증 모델로 사용, 없으면 Solar 단일."""
-    return exaone_client if settings.EXAONE_API_KEY else None
+from app.features.quiz import bridge
 from app.features.quiz.schemas import (
     AttemptRequest,
     AttemptResponse,
@@ -28,6 +27,12 @@ from app.features.quiz.schemas import (
     SessionResponse,
 )
 from app.features.quiz.service import QuizService
+
+
+def _verify_llm():
+    """EXAONE 키가 설정돼 있으면 교차 검증 모델로 사용, 없으면 Solar 단일."""
+    return exaone_client if settings.EXAONE_API_KEY else None
+
 
 router = APIRouter()
 
@@ -59,6 +64,53 @@ async def generate_bank(
         stem_patterns=req.stem_patterns,
     )
     if not result.report.ok:
+        raise HTTPException(status_code=422, detail=result.report.errors)
+    return GenerateBankResponse(
+        saved=result.saved,
+        discarded=result.discarded,
+        report_errors=result.report.errors,
+        report_warnings=result.report.warnings,
+    )
+
+
+@router.post(
+    "/courses/{course_id}/quiz/from-parsing/{document_id}",
+    response_model=GenerateBankResponse,
+)
+async def generate_bank_from_parsing(
+    course_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Session = Depends(get_db),
+    budget: int | None = Query(
+        None, ge=1, le=200, description="목차당 문항 예산. 안 주면 기본 배분"
+    ),
+) -> GenerateBankResponse:
+    """파싱이 끝난 문서로 문제은행을 만든다.
+
+    ⚠️ **읽기 요청에 딸려 돌게 하지 않는다.** 커리큘럼은 목록을 열 때 자동
+       주입하지만(싼 변환), 문항 생성은 조각마다 LLM을 여러 번 부른다.
+       업로드·재파싱이 끝난 뒤 명시적으로 부르는 문이다.
+
+    같은 문서를 다시 부르면 그 문서의 기존 문항을 **교체**한다.
+    """
+    from app.features.quiz.schemas import QuizGenConfig
+
+    config = QuizGenConfig(toc_min=budget, toc_max=budget) if budget else None
+    try:
+        result = await bridge.generate_from_parsing(
+            db,
+            solar_client,
+            course_id,
+            document_id,
+            verify_llm=_verify_llm(),
+            config=config,
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if not result.report.ok:
+        # 파싱 산출물이 계약을 어긴 것이라 사유를 그대로 돌려준다 —
+        # 파싱 쪽에 되돌릴 수 있는 형태여야 한다.
         raise HTTPException(status_code=422, detail=result.report.errors)
     return GenerateBankResponse(
         saved=result.saved,
