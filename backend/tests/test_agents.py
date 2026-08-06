@@ -128,6 +128,14 @@ def test_약점이_있으면_필드를_연다():
     assert "억지로" in p and "null" in p
 
 
+def test_분량_모드가_프롬프트에_붙는다():
+    # plan.mode가 화면에만 뜨고 설명에 안 들어가면 거짓이다.
+    plain = build_prompt("모듈", CONCEPTS)
+    deep = build_prompt("모듈", CONCEPTS, mode_block="[이 단원의 분량 — 설명을 늘림]\n- 길게")
+    assert "이 단원의 분량" not in plain
+    assert "이 단원의 분량" in deep and "길게" in deep
+
+
 def _main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

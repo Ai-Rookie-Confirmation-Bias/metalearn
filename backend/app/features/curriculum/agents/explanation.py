@@ -72,6 +72,7 @@ def build_prompt(
     profile_block: str = "",
     source_text: str = "",
     weak_concepts: tuple[str, ...] = (),
+    mode_block: str = "",
 ) -> str:
     listing = "\n".join(f"- **{c.key}** — {c.definition}" for c in concepts)
 
@@ -83,6 +84,7 @@ def build_prompt(
             "  섞여 있을 수 있다. 읽어서 이해하되 잡음은 버려라.\n"
         )
     profile_part = f"\n{profile_block}\n" if profile_block else "\n"
+    mode_part = f"\n{mode_block}\n" if mode_block else ""
 
     # 이 학습자가 최근 틀린 개념 중 이 절과 이어지는 것. 없으면 아무 말도 안 한다.
     weak_part = ""
@@ -117,7 +119,7 @@ def build_prompt(
 3. **비유**: 이해를 돕는 장치이므로 **원문 밖에서 가져와도 된다.** 일상 경험에
    빗대라. 쓰지 않을 거면 JSON null을 넣어라.
 4. 학습자가 읽을 글이다. "정의에 따르면" 같은 메타 표현은 쓰지 마라.
-{weak_part}{profile_part}
+{weak_part}{profile_part}{mode_part}
 아래 JSON 객체 하나만 출력한다(설명·코드펜스 금지):
 {_SCHEMA_WITH_TIE_IN if weak_concepts else _SCHEMA}"""
 
@@ -128,9 +130,15 @@ async def generate(
     profile_block: str = "",
     source_text: str = "",
     weak_concepts: tuple[str, ...] = (),
+    mode_block: str = "",
 ) -> ExplanationResult:
     prompt = build_prompt(
-        section_title, concepts, profile_block, source_text, weak_concepts
+        section_title,
+        concepts,
+        profile_block,
+        source_text,
+        weak_concepts,
+        mode_block,
     )
     try:
         raw = await solar_client.generate(

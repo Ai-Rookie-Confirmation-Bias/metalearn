@@ -153,6 +153,38 @@ def prompt_block(profile: Profile) -> str:
     return "[이 학습자에게 맞춘 설명 방식]\n" + "\n".join(lines)
 
 
+def fixture_profile(name: str | None = None) -> Profile:
+    """데모·온보딩 전용 성향. 평가 UI가 없을 때 생성에 쓸 고정값.
+
+    환경변수 `CURRICULUM_PROFILE`:
+      metaphor(기본)  비유·예시 선호 — 지시가 실제로 나가게 2회 관찰
+      formal          정의·형식 선호
+      neutral / none  빈 프로필(지시 없음)
+    """
+    import os
+
+    key = (name if name is not None else os.getenv("CURRICULUM_PROFILE", "metaphor")).strip().lower()
+    if key in ("", "neutral", "none", "off"):
+        return empty_profile()
+    p = empty_profile()
+    if key in ("metaphor", "analogy", "example"):
+        for _ in range(2):
+            p = observe(p, "representation", True)
+    elif key in ("formal", "definition"):
+        for _ in range(2):
+            p = observe(p, "representation", False)
+    elif key == "deep":
+        for _ in range(2):
+            p = observe(p, "depth", True)
+    elif key == "brief":
+        for _ in range(2):
+            p = observe(p, "depth", False)
+    else:
+        print(f"[curriculum] 모르는 CURRICULUM_PROFILE={key!r} — 중립으로 둔다")
+        return empty_profile()
+    return p
+
+
 def explain(profile: Profile) -> list[str]:
     """화면의 ⚡ 표시에 쓸 사람 말. 실제로 적용된 축만 돌려준다.
 

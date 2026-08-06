@@ -27,6 +27,7 @@ from app.features.curriculum.planner import (  # noqa: E402
     COMPRESSED,
     DEEP,
     NORMAL,
+    mode_block,
     plan_chapter,
     plan_course,
 )
@@ -309,6 +310,13 @@ def test_약하면_절을_늘린다():
     assert plan.mode == DEEP
     assert plan.sections_planned > plan.sections_total
     assert "낮아" in plan.reason
+
+
+def test_mode_block은_deep과_compressed만_지시를_낸다():
+    # 배지와 설명 지시가 같은 규칙에서 나와야 한다.
+    assert "늘림" in mode_block(DEEP)
+    assert "핵심만" in mode_block(COMPRESSED)
+    assert mode_block(NORMAL) == ""
 
 
 def test_잘하면_압축하되_없애지_않는다():

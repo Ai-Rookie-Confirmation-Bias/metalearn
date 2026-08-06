@@ -163,6 +163,10 @@ class Store:
     def __init__(self) -> None:
         self.documents: dict[str, Document] = {}
         self.progress = Progress()
+        # 온보딩 전 — fixture_profile이 데모용 성향을 채운다.
+        from .profile import fixture_profile
+
+        self.profile = fixture_profile()
 
     def load_fixtures(self) -> list[str]:
         """tree.json을 먼저 읽고, 같은 stem의 md는 건너뛴다."""
@@ -184,6 +188,11 @@ class Store:
 
         self.progress = load_progress()
         return len(self.progress.sections)
+
+    def profile_block(self) -> str:
+        from .profile import prompt_block
+
+        return prompt_block(self.profile)
 
     def record(
         self,

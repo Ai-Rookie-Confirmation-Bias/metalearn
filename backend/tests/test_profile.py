@@ -19,6 +19,7 @@ from app.features.curriculum.profile import (  # noqa: E402
     directives,
     empty_profile,
     explain,
+    fixture_profile,
     observe,
     prompt_block,
 )
@@ -129,6 +130,23 @@ def test_학습_중_성향이_바뀌면_따라간다():
     for _ in range(6):
         p = observe(p, "representation", False)
     assert p["representation"].score < LOW, p["representation"]
+
+
+def test_fixture_metaphor는_비유_지시가_나간다():
+    # 온보딩 전 데모 — 기본이 비유파여야 성향이 프롬프트에 실제로 붙는다.
+    p = fixture_profile("metaphor")
+    assert any("비유" in d for d in directives(p)), directives(p)
+    assert "비유" in prompt_block(p)
+
+
+def test_fixture_formal은_정의_지시가_나간다():
+    p = fixture_profile("formal")
+    assert any("정의와 형식을 먼저" in d for d in directives(p)), directives(p)
+
+
+def test_fixture_neutral은_비어_있다():
+    assert directives(fixture_profile("neutral")) == []
+    assert prompt_block(fixture_profile("none")) == ""
 
 
 def _main() -> int:

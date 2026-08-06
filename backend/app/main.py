@@ -41,6 +41,14 @@ def _load_curriculum() -> None:
     except Exception as e:  # noqa: BLE001
         print(f"[curriculum] 진도 복원 실패(빈 진도로 계속): {type(e).__name__}: {e}")
 
+    from app.features.curriculum.profile import explain as profile_explain
+
+    tips = profile_explain(store.profile)
+    if tips:
+        print(f"[curriculum] 성향 fixture: {', '.join(tips)}")
+    else:
+        print("[curriculum] 성향 fixture: 중립(지시 없음)")
+
 
 @app.get("/api/health")
 def health() -> dict[str, str]:

@@ -25,7 +25,7 @@ from .schemas import (
     ReviewOut,
     SectionOut,
 )
-from .service import build_formative, build_lesson, build_review
+from .service import build_formative, build_lesson, build_review, prewarm_document
 from .store import Chapter, Document, store, summarize, with_supplements
 
 # 한 번에 보여줄 복습 화면 수. 다 보여주면 어디부터 할지 학습자가 정해야 하고,
@@ -230,10 +230,10 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
     """[화면 3] 절 하나 — 설명·비유·빈칸·객관식 + 원문.
 
     생성이 5~7초라 캐시한다. `?refresh=true`로 다시 만들 수 있다(개발용).
-    성향은 아직 안 붙인다 — 온보딩이 없으므로 중립으로 생성한다.
 
-    **최근 틀린 개념은 여기서 붙는다.** 이 절과 이어지는 것만 골라 설명
-    에이전트에 넘긴다. 캐시 키에도 들어가므로, 틀린 뒤 다시 열면 다시 생성된다.
+    **성향**은 `CURRICULUM_PROFILE` fixture(기본 metaphor)로 붙인다 — 온보딩 UI 전.
+    **분량**은 이 목차의 `plan.mode`를 설명 지시에 넣는다.
+    **최근 틀린 개념**도 이어지는 것만 골라 넘긴다.
     """
     doc = _doc(doc_id)
     found = doc.section(section_id)
@@ -241,13 +241,21 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
         raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")
     chapter, section = found
 
+    _, plans = summarize(doc, store.progress)
+    plan = plans[chapter.index]
+
     all_keys = [k for ch in doc.chapters for s in ch.sections for k in s.concept_keys]
     weak = weak_for_section(section, store.progress.recent_wrong, all_keys)
     # 이 화면에 없는 문서 개념 — 인출 정답이 여기 걸리면 라벨 사고로 폐기
     foreign = tuple(k for k in all_keys if k not in section.concept_keys)
 
     lesson = await build_lesson(
-        section, "", weak, foreign_keys=foreign, refresh=refresh
+        section,
+        store.profile_block(),
+        weak,
+        foreign_keys=foreign,
+        mode=plan.mode,
+        refresh=refresh,
     )
     m = store.progress.of(section_id)
     return LessonOut(
@@ -273,6 +281,19 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
         # 요청한 약점(weak)이 아니라 **본문에 실제로 들어간 것**을 보낸다.
         # 화면의 ⚡는 이 값이 있을 때만 뜬다.
         tied_in=list(lesson.tied_in),
+    )
+
+
+
+@router.post("/documents/{doc_id}/prewarm")
+async def prewarm(doc_id: str, limit: int = 6) -> dict:
+    """데모용 — 앞 N개 화면을 미리 만들어 캐시에 올린다.
+
+    화면당 5~7초라 영상에서 기다리면 안 된다. 찍기 전에 한 번 호출한다.
+    """
+    doc = _doc(doc_id)
+    return await prewarm_document(
+        doc, store.progress, limit=limit, profile_block=store.profile_block()
     )
 
 

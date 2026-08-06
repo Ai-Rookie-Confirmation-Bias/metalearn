@@ -55,6 +55,27 @@ COMPRESS_RATIO = 0.5
 DEEPEN_RATIO = 1.5
 
 
+def mode_block(mode: str) -> str:
+    """설명 프롬프트에 붙일 **분량 지시**.
+
+    `plan.mode`가 화면에만 뜨고 설명은 안 바뀌면 "커리큘럼이 바뀌었다"가 거짓이다.
+    배분 규칙이 정한 모드를 **생성 지시로 바꿔** 같은 규칙이 글에도 닿게 한다.
+    """
+    if mode == DEEP:
+        return (
+            "[이 단원의 분량 — 설명을 늘림]\n"
+            "- 개념마다 **한 문단 이상** 써라. 왜 필요한지·어디서 쓰이는지까지.\n"
+            "- 비유나 예를 아끼지 마라."
+        )
+    if mode == COMPRESSED:
+        return (
+            "[이 단원의 분량 — 핵심만]\n"
+            "- **결론과 핵심만** 짧게. 배경·유래·반례는 생략하라.\n"
+            "- 비유는 넣지 마라(JSON null). 이미 아는 사람에게 비유는 소음이다."
+        )
+    return ""
+
+
 @dataclass(frozen=True)
 class ChapterPlan:
     """목차 하나에 대한 배분 결정."""

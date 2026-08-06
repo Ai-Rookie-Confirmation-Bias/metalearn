@@ -58,14 +58,21 @@ class Lesson:
 _cache: dict[str, Lesson] = {}
 
 
-def _key(section: Section, profile_block: str, weak: tuple[str, ...]) -> str:
+def _key(
+    section: Section,
+    profile_block: str,
+    weak: tuple[str, ...],
+    mode: str = "normal",
+) -> str:
     """캐시 키.
 
     약점을 키에 넣는 이유: 안 넣으면 처음 연 절이 계속 나온다. 문항을 틀리고
     다시 열었는데 어제와 똑같은 글이면 "AI가 나를 보고 바꿨다"가 거짓이 된다.
     반대로 약점이 그대로면 같은 글이 나와야 한다 — 열 때마다 바뀌어도 안 된다.
+
+    mode도 넣는다 — 분량이 바뀌었는데 캐시가 옛 설명을 주면 배지와 본문이 어긋난다.
     """
-    return f"{section.section_id}|{hash(profile_block)}|{hash(weak)}"
+    return f"{section.section_id}|{hash(profile_block)}|{hash(weak)}|{mode}"
 
 
 _review_cache: dict[str, tuple[Block, ...]] = {}
@@ -140,6 +147,7 @@ async def build_lesson(
     weak_concepts: tuple[str, ...] = (),
     *,
     foreign_keys: tuple[str, ...] = (),
+    mode: str = "normal",
     refresh: bool = False,
 ) -> Lesson:
     """절의 학습 콘텐츠를 만든다(캐시됨).
@@ -150,11 +158,15 @@ async def build_lesson(
     foreign_keys: 문서 전체 개념 중 이 화면에 없는 것. 인출 라벨 검증이
     "다른 화면 개념이 정답"인 문항을 버릴 때 쓴다.
 
+    mode: 목차 배분(`deep`/`normal`/`compressed`). 설명 분량 지시에 쓴다.
+
     생성이 실패하거나 응답이 깨져도 **예외를 올리지 않는다** — 블록이 빈 Lesson을
     돌려주고 화면이 "생성하지 못했습니다"를 보여주게 한다. 절 하나가 실패했다고
     목차 화면 전체가 죽으면 손해가 크다.
     """
-    key = _key(section, profile_block, weak_concepts)
+    from .planner import mode_block as mode_prompt
+
+    key = _key(section, profile_block, weak_concepts, mode)
     if not refresh and key in _cache:
         return _cache[key]
 
@@ -164,9 +176,15 @@ async def build_lesson(
             return _cache[key]
 
         briefs = [ConceptBrief(c.key, c.definition) for c in section.concepts]
+        mb = mode_prompt(mode)
 
         exp = await explain_agent.generate(
-            section.title, briefs, profile_block, section.source, weak_concepts
+            section.title,
+            briefs,
+            profile_block,
+            section.source,
+            weak_concepts,
+            mb,
         )
         if not exp.ok:
             return Lesson(blocks=(), covered=0, missing=(), retrieval_gap=())
@@ -199,6 +217,52 @@ async def build_lesson(
         if lesson.ok:  # 실패한 생성을 캐시에 남기면 계속 실패한 걸 보게 된다
             _cache[key] = lesson
         return lesson
+
+
+async def prewarm_document(
+    doc,
+    progress,
+    *,
+    limit: int = 6,
+    profile_block: str = "",
+) -> dict:
+    """자료 앞쪽 화면을 미리 만들어 캐시에 올린다(데모 cold start).
+
+    화면당 5~7초라 영상에서 기다리면 안 된다. 찍기 전에 이걸로 워밍한다.
+    """
+    from .planner import weak_for_section
+    from .store import summarize
+
+    _, plans = summarize(doc, progress)
+    all_keys = [k for ch in doc.chapters for s in ch.sections for k in s.concept_keys]
+    targets: list[tuple] = []
+    for ch, plan in zip(doc.chapters, plans):
+        for s in ch.sections:
+            if s.inserted:
+                continue
+            targets.append((ch, s, plan.mode))
+            if len(targets) >= limit:
+                break
+        if len(targets) >= limit:
+            break
+
+    ok = 0
+    failed: list[str] = []
+    for ch, section, mode in targets:
+        weak = weak_for_section(section, progress.recent_wrong, all_keys)
+        foreign = tuple(k for k in all_keys if k not in section.concept_keys)
+        lesson = await build_lesson(
+            section,
+            profile_block,
+            weak,
+            foreign_keys=foreign,
+            mode=mode,
+        )
+        if lesson.ok:
+            ok += 1
+        else:
+            failed.append(section.section_id)
+    return {"requested": len(targets), "ok": ok, "failed": failed}
 
 
 # ── 형성평가 ────────────────────────────────────────────────────────
