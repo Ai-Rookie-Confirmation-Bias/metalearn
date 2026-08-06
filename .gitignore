@@ -13,6 +13,11 @@ node_modules/
 .pnpm-store/
 dist/
 .vite/
+*.tsbuildinfo
 
 # os / editor
 .DS_Store
+
+# ms office 잠금 파일 + 읽기용 산출물 (md가 원본, docx는 내보내기 결과)
+~$*
+docs/*.docx
