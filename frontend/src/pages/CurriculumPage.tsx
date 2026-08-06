@@ -58,8 +58,8 @@ export function CurriculumPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-8">
-      <Link to="/curriculum" className="text-[0.8rem] text-text-tertiary hover:underline">
-        ← 내 자료
+      <Link to="/library" className="text-[0.8rem] text-text-tertiary hover:underline">
+        ← 나의 책장
       </Link>
 
       <header className="mt-3 mb-8">
