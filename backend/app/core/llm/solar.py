@@ -129,14 +129,26 @@ class SolarClient(LLMClient):
     # ── 생성 ──────────────────────────────────────────────────────
 
     async def generate(self, prompt: str, **kwargs: object) -> str:
-        model = str(kwargs.get("model") or settings.SOLAR_CHAT_MODEL)
+        """프롬프트로 텍스트 생성.
+
+        `model` · `temperature` · `response_format` · `max_tokens`를 kwargs로
+        덮을 수 있다. `json_mode=True`는 `response_format`의 짧은 표기다.
+
+        ⚠️ **`response_format`을 안 받으면 커리큘럼 파서가 통째로 깨진다.**
+           학습 블록 에이전트 네 곳이 JSON을 받아야 하는데, 안 주면 모델이
+           코드펜스나 설명을 앞뒤에 붙인다 — 그리고 그건 조용히 일어난다.
+        """
         payload: dict[str, Any] = {
-            "model": model,
+            "model": str(kwargs.get("model") or settings.SOLAR_CHAT_MODEL),
             "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3,
+            # 호출측이 정하면 그걸 쓰고, 아니면 파싱이 쓰던 0.3.
+            "temperature": kwargs.get("temperature", 0.3),
         }
         if kwargs.get("json_mode"):
             payload["response_format"] = {"type": "json_object"}
+        for key in ("response_format", "max_tokens"):
+            if kwargs.get(key) is not None:
+                payload[key] = kwargs[key]
 
         resp = await self._request("/chat/completions", json=payload)
         data = resp.json()
