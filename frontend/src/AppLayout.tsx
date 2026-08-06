@@ -3,6 +3,7 @@ import { clsx } from "clsx";
 import {
   HexagonIcon,
   BooksIcon,
+  ExamIcon,
   ChartLineUpIcon,
   GearIcon,
   LightningIcon,
@@ -16,6 +17,7 @@ import {
 
 const NAV: { to: string; label: string; icon: Icon }[] = [
   { to: "/library", label: "나의 책장", icon: BooksIcon },
+  { to: "/quiz", label: "문제집", icon: ExamIcon },
   { to: "/analysis", label: "메타인지 분석", icon: ChartLineUpIcon },
   { to: "/settings", label: "설정", icon: GearIcon },
 ];

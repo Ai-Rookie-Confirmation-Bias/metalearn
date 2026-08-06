@@ -300,6 +300,7 @@ metalearn/
 │           ├── materials/      # ⬜ [골격] 업로드·파싱·RAG 색인
 │           ├── curriculum/     # ⬜ [골격] 위상정렬·챕터/절 순서
 │           ├── learning/       # ✅ [완료] 핵심 학습 루프
+│           ├── quiz/           # ✅ [백엔드 완료] 문제은행 (docs/QUIZ.md)
 │           └── review/         # ⬜ [골격] 복습 알고리즘
 └── frontend/                   # React 19 + Vite (FSD)
     └── src/

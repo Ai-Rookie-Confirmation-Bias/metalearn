@@ -8,6 +8,10 @@ from app.core.config import settings
 from app.core.database import Base
 
 # 모델 등록(메타데이터 채우기). 새 도메인은 models_registry에 추가한다.
+#
+# ⚠️ 여기에 직접 import를 늘리지 않는다. 이 파일과 main.py가 서로 다른 목록을
+#    갖게 되면, 한쪽에만 등록된 모델이 FK 해석에서 터진다(NoReferencedTableError).
+#    등록 지점은 models_registry 하나뿐이다 — quiz 모델도 거기에 넣었다.
 import app.models_registry  # noqa: F401
 
 config = context.config

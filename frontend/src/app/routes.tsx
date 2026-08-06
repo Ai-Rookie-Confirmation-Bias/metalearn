@@ -17,6 +17,7 @@ import { ChapterPage } from "@/pages/ChapterPage";
 import { FormativePage } from "@/pages/FormativePage";
 import { ReviewPage } from "@/pages/ReviewPage";
 import { SectionPage } from "@/pages/SectionPage";
+import { QuizPage } from "@/pages/QuizPage";
 
 // URL 기반 페이지 매핑 지도
 // 두 개의 셸: App(마케팅 헤더) / AppLayout(로그인 후 사이드바). 사이드바는 고정, 본문만 교체.
@@ -40,6 +41,7 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { path: "library", element: <LibraryPage /> },
+      { path: "quiz", element: <QuizPage /> }, // 문제은행 — 학습과 분리된 객관 페이지 (docs/QUIZ.md)
       { path: "analysis", element: <AnalysisPage /> },
       { path: "settings", element: <SettingsPage /> },
       // 커리큘럼 — 자료 고르기(목차 없음). 여기까지가 셸 안이다

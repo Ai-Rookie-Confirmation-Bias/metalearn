@@ -13,6 +13,7 @@ node_modules/
 .pnpm-store/
 dist/
 .vite/
+*.tsbuildinfo
 
 # os / editor
 .DS_Store
@@ -27,3 +28,7 @@ backend/tests/fixtures/*.md
 # 커리큘럼 진도 스냅샷 (로컬/데모). DB 전 임시 저장
 backend/data/*
 !backend/data/.gitkeep
+
+# ms office 잠금 파일 + 읽기용 산출물 (md가 원본, docx는 내보내기 결과)
+~$*
+docs/*.docx

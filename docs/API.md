@@ -52,6 +52,15 @@
 | GET | /review/schedule?courseId= 🔒 | 복습 캘린더 |
 | GET | /courses/:id/connections 🔒 | 연결 퀴즈 소집 |
 
+### 문제은행 (문제 페이지 — 학습 데이터와 격리, docs/QUIZ.md)
+
+| M | 경로 | 용도 |
+| --- | --- | --- |
+| POST | /courses/:id/quiz/generate | 파싱 결과(JSON)로 문제은행 배치 생성 → {saved, discarded[]}. 파싱 완료 시 내부 트리거 예정 |
+| GET | /courses/:id/quiz 🔒 | 문서별·목차별 문항 수 (범위 선택 화면) |
+| POST | /courses/:id/quiz/session 🔒 | {documentId, tocIndexes[], count} → 문항 샘플링 (정답·해설 제외) |
+| POST | /quiz/attempts 🔒 | 답 제출 → 서버 채점 → {correct, answer, explanation(고른 선지 해설), evidence(근거 원문+페이지)} |
+
 ### 결제/구독
 
 | M | 경로 | 용도 |

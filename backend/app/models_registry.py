@@ -9,3 +9,4 @@ SQLAlchemy는 임포트된 모델만 메타데이터에 등록한다. 요청 경
 from app.features.course import models as _course  # noqa: F401
 from app.features.learning import models as _learning  # noqa: F401
 from app.features.parsing import models as _parsing  # noqa: F401
+from app.features.quiz import models as _quiz  # noqa: F401
