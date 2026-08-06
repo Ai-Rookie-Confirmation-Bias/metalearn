@@ -13,9 +13,14 @@ from sqlalchemy.orm import Session
 from app.features.course.models import (
     Course,
     CourseDocument,
+    CoursePrereq,
     CourseTopic,
     TopicOrigin,
 )
+from app.features.course.prereq import PrereqScreen
+from app.features.course.schemas import CourseTree
+from app.features.course.tree import CourseTreeBuilder
+from app.features.parsing.pipeline import link
 from app.features.parsing.models import (
     Concept,
     ConceptEdge,
@@ -173,6 +178,57 @@ class CourseService:
         if course is None:
             raise ValueError(f"코스를 찾을 수 없습니다: {course_id}")
         return course
+
+    async def prereqs(
+        self, course_id: uuid.UUID, *, refresh: bool = False
+    ) -> list[CoursePrereq]:
+        """16' — 이 코스를 시작하기 전에 알아야 하는 것.
+
+        **게으르게 계산한다.** 코스 생성은 동기이고 여기는 임베딩 호출이 필요해
+        비동기라서, 생성 경로에 끼우면 업로드가 느려진다. 결과는 저장되므로
+        두 번째 호출부터는 조회뿐이다.
+
+        후보가 하나도 없는 자료(밑바닥부터 다 가르치는 책)는 행이 안 남아 매번
+        다시 계산하지만, 그 경로는 LLM 호출이 0회라 사실상 공짜다.
+        """
+        course = self.get(course_id)
+        existing = list(
+            self.db.scalars(
+                select(CoursePrereq)
+                .where(CoursePrereq.course_id == course_id)
+                .order_by(CoursePrereq.subject, CoursePrereq.seq)
+            )
+        )
+        if existing and not refresh:
+            return existing
+
+        rows = await PrereqScreen(self.db).screen(course)
+        self.db.commit()
+        return sorted(rows, key=lambda r: (r.subject, r.seq))
+
+    async def tree(self, course_id: uuid.UUID, *, force_link: bool = False) -> CourseTree:
+        """18 — **뼈대 목차 순서 + 본문 자료 설명.** 이 서비스가 하려는 것의 본체.
+
+        연결도 게으르게 계산한다(prereqs와 같은 사정). 문서쌍 단위로 저장돼
+        있어서 같은 두 책을 쓰는 다음 사람은 계산이 없다.
+        """
+        course = self.get(course_id)
+        document_ids = [cd.document_id for cd in course.documents]
+        skeleton_id = next(
+            (cd.document_id for cd in course.documents
+             if cd.role == MaterialRole.SKELETON.value),
+            document_ids[0] if document_ids else None,
+        )
+        body_ids = [d for d in document_ids if d != skeleton_id]
+
+        linker = link.ConceptLinker(self.db)
+        for other in body_ids:
+            await linker.link_pair(skeleton_id, other, force=force_link)
+        self.db.commit()
+
+        return CourseTreeBuilder(self.db).build(
+            course, skeleton_id=skeleton_id, body_ids=body_ids
+        )
 
     def gaps(self, course_id: uuid.UUID) -> list[dict]:
         """끊긴 고리 — 이 코스의 자료들이 '알아야 한다'고 말하지만 설명이 없는 개념.

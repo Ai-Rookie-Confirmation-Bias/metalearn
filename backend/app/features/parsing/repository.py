@@ -435,6 +435,50 @@ class ParsingRepository:
             )
         )
 
+    def field_probe_inputs(
+        self, document_id: uuid.UUID, *, top_concepts: int, top_dangling: int
+    ) -> tuple[list[str], list[str], list[str]]:
+        """12.5단계 입력 — (목차 제목, 대표 개념, 설명 없이 전제되는 용어).
+
+        대표 개념은 **조각 링크가 많은 순**이다. 여러 곳에 나오는 개념이 그
+        자료를 대표한다.
+
+        세 번째는 원문에 설명이 없는 개념이다. 이걸 결손 판정에 쓰지는 않는다
+        — 실측에서 대부분 그 책이 가르치는 내용이었다(연결 누락). 다만 "이
+        자료가 설명 없이 전제하는 용어"라는 힌트로는 값이 있어 프롬프트에만
+        넣는다.
+        """
+        titles = list(
+            self.db.scalars(
+                select(DocTopic.title)
+                .where(DocTopic.document_id == document_id)
+                .order_by(DocTopic.seq)
+            )
+        )
+        hits = func.count(ConceptSegment.id)
+        concepts = list(
+            self.db.scalars(
+                select(Concept.name)
+                .join(ConceptSegment, ConceptSegment.concept_id == Concept.id)
+                .where(Concept.document_id == document_id)
+                .group_by(Concept.id, Concept.name)
+                .order_by(hits.desc(), Concept.name)
+                .limit(top_concepts)
+            )
+        )
+        dangling = list(
+            self.db.scalars(
+                select(Concept.name)
+                .where(
+                    Concept.document_id == document_id,
+                    ~Concept.segment_links.any(),
+                )
+                .order_by(Concept.name)
+                .limit(top_dangling)
+            )
+        )
+        return titles, concepts, dangling
+
     def load_tree(self, document_id: uuid.UUID) -> tuple[
         list[DocTopic], list[DocSegment], list[Concept], list[ConceptEdge]
     ]:

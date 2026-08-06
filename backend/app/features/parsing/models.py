@@ -24,6 +24,7 @@ from pgvector.sqlalchemy import HALFVEC
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     LargeBinary,
@@ -131,6 +132,20 @@ class Document(Base):
     concept_coverage: Mapped[int | None] = mapped_column(  # 0~100 (%)
         Integer, nullable=True
     )
+
+    # 12.5단계 산출물 — "이 자료는 무슨 분야고, 그 앞엔 뭐가 필요한가".
+    #
+    # **문서 소유인 게 핵심이다.** 이 판정이 파이프라인에서 LLM이 흔들리는
+    # 유일한 지점인데, 문서에 붙여 두면 지문 재사용이 그대로 먹어서 같은 책은
+    # 누가 올리든 같은 판정을 받는다. 코스마다 다시 물으면 매번 달라진다.
+    #
+    # 책 밖 선수를 찾는 유일한 경로이기도 하다. 끊긴 고리(설명 없는 개념)로
+    # 찾는 방식은 폐기했다 — 실측에서 pilgi 55개가 대부분 그 책이 가르치는
+    # 내용이었다(목차에 "데이터베이스 구축"이 있는데 `데이터베이스`가 끊긴
+    # 고리로 잡히는 식). 책이 언급조차 안 한 선수는 애초에 잡히지 않는다.
+    field: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # {"field","level","prereq_subjects":[{"name","why","subtopics":[...],"ordered"}]}
+    prereq_probe: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -431,6 +446,96 @@ class ConceptEdge(Base):
     # prerequisite: from을 알아야 to를 이해 | contains: 상하위 | related: 인접
     kind: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="prerequisite"
+    )
+
+
+class ConceptLink(Base):
+    """⭐ 18단계 — **다른 문서**의 같은 개념끼리 묶는다. (concept_edges는 문서 안)
+
+    PPT는 "서브넷"이라는 표제어만 있고 교재에 그 설명이 세 쪽 있다. 이걸 이어야
+    "교수님 PPT 순서로 가되 설명은 교재에서" 가 된다.
+
+    **문서쌍 소유다.** 코스가 아니라. 문서가 공용이라 같은 두 책을 쓰는 다음
+    사람이 다시 계산하지 않아도 되고, 뼈대/본문 역할은 코스마다 뒤집히므로
+    방향을 여기 박으면 안 된다. 그래서 **무방향으로 저장하고**(항상 a<b로
+    정규화) 방향은 코스가 정한다.
+
+    문턱은 실측이다 — pilgi 452개를 ryan 578개에 전부 대조했다:
+        0.85 이상   도커↔Docker, 트랜잭션↔트랜잭션      → same
+        0.75~0.85   MVC↔모델-뷰-컨트롤러, IDS↔침입탐지  → related (상하위 포함)
+        0.70~0.75   정규화↔정규화(맞음)와 블루스나프↔블루버그(틀림)가 섞임
+        0.70 미만   MD4↔MD5, 자료구조↔데이터베이스      → 버림
+    0.70~0.75는 이름만 닮은 딴것이 섞여 임베딩으로 못 가른다. LLM에게 묻는다.
+
+    dedup의 0.92를 쓰지 않는 이유: 그건 한 문서 안 **동일 개념 병합**이라
+    보수적이어야 한다. 여기는 "설명을 가져올 만한가"라 상위 개념도 쓸모가 있다.
+    """
+
+    __tablename__ = "concept_links"
+    __table_args__ = (
+        UniqueConstraint("concept_a_id", "concept_b_id", name="uq_concept_link"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    # 항상 a < b (문자열 비교). 무방향이라 (x,y)와 (y,x)가 따로 쌓이면 안 된다.
+    concept_a_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("concepts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    concept_b_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("concepts.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    similarity: Mapped[float] = mapped_column(Float, nullable=False)
+    # same: 같은 개념 | related: 상하위·인접
+    kind: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="same"
+    )
+    # embed: 임베딩만으로 확정 | llm: 회색지대라 LLM이 확인해 줌
+    verified_by: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default="embed"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class DocumentPair(Base):
+    """문서쌍 연결 계산이 끝났다는 표시.
+
+    concept_links가 비어 있는 게 "아직 안 쟀다"인지 "재봤는데 겹치는 개념이
+    없다"인지 구별해야 한다. 없으면 코스를 열 때마다 452회 조회를 다시 돈다.
+    """
+
+    __tablename__ = "document_pairs"
+    __table_args__ = (
+        UniqueConstraint("document_a_id", "document_b_id", name="uq_document_pair"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    document_a_id: Mapped[uuid.UUID] = mapped_column(  # 항상 a < b
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    document_b_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("documents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    link_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 

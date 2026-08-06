@@ -21,7 +21,9 @@ from datetime import datetime
 from enum import StrEnum
 
 from sqlalchemy import (
+    Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -158,3 +160,64 @@ class CourseTopic(Base):
     note: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     course: Mapped["Course"] = relationship(back_populates="topics")
+
+
+class PrereqStatus(StrEnum):
+    """이 선수 항목이 정말 '책 밖'인가."""
+
+    PASS = "pass"          # 진짜 밖 — 물어볼 값어치가 있다
+    GRAY = "gray"          # 애매 — 목록에 넣되 표시한다
+    REJECTED = "rejected"  # 이 코스의 자료가 이미 가르친다
+
+
+class CoursePrereq(Base):
+    """16'단계 — 이 코스를 시작하기 전에 알아야 하는 것 한 줄.
+
+    재료는 문서 소유(documents.prereq_probe)지만 **판정은 코스 소유다.**
+    PPT가 요구하는 선수를 같이 올린 교재가 이미 커버할 수 있어서, 자료 조합이
+    바뀌면 답이 달라진다.
+
+    거르는 이유: LLM이 **그 책이 가르치는 것을 선수라고 뱉는다.** 실측에서
+    정처기 필기 자료에 `데이터베이스 기초`가 선수로 나왔는데 목차 3번이
+    "데이터베이스 구축"이었다.
+
+    문턱 0.49는 정답을 아는 21개로 쟀다. 두 무리가 겹치지 않았다:
+        책 안 0.509(데이터베이스 개념)~0.828(CIDR 표기)
+        책 밖 0.344(OSI 7계층)~0.468(입출력 장치 관리)
+    표본이 21개뿐이라 경계 양옆 0.47~0.52는 gray로 빼서 방어한다.
+    """
+
+    __tablename__ = "course_prereqs"
+    __table_args__ = (
+        UniqueConstraint("course_id", "subject", "item", name="uq_course_prereq"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    course_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("courses.id", ondelete="CASCADE"),
+        nullable=False, index=True,
+    )
+    subject: Mapped[str] = mapped_column(String(256), nullable=False)  # 자료구조
+    item: Mapped[str] = mapped_column(String(512), nullable=False)     # 트리와 순회
+    why: Mapped[str | None] = mapped_column(Text, nullable=True)
+    seq: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    # 과목 안에서 순서가 강제되면 True. 보강 단원이냐 한 꼭지냐를 가르는 축이다.
+    ordered: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(16), nullable=False, server_default=PrereqStatus.PASS.value
+    )
+    # 되짚기용 — 왜 이렇게 판정했는지. 문턱값을 나중에 옮길 때 이게 근거가 된다.
+    similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
+    rejected_by: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # 사용자 답: known | heard | unknown. 24번 진단이 채운다. 지금은 NULL.
+    known: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

@@ -21,6 +21,7 @@ from app.features.parsing.pipeline import (
     dedup,
     density,
     embed,
+    field,
     figures,
     normalize,
     persist,
@@ -29,6 +30,7 @@ from app.features.parsing.pipeline import (
     sentences,
     topics,
 )
+from app.features.parsing.prompts import field as field_prompt
 from app.features.parsing.schemas import (
     ConceptHitOut,
     ConceptOut,
@@ -270,6 +272,15 @@ class ParsingService:
         document.error = f"개념 추출 실패 조각: {failed}" if failed else None
         self.db.commit()
 
+        # 12.5. 분야 판정 — "이 자료는 무슨 분야고 그 앞엔 뭐가 필요한가"
+        #
+        # 개념 추출 뒤여야 한다. 대표 개념 30개가 입력이라서다.
+        #
+        # **실패해도 파싱은 성공이다.** 부가 산출물이고, 없으면 선수 체크만 못
+        # 할 뿐 학습은 돌아간다. 여기서 예외를 올리면 멀쩡히 파싱된 문서가
+        # failed로 떨어진다.
+        await self._probe_field(document)
+
         stage(DocStatus.READY)
         _log.info(
             "파싱 완료: %s — 목차 %d · 조각 %d · 개념 %d(병합 %d) · %s(%s)",
@@ -277,6 +288,32 @@ class ParsingService:
             result.concept_count - merge.total_merged, merge.total_merged,
             "본문 가능" if report.is_body else "뼈대만", report.reason,
         )
+
+    async def _probe_field(self, document) -> None:
+        """12.5단계. 실패를 삼킨다 — 부가 산출물이라 파싱을 깨면 안 된다.
+
+        재파싱 시에도 다시 돈다. 문서 지문이 같으면 애초에 재파싱을 안 하므로
+        (register가 걸러낸다) 여기까지 왔다는 건 내용이 바뀌었다는 뜻이다.
+        """
+        try:
+            titles, concepts, dangling = self.repo.field_probe_inputs(
+                document.id,
+                top_concepts=field_prompt.TOP_CONCEPTS,
+                top_dangling=field_prompt.TOP_DANGLING,
+            )
+            probe = await field.probe(
+                filename=document.filename,
+                topics=titles,
+                concepts=concepts,
+                dangling=dangling,
+            )
+        except Exception as exc:  # noqa: BLE001 — 파싱 성공을 막지 않는다
+            _log.warning("분야 판정 실패 — 건너뜀: %s: %s", type(exc).__name__, exc)
+            return
+
+        document.field = probe.field or None
+        document.prereq_probe = probe.as_dict()
+        self.db.commit()
 
     # ── 조회 ──────────────────────────────────────────────────────
 
