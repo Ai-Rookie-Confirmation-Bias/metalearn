@@ -39,6 +39,7 @@ from app.features.parsing.schemas import (
     FigureOut,
     DocumentTree,
     SegmentOut,
+    SentenceOut,
     TopicOut,
 )
 
@@ -386,7 +387,7 @@ class ParsingService:
             document_id
         )
         seq_of_segment = {s.id: s.seq for s in segment_rows}
-        sentence_counts = self.repo.count_sentences(document_id)
+        sentences_by_segment = self.repo.sentences_by_segment(document_id)
 
         figures_by_segment: dict[uuid.UUID, list[FigureOut]] = {}
         for row in self.repo.list_figures(document_id):
@@ -398,6 +399,7 @@ class ParsingService:
             items.sort(key=lambda f: f.char_offset)
 
         def to_segment(row) -> SegmentOut:
+            sentences = sentences_by_segment.get(row.id, [])
             return SegmentOut(
                 id=row.id,
                 seq=row.seq,
@@ -406,7 +408,8 @@ class ParsingService:
                 page_from=row.page_from,
                 page_to=row.page_to,
                 char_count=row.char_count,
-                sentence_count=sentence_counts.get(row.id, 0),
+                sentence_count=len(sentences),
+                sentences=[SentenceOut.model_validate(s) for s in sentences],
                 figures=figures_by_segment.get(row.id, []),
             )
 

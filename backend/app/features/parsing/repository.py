@@ -424,6 +424,25 @@ class ParsingRepository:
         ).all()
         return {segment_id: count for segment_id, count in rows}
 
+    def sentences_by_segment(
+        self, document_id: uuid.UUID
+    ) -> dict[uuid.UUID, list[SegmentSentence]]:
+        """{조각 id: 문장 앵커 목록} — seq 순.
+
+        `count_sentences`는 개수만 준다. 문항의 근거 표시는 offset이 있어야
+        하므로 트리 응답에는 이쪽을 싣는다.
+        """
+        rows = self.db.scalars(
+            select(SegmentSentence)
+            .join(DocSegment, DocSegment.id == SegmentSentence.segment_id)
+            .where(DocSegment.document_id == document_id)
+            .order_by(SegmentSentence.segment_id, SegmentSentence.seq)
+        )
+        out: dict[uuid.UUID, list[SegmentSentence]] = {}
+        for row in rows:
+            out.setdefault(row.segment_id, []).append(row)
+        return out
+
     def list_figures(self, document_id: uuid.UUID) -> list[DocFigure]:
         """이미지 바이트는 빼고 메타만. 트리 응답에 수 MB를 실으면 안 된다."""
         return list(

@@ -210,6 +210,21 @@ class FigureOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class SentenceOut(BaseModel):
+    """문장 앵커 — 조각 content 안의 offset.
+
+    **text는 싣지 않는다.** `content[char_start:char_end]`로 그대로 복원되고,
+    실으면 조각 원문이 응답에 두 번 들어간다(실측 317문장 = 원문 전체).
+    "조각이 원본"이라는 불변식도 이렇게 지킨다(SegmentSentence 모델 주석 참고).
+    """
+
+    seq: int
+    char_start: int
+    char_end: int
+
+    model_config = {"from_attributes": True}
+
+
 class SegmentOut(BaseModel):
     id: uuid.UUID
     seq: int
@@ -219,6 +234,9 @@ class SegmentOut(BaseModel):
     page_to: int | None = None
     char_count: int
     sentence_count: int = 0
+    # 문항의 근거 표시가 전부 이 offset을 믿고 동작한다. 개수(sentence_count)만
+    # 주던 시절엔 DB에 317개가 있어도 소비자가 쓸 방법이 없었다.
+    sentences: list[SentenceOut] = Field(default_factory=list)
     figures: list[FigureOut] = Field(default_factory=list)
 
     model_config = {"from_attributes": True}
