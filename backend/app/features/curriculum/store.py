@@ -1,7 +1,8 @@
-"""[인메모리] 커리큘럼 저장소.
+"""[인메모리 + 파일 스냅샷] 커리큘럼 저장소.
 
-DB는 아직 없다(로드맵 STEP 3). 서버가 뜰 때 픽스처를 읽어 화면까지 만들어
-메모리에 든다. **새로고침하면 학습 기록이 사라진다.**
+문서·화면은 서버가 뜰 때 픽스처에서 읽는다. 학습 기록은 메모리에 두되
+`persist.py`가 JSON으로 남겨 **재시작해도 준비도가 0으로 안 돌아간다.**
+(DB는 로드맵 — 붙으면 스냅샷 입출력만 바꾸면 된다.)
 
 층이 둘로 갈린다:
 
@@ -177,6 +178,13 @@ class Store:
             self.documents[doc.doc_id] = doc
         return list(self.documents)
 
+    def load_progress(self) -> int:
+        """스냅샷에서 진도를 복원한다. 복원한 화면 수를 돌려준다."""
+        from .persist import load_progress
+
+        self.progress = load_progress()
+        return len(self.progress.sections)
+
     def record(
         self,
         section_id: str,
@@ -186,6 +194,7 @@ class Store:
     ) -> SectionMastery:
         """시도 하나를 누적한다. **진단·인출·복습·형성이 전부 이 문을 지난다.**"""
         from .mastery import record
+        from .persist import save_progress
 
         state = record(self.progress.of(section_id), correct, concept_key, kind)
         self.progress.sections[section_id] = state
@@ -195,6 +204,11 @@ class Store:
                 rw.remove(concept_key)
             rw.append(concept_key)
             del rw[:-RECENT_WRONG]
+        try:
+            save_progress(self.progress)
+        except OSError as e:
+            # 디스크가 막혀도 이번 요청의 기록은 메모리에 남긴다.
+            print(f"[curriculum] 진도 저장 실패: {type(e).__name__}: {e}")
         return state
 
 

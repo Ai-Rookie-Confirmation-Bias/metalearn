@@ -19,3 +19,7 @@ dist/
 
 # 파싱 결과 테스트 픽스처 — 용량이 크고 팀 공유 파일이라 별도 관리
 backend/tests/fixtures/*.md
+
+# 커리큘럼 진도 스냅샷 (로컬/데모). DB 전 임시 저장
+backend/data/*
+!backend/data/.gitkeep
