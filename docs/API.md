@@ -1,5 +1,17 @@
 # MetaLearn — API 명세 (🔒 = 인증 필요)
 
+> ## ⚠️ 이 문서는 **2026-07-03** 기준이다 — 피벗 전 설계다
+>
+> 7/28 서비스 전환과 8/3 확정안보다 앞선다. 네 브랜치(dev·seedParsec·quiz-create·
+> curriculum) 모두 같은 blob이고 아무도 고치지 않았다. 아래 표에는 **구현되지 않은
+> 경로**와 **이름이 바뀐 경로**가 섞여 있다.
+>
+> **지금 실제로 도는 API 31개는 [INTEGRATION.md §3](INTEGRATION.md)에 있다.**
+> 학습 계층 계약은 [LEARNER_CONTRACT.md §5](LEARNER_CONTRACT.md).
+>
+> 이 파일은 초기 설계 기록으로 남긴다. 새 경로를 여기에 추가하지 말 것 —
+> 유효한 것과 아닌 것이 섞이면 둘 다 못 믿게 된다.
+
 > README.md에서 분리. **API 변경은 이 파일에서 관리한다.**
 
 

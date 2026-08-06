@@ -382,3 +382,19 @@ mcq      {question, options[], answer, explanation, concept, sectionId}
 | **분량 배분** | `plan.mode` → `mode_block`이 설명 프롬프트에 붙는다 |
 | **실파싱 연결** | `GET /documents`가 ready 문서를 sync · `POST .../from-parsing/{id}` · doc_id=파싱 UUID |
 | **선수 데이터** | 파싱 선수 이름의 절반 넘게가 개념 목록에 없다(필기 122/339, 실기 211/404). 보충 화면 기능의 상한 |
+| **업로드 화면** | 없다. `POST /api/parsing/documents`를 부르는 프론트가 하나도 없어서 지금은 curl로 올린다 — 데모의 **첫 장면**이다 |
+| **메타인지 분석** | 22줄 placeholder. 4출처 누적을 보여줄 유일한 화면인데 비어 있다 |
+
+### 2026-08-07 이후 상태
+
+`integration` 브랜치에서 **파싱 → 학습이 실제로 이어졌다.** 실측은
+[INTEGRATION.md §2](INTEGRATION.md) 참고 — 실제 PDF 한 권이 화면 43개가 되고
+설명·빈칸 생성, 채점, 복습 큐까지 돈다.
+
+문제은행도 붙었다(`features/quiz/adapters/parsing_tree.py` + `bridge.py`).
+⚠️ 그 과정에서 `GET /parsing/…/tree`에 **문장 앵커(`segments[].sentences[]`)를
+추가**했다 — 우리 어댑터는 안 쓰지만(원문은 조각 본문을 통째로 받는다) 파싱 응답이
+커졌으니 알고 있을 것.
+
+**확정안 §7-③ 데이터 격리는 그대로다.** 문제은행 풀이는 `quiz_attempts`에만 남고
+우리 누적(진단·인출·복습·형성 넷)에 안 섞인다. 합치자는 건 §6 회의 안건이다.

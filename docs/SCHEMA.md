@@ -1,5 +1,16 @@
 # MetaLearn — DB 스키마 (PostgreSQL)
 
+> ## ⚠️ 이 문서는 **2026-07-03** 기준이다 — 피벗 전 설계다
+>
+> `API.md`와 같은 사정이다. 아래 테이블 중 상당수는 존재하지 않고, 실제로 있는
+> `doc_topics`·`doc_segments`·`segment_sentences`·`concepts`·`quiz_items` 등은 없다.
+>
+> **정본은 `backend/alembic/versions/`다** (0001~0008). 테이블 목록은
+> `docker compose exec db psql -U postgres -d metalearn_v3 -c "\dt"`.
+> 학습 계층이 앞으로 만들 테이블은 [LEARNER_CONTRACT.md §3](LEARNER_CONTRACT.md).
+>
+> 이 파일은 초기 설계 기록으로 남긴다. 새 테이블을 여기에 추가하지 말 것.
+
 > README.md에서 분리. **스키마 변경은 이 파일에서 관리한다.**
 
 
