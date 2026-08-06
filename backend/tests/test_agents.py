@@ -3,6 +3,8 @@
 LLM 호출은 안 한다. 여기서 잠그는 건 **시키는 내용**과 **인정하는 기준**이다.
 둘 다 실측에서 한 번씩 무너진 자리라 테스트로 고정한다.
 """
+import json
+import re
 import sys
 from pathlib import Path
 
@@ -17,7 +19,8 @@ from app.features.curriculum.agents.retrieval import (  # noqa: E402
     _levels_of,
     build_fill_prompt,
 )
-from app.features.curriculum.blocks import Block, ConceptBrief  # noqa: E402
+from app.features.curriculum.blocks import Block, ConceptBrief, parse_response  # noqa: E402
+from app.features.curriculum.planner import COMPRESSED, mode_block  # noqa: E402
 from app.features.curriculum.retrieval_label import scrub_blocks  # noqa: E402
 from app.features.curriculum.retrieval_level import L1_RECALL  # noqa: E402
 
@@ -136,6 +139,42 @@ def test_분량_모드가_프롬프트에_붙는다():
     assert "이 단원의 분량" in deep and "길게" in deep
 
 
+def test_분량이_성향보다_뒤에_온다():
+    # 성향은 "비유를 정의보다 먼저", compressed는 "비유 금지"다. 실제로 부딪히는
+    # 자리이고 실측에서 분량이 이겼는데(비유 0/3), **이긴 이유가 뒤에 왔기
+    # 때문**이었다. 순서가 곧 우선순위라 뒤집히면 압축 단원에 비유가 돌아온다.
+    p = build_prompt(
+        "모듈",
+        CONCEPTS,
+        profile_block="[이 학습자에게 맞춘 설명 방식]\n- 비유를 먼저 놓아라",
+        mode_block=mode_block(COMPRESSED),
+    )
+    assert p.index("맞춘 설명 방식") < p.index("이 단원의 분량")
+
+
+def test_압축_지시가_충돌을_스스로_밝힌다():
+    # 순서에만 기대면 프롬프트를 손대는 순간 조용히 뒤집힌다. 지시문 안에도 있어야 한다.
+    assert "이 분량 지시를 따른다" in mode_block(COMPRESSED)
+    assert "비유는 넣지 마라" in mode_block(COMPRESSED)
+
+
+def test_보충_예시가_스스로_필터를_통과한다():
+    # ★ 예시가 곧 출력이다(일곱 번째). 예시가 '그런 상황에서 쓰는 것이 ____ 다.'였는데
+    # 모델이 그대로 베껴 세 개념 전부 같은 문장을 냈고, 앞 문장을 가리키는 문장이라
+    # 파서가 다 버려 0문항이 됐다. 예시는 **베끼면 오히려 맞는 모양**이어야 한다.
+    p = build_fill_prompt("모듈", CONCEPTS, CONCEPTS, "설명")
+    # 프롬프트 안의 예시를 그대로 응답인 척 넣어본다.
+    examples = re.findall(r'\{"kind".*?\}', p)
+    assert examples, "예시가 프롬프트에 없다"
+    raw = json.dumps({"cloze": [json.loads(e) for e in examples]}, ensure_ascii=False)
+    blocks = [b for b in parse_response(raw, CONCEPTS, "설명") if b.type == "cloze"]
+    assert len(blocks) == len(CONCEPTS), f"예시를 베끼면 {len(blocks)}개만 남는다"
+
+
+# ⚠️ 새 테스트는 **이 위에** 쓴다. 아래 `__main__` 블록보다 뒤에 정의하면
+#    pytest로는 돌지만 스크립트로 직접 돌릴 때 조용히 빠진다(실제로 겪었다).
+
+
 def _main() -> int:
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
@@ -152,19 +191,3 @@ def _main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(_main())
-
-
-def test_보충_예시가_스스로_필터를_통과한다():
-    # ★ 예시가 곧 출력이다(일곱 번째). 예시가 '그런 상황에서 쓰는 것이 ____ 다.'였는데
-    # 모델이 그대로 베껴 세 개념 전부 같은 문장을 냈고, 앞 문장을 가리키는 문장이라
-    # 파서가 다 버려 0문항이 됐다. 예시는 **베끼면 오히려 맞는 모양**이어야 한다.
-    p = build_fill_prompt("모듈", CONCEPTS, CONCEPTS, "설명")
-    import json, re
-    from app.features.curriculum.blocks import parse_response
-
-    # 프롬프트 안의 예시를 그대로 응답인 척 넣어본다.
-    examples = re.findall(r'\{"kind".*?\}', p)
-    assert examples, "예시가 프롬프트에 없다"
-    raw = json.dumps({"cloze": [json.loads(e) for e in examples]}, ensure_ascii=False)
-    blocks = [b for b in parse_response(raw, CONCEPTS, "설명") if b.type == "cloze"]
-    assert len(blocks) == len(CONCEPTS), f"예시를 베끼면 {len(blocks)}개만 남는다"

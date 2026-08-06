@@ -84,6 +84,9 @@ def build_prompt(
             "  섞여 있을 수 있다. 읽어서 이해하되 잡음은 버려라.\n"
         )
     profile_part = f"\n{profile_block}\n" if profile_block else "\n"
+    # ⚠️ **분량이 성향보다 뒤에 온다.** 순서가 곧 우선순위다 — 둘이 부딪히는
+    #    자리가 실제로 있다(성향 "비유를 먼저" vs compressed "비유 금지").
+    #    바꾸면 압축 단원에 비유가 다시 들어온다. 근거는 `planner.mode_block`.
     mode_part = f"\n{mode_block}\n" if mode_block else ""
 
     # 이 학습자가 최근 틀린 개념 중 이 절과 이어지는 것. 없으면 아무 말도 안 한다.
