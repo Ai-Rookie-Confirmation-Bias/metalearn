@@ -70,6 +70,21 @@ def test_check_solution_other_types_use_grader():
     assert check_solution("trueFalse", tf, True) is None
 
 
+def test_check_solution_unwraps_single_element_list():
+    """풀이자가 답을 ["로킹 단위"]처럼 배열로 감싸는 형식 편차 — 내용이 맞으면 통과.
+
+    10회차 실측에서 정답인데 형식 때문에 폐기된 문항 다수 (억울한 폐기).
+    """
+    short = {"prompt": "p", "accepted": ["로킹 단위"]}
+    assert check_solution("shortAnswer", short, ["로킹 단위"]) is None
+    assert "불일치" in check_solution("shortAnswer", short, ["폭포수"])  # 오답은 여전히 탈락
+    assert "불일치" in check_solution("shortAnswer", short, ["로킹 단위", "잠금"])  # 복수 답은 그대로
+    tf = {"statement": "s", "answer": True}
+    assert check_solution("trueFalse", tf, [True]) is None
+    # mcq는 복수 원소가 '복수 정답 판단' 신호라 unwrap 안 함 — 기존 의미 유지
+    assert check_solution("mcq", MCQ_DATA, [0]) is None
+
+
 # ── validate_items: 단계 흐름 ────────────────────────────
 
 
@@ -172,4 +187,66 @@ def test_extract_json_salvages_truncated_array():
     verdicts = parse_verdicts(raw, 3)
     assert verdicts[0] == (True, "")
     assert verdicts[1] == (False, '근거 "불일치"')
-    assert verdicts[2] == (False, "심판 응답 파싱 실패")  # 잘린 객체는 보수적 불합격
+    assert verdicts[2] is None  # 잘린 객체 = 판독 불가 (해석은 validator 몫)
+
+
+# ── 배심원단 (second_llm) ────────────────────────────────
+
+
+class JuryLLM(ScriptedLLM):
+    """배심원 역할 — 심판/풀이 응답을 시나리오로 지정."""
+
+    def __init__(self, judge_raw=None, solver_answer="true"):
+        super().__init__(solver_answer=solver_answer)
+        self.judge_raw = judge_raw  # None이면 전원 합격
+
+    async def generate(self, prompt: str, **kwargs: object) -> str:
+        if "출제 검수자" in prompt and self.judge_raw is not None:
+            self.calls.append("judge")
+            return self.judge_raw
+        return await super().generate(prompt, **kwargs)
+
+
+async def test_jury_second_judge_failure_kills_item():
+    """1차(Solar) 합격이어도 배심원이 잡으면 탈락."""
+    jury = JuryLLM(judge_raw='[{"index":0,"pass":false,"reason":"정답 유일성 붕괴"}]')
+    config = QualityConfig(enable_revise=False)
+    verdicts = await validate_items([_tf_item()], ScriptedLLM(), config, second_llm=jury)
+    assert not verdicts[0].ok
+    assert verdicts[0].stage == "judge"
+    assert "[배심]" in verdicts[0].reason
+
+
+async def test_jury_garbage_judge_abstains():
+    """배심원 응답이 판독 불가면 기권 — 1차 합격이 유지된다 (학살 방지)."""
+    jury = JuryLLM(judge_raw="판정 형식이 아닌 잡담")
+    config = QualityConfig(enable_revise=False)
+    verdicts = await validate_items([_tf_item()], ScriptedLLM(), config, second_llm=jury)
+    assert verdicts[0].ok
+
+
+async def test_jury_second_solver_wrong_answer_kills():
+    """배심원 풀이자가 다른 답을 내면 탈락 (두 학생 모두 풀 수 있어야 통과)."""
+    jury = JuryLLM(solver_answer="false")
+    config = QualityConfig(enable_revise=False)
+    verdicts = await validate_items([_tf_item()], ScriptedLLM(), config, second_llm=jury)
+    assert not verdicts[0].ok
+    assert verdicts[0].stage == "solve"
+    assert "[배심]" in verdicts[0].reason
+
+
+async def test_jury_second_solver_missing_answer_abstains():
+    """배심원 풀이자가 무응답이면 기권 (형식 난조 ≠ 문항 결함)."""
+    jury = JuryLLM(solver_answer="null")
+    config = QualityConfig(enable_revise=False)
+    verdicts = await validate_items([_tf_item()], ScriptedLLM(), config, second_llm=jury)
+    assert verdicts[0].ok
+
+
+async def test_jury_neutral_example_used_for_second_judge():
+    """배심원 심판 프롬프트에는 앵무새 유발 예시 문구가 없어야 한다."""
+    from app.core.quality.prompts import build_judge_prompt
+
+    prompt = build_judge_prompt([_tf_item()], neutral_example=True)
+    assert "피드백" not in prompt
+    assert "예시 문구를 복사하지 마라" in prompt

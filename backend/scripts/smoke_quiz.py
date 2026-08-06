@@ -50,7 +50,7 @@ async def main(n_chunks: int, budget: int, verifier: str = "solar") -> None:
     svc.repo = MemRepo()
     svc.llm = solar_client
     svc.verify_llm = None
-    if verifier == "exaone":
+    if verifier in ("jury", "exaone"):  # exaone = 구버전 표기 호환
         from app.core.config import settings
         from app.core.llm.exaone import exaone_client
 
@@ -58,7 +58,7 @@ async def main(n_chunks: int, budget: int, verifier: str = "solar") -> None:
             raise SystemExit("EXAONE_API_KEY가 .env에 없습니다 (UTF-8 인코딩 주의)")
         svc.verify_llm = exaone_client
 
-    label = "생성 Solar + 검증 EXAONE (교차)" if svc.verify_llm else "Solar 단일"
+    label = "배심원단 (심판·풀이 Solar+EXAONE)" if svc.verify_llm else "Solar 단일"
     print(f"조각 {len(doc.chunks)}개 · 목차당 예산 {budget}문항 · {label} — 호출 시작…\n")
     result = await svc.generate_bank(uuid.uuid4(), uuid.uuid4(), doc, config=config)
 
@@ -79,9 +79,9 @@ if __name__ == "__main__":
     ap.add_argument("--budget", type=int, default=6, help="목차당 문항 예산 (기본 6)")
     ap.add_argument(
         "--verifier",
-        choices=["solar", "exaone"],
+        choices=["solar", "jury", "exaone"],
         default="solar",
-        help="심판·풀이자 모델 (exaone = 교차 검증)",
+        help="solar=단독 / jury=배심원단(Solar+EXAONE 심판·풀이, exaone은 구표기)",
     )
     args = ap.parse_args()
     asyncio.run(main(args.chunks, args.budget, args.verifier))

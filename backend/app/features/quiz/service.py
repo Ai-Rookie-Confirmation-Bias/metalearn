@@ -131,10 +131,12 @@ class QuizService:
             )
             return []
 
-        # quiz 고유 사전 검사: 근거 문장 번호 실존 (여기서 걸리면 core로 갈 수 없음)
+        # quiz 고유 사전 검사: 근거 문장 번호 실존 + 선별 후보 이탈 차단 (§9-①)
         checked: list[GeneratedItem] = []
         for item in items:
-            reason = generation.evidence_ids_reason(item, chunk)
+            reason = generation.evidence_ids_reason(
+                item, chunk
+            ) or generation.evidence_scope_reason(item, order)
             if reason:
                 result.discarded.append(f"{item.concept}/{item.type}: {reason}")
             else:
@@ -150,12 +152,14 @@ class QuizService:
             )
             for item in checked
         ]
-        # 교차 검증: 심판·풀이는 verify_llm(다른 모델), 수정은 생성 모델(self.llm)
+        # 배심원단: 1차 심판·풀이 = 생성 모델(Solar), 2차 = verify_llm(EXAONE).
+        # 어느 한쪽이 잡으면 탈락, 2차 판독 불가는 기권. 수정은 생성 모델.
         verdicts = await validate_items(
             candidates,
-            self.verify_llm or self.llm,
+            self.llm,
             self.quality_config,
             revise_llm=self.llm,
+            second_llm=self.verify_llm,
         )
 
         passed: list[GeneratedItem] = []

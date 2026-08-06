@@ -9,14 +9,31 @@ from app.core.quality.checks import strip_answers
 from app.core.quality.types import CandidateItem
 
 
-def build_judge_prompt(items: list[CandidateItem]) -> str:
-    """문항 묶음 심판 — 정답 유일성 + 근거 대조 체크리스트."""
+def build_judge_prompt(items: list[CandidateItem], neutral_example: bool = False) -> str:
+    """문항 묶음 심판 — 정답 유일성 + 근거 대조 체크리스트.
+
+    neutral_example=True면 출력 예시에서 구체적 사유 문구를 뺀다 —
+    K-EXAONE이 예시 문구("오답 선지 '피드백'…")를 판정 사유로 그대로
+    복사하는 실측 문제 대응 (배심원단 2차 심판용).
+    """
     blocks = [
         f"[문항 {i}] ({it.type})\n"
         f"내용: {json.dumps(it.data, ensure_ascii=False)}\n"
         f"근거: {it.evidence_text}"
         for i, it in enumerate(items)
     ]
+
+    if neutral_example:
+        example = (
+            '[{"index":0,"pass":true,"reason":""},'
+            '{"index":1,"pass":false,"reason":"<이 문항의 실제 불합격 사유 한 문장>"}]'
+        )
+        example += "\nreason은 반드시 해당 문항의 실제 내용에서 나온 사유여야 한다. 예시 문구를 복사하지 마라."
+    else:
+        example = (
+            '[{"index":0,"pass":true,"reason":""},'
+            '{"index":1,"pass":false,"reason":"오답 선지 \'피드백\'이 원문에서 참"}]'
+        )
 
     return f"""너는 출제 검수자다. 각 문항을 근거 원문과 대조해 판정하라.
 
@@ -40,7 +57,7 @@ def build_judge_prompt(items: list[CandidateItem]) -> str:
 
 [출력] JSON 배열만 출력하라. reason은 **결론만 한 문장(60자 이내)** — 판정 과정·Q번호
 검토·중간 추론을 쓰면 응답이 잘려 전체가 무효 처리된다. 합격이면 빈 문자열.
-[{{"index":0,"pass":true,"reason":""}},{{"index":1,"pass":false,"reason":"오답 선지 '피드백'이 원문에서 참"}}]"""
+{example}"""
 
 
 def build_solve_prompt(items: list[CandidateItem]) -> str:

@@ -28,7 +28,12 @@ class ExaoneClient(LLMClient):
         self._throttle = asyncio.Lock()
 
     async def _wait_for_slot(self) -> None:
-        """슬라이딩 윈도 스로틀 — 최근 60초 호출이 한도에 차면 슬롯이 빌 때까지 대기."""
+        """슬라이딩 윈도 스로틀 — 최근 60초 호출이 한도에 차면 슬롯이 빌 때까지 대기.
+
+        분당 3회 제한은 serverless 티어 실측값 — dedicated 엔드포인트에선 불필요.
+        """
+        if "serverless" not in self._base:
+            return
         async with self._throttle:
             now = time.monotonic()
             if len(self._call_times) == _RATE_LIMIT:

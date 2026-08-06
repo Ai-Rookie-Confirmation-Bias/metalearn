@@ -1,10 +1,17 @@
 from app.features.quiz.generation import (
+    evidence_scope_reason,
     mechanical_check,
     parse_generation_response,
     parse_verification_response,
     resolve_evidence,
 )
-from app.features.quiz.schemas import GeneratedItem, ParsedChunk, SentenceAnchor
+from app.features.quiz.schemas import (
+    ChunkWorkOrder,
+    ConceptPlan,
+    GeneratedItem,
+    ParsedChunk,
+    SentenceAnchor,
+)
 
 CHUNK = ParsedChunk(
     index=3,
@@ -133,6 +140,71 @@ def test_mechanical_check_sentence_ref_ignores_normal_words():
     ok = _item()
     ok.data["explanation"] = "OS와 DBMS, windows10 환경에서도 동작한다."
     assert mechanical_check(ok, CHUNK) is None
+
+
+def test_mechanical_check_rejects_polite_endings():
+    """10회차 실측: "예측합니다"류 경어체를 심판 둘 다 놓침 — 기계 검사로 차단."""
+    bad = _item()
+    bad.data["question"] = "델파이 기법으로 무엇을 예측합니다?"
+    assert "경어체" in mechanical_check(bad, CHUNK)
+
+    bad = _item(
+        type="cloze",
+        data={"segments": [
+            {"kind": "text", "text": "의견을 종합해 결과를 "},
+            {"kind": "blank", "answer": "조정자"},
+            {"kind": "text", "text": "가 예측해요."},
+        ]},
+    )
+    assert "경어체" in mechanical_check(bad, CHUNK)
+
+
+def test_mechanical_check_polite_endings_no_false_positives():
+    """시험 문체("~쓰시오", "~아니다")와 '니다'로 끝나는 일반 표현은 오탐하면 안 된다."""
+    ok = _item(
+        type="shortAnswer",
+        data={"prompt": "조정자와 전문가 의견을 종합하는 기법을 쓰시오.", "accepted": ["델파이 기법"]},
+    )
+    assert mechanical_check(ok, CHUNK) is None
+
+    ok = _item(type="trueFalse", data={"statement": "폭포수 모형은 반복적 모형이 아니다.", "answer": False, "explanation": "고전적 선형 모형이다."})
+    assert mechanical_check(ok, CHUNK) is None
+
+
+def _order(**overrides) -> ChunkWorkOrder:
+    base = dict(
+        toc_index=0,
+        chunk_index=3,
+        concept_plans=[
+            ConceptPlan(name="델파이 기법", definition="전문가 의견 종합", form="definition",
+                        types=["mcq"], evidence_sentence_ids=[0]),
+            ConceptPlan(name="폭포수 모형", definition="고전적 모형", form="definition",
+                        types=["trueFalse"], evidence_sentence_ids=[1]),
+        ],
+    )
+    base.update(overrides)
+    return ChunkWorkOrder.model_validate(base)
+
+
+def test_evidence_scope_within_plan_passes():
+    assert evidence_scope_reason(_item(evidence_sentence_ids=[0]), _order()) is None
+
+
+def test_evidence_scope_outside_plan_is_rejected():
+    """QUIZ_TUNING §9-①: 다른 개념의 문장을 근거로 잡으면(근거 오매칭) 차단.
+
+    심판·풀이자는 '주어진 근거'를 전제로 판정하므로 여기서 못 막으면 끝까지 못 잡는다.
+    """
+    reason = evidence_scope_reason(_item(evidence_sentence_ids=[0, 1]), _order())
+    assert reason is not None and "선별된 후보 밖" in reason
+
+
+def test_evidence_scope_unknown_concept_falls_back_to_union():
+    """LLM이 개념 이름을 변형해도(계획에 없음) 조각 내 후보 합집합까지는 허용."""
+    item = _item(concept="델파이", evidence_sentence_ids=[1])
+    assert evidence_scope_reason(item, _order()) is None
+    item = _item(concept="델파이", evidence_sentence_ids=[2])
+    assert "선별된 후보 밖" in evidence_scope_reason(item, _order())
 
 
 def test_verification_parse_is_conservative_on_garbage():

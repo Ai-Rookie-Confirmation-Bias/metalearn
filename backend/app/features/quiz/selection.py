@@ -79,14 +79,40 @@ def select_chunk(chunk: ParsedChunk) -> ChunkSelection:
     return sel
 
 
+# 정의 키워드 추출 시 조사 제거 ("과정을" → "과정") — 근거 문장은 다른 조사로 활용될 수 있다
+_JOSA = re.compile(r"(?:으로|에서|이며|이고|이란|을|를|이|가|은|는|의|로|에|와|과|도|만|란)$")
+
+
+def _definition_keys(concept: ParsedConcept, name_keys: list[str]) -> set[str]:
+    """정의문에서 교차 점수용 내용 키워드. 이름과 겹치는 토큰은 제외(이름 매칭은 전제)."""
+    keys: set[str] = set()
+    for tok in re.split(r"[^0-9A-Za-z가-힣]+", concept.definition):
+        tok = _normalize(_JOSA.sub("", tok))
+        if len(tok) >= 2 and not any(tok in nk or nk in tok for nk in name_keys):
+            keys.add(tok)
+    return keys
+
+
 def _find_evidence(concept: ParsedConcept, norm_sentences: list[str]) -> list[int]:
-    """개념 이름 키워드가 등장하는 문장 = 근거 후보.
+    """개념 이름 키워드가 등장하는 문장 = 근거 후보. 관련도 내림차순으로 반환.
 
     인사말·광고 문장은 개념 키워드가 없어 여기서 자연스럽게 걸러진다.
+
+    이름 매칭만으로는 남의 행을 근거로 잡는다(CPM이 "PERT는 CPM과 달리…" 문장에
+    걸림 — QUIZ_TUNING §9-①). 정의 키워드 교차 점수 + 문장이 개념 이름으로 시작하면
+    (표에서 그 개념의 행) 가점을 주고, 점수 0인 후보는 더 나은 후보가 있을 때 버린다.
     """
-    keys = [_normalize(k) for k in _keywords(concept)]
-    hits: list[int] = []
+    keys = [k for k in (_normalize(k) for k in _keywords(concept)) if k]
+    def_keys = _definition_keys(concept, keys)
+    scored: list[tuple[int, int]] = []  # (score, sentence_index)
     for i, ns in enumerate(norm_sentences):
-        if any(k and k in ns for k in keys):
-            hits.append(i)
-    return hits
+        if not any(k in ns for k in keys):
+            continue
+        score = sum(1 for d in def_keys if d in ns)
+        if any(ns.lstrip("•▪◦∙·※*-—").startswith(k) for k in keys):
+            score += 2  # 개념 이름이 주어(행 시작) — 남의 행이 아닐 강한 신호
+        scored.append((score, i))
+    if any(s > 0 for s, _ in scored):
+        scored = [(s, i) for s, i in scored if s > 0]
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    return [i for _, i in scored]

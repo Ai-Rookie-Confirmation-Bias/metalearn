@@ -57,18 +57,23 @@ def _salvage_objects(text: str) -> list | None:
     return objects or None
 
 
-def parse_verdicts(raw: str, n_items: int) -> list[tuple[bool, str]]:
-    """심판 응답 → (합격, 사유) 목록. 깨지면 전원 불합격 (보수적)."""
+def parse_verdicts(raw: str, n_items: int) -> list[tuple[bool, str] | None]:
+    """심판 응답 → 문항별 (합격, 사유) 또는 None(판독 불가).
+
+    None의 해석은 호출자 몫 — 단독 심판은 보수적으로 불합격 처리하고,
+    배심원단의 2차 심판은 기권으로 처리한다 (validator 참조).
+    """
     data = extract_json(raw)
-    verdicts = [(False, "심판 응답 파싱 실패")] * n_items
+    verdicts: list[tuple[bool, str] | None] = [None] * n_items
     if not isinstance(data, list):
         return verdicts
-    for entry in data:
+    for pos, entry in enumerate(data):
         try:
-            i = int(entry["index"])
+            # 모델이 index를 빼먹는 경우(K-EXAONE 실측) 위치로 대응
+            i = int(entry.get("index", pos))
             if 0 <= i < n_items:
                 verdicts[i] = (bool(entry["pass"]), str(entry.get("reason", "")))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, AttributeError):
             continue
     return verdicts
 
@@ -79,12 +84,12 @@ def parse_solutions(raw: str, n_items: int) -> list:
     answers: list = [None] * n_items
     if not isinstance(data, list):
         return answers
-    for entry in data:
+    for pos, entry in enumerate(data):
         try:
-            i = int(entry["index"])
+            i = int(entry.get("index", pos))
             if 0 <= i < n_items:
                 answers[i] = entry.get("answer")
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, AttributeError):
             continue
     return answers
 

@@ -12,6 +12,14 @@ from app.core.quality.grading import grade
 # 소문자 s만: 대문자(AWS S3 등)는 정상 용어일 수 있다.
 _SENTENCE_REF = re.compile(r"(?<![0-9A-Za-z])s\d+")
 
+# 경어체 어미 검사 — 생성 규칙("시험 문체")을 심판 둘이 다 놓친 실측 사례("예측합니다").
+# "아니다"도 '니다'로 끝나므로 통짜 '니다' 매칭은 금물 — 습니다/ㅂ니다 축약형만 잡는다.
+# "쓰시오"류 하오체는 시험 문체라 허용.
+_POLITE_ENDING = re.compile(
+    r"[가-힣]*(?:습니다|[합됩입집갑옵줍봅씁납십]니다"
+    r"|세요|해요|예요|까요|네요|지요|군요)(?![가-힣])"
+)
+
 
 def _norm(s: str) -> str:
     return re.sub(r"\s+", "", str(s))
@@ -132,8 +140,13 @@ def mechanical_check(item_type: str, d: dict, evidence_text: str) -> str | None:
 
     # 프롬프트로 못 막는 LLM 편차 — 생성 콜 1회가 규칙을 통째로 무시할 수 있다 (QUIZ_TUNING §7)
     for text in visible_texts(item_type, d):
-        if text and (m := _SENTENCE_REF.search(str(text))):
+        s = str(text)
+        if not s:
+            continue
+        if m := _SENTENCE_REF.search(s):
             return f"본문에 내부 문장 번호({m.group(0)}) 노출"
+        if m := _POLITE_ENDING.search(s):
+            return f"본문에 경어체 어미('{m.group(0)}') — 시험 문체 위반"
     return None
 
 
@@ -164,6 +177,15 @@ def check_solution(item_type: str, data: dict, solver_answer) -> str | None:
     """
     if solver_answer is None:
         return "풀이자 응답 없음"
+
+    # 풀이자가 답을 1개짜리 배열로 감싸는 형식 편차(["로킹 단위"]) — 내용이 맞으면
+    # 형식 때문에 죽이지 않는다. cloze는 배열이 정답 형식, mcq는 복수 원소가 신호라 제외.
+    if (
+        item_type in ("shortAnswer", "trueFalse")
+        and isinstance(solver_answer, list)
+        and len(solver_answer) == 1
+    ):
+        solver_answer = solver_answer[0]
 
     if item_type == "mcq":
         answers = solver_answer if isinstance(solver_answer, list) else [solver_answer]

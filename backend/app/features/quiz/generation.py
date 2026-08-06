@@ -9,7 +9,7 @@ from pydantic import ValidationError
 
 from app.core.quality import checks as _checks
 from app.core.quality import parsing as _parsing
-from app.features.quiz.schemas import GeneratedItem, ParsedChunk
+from app.features.quiz.schemas import ChunkWorkOrder, GeneratedItem, ParsedChunk
 
 
 def parse_generation_response(raw: str) -> list[GeneratedItem]:
@@ -28,8 +28,11 @@ def parse_generation_response(raw: str) -> list[GeneratedItem]:
 
 
 def parse_verification_response(raw: str, n_items: int) -> list[tuple[bool, str]]:
-    """(하위 호환) 심판 응답 파싱 — core/quality/parsing으로 이동, 위임만."""
-    return _parsing.parse_verdicts(raw, n_items)
+    """(하위 호환) 심판 응답 파싱 — core로 위임하되 단독 심판 의미(판독 불가=불합격) 유지."""
+    return [
+        v if v is not None else (False, "심판 응답 파싱 실패")
+        for v in _parsing.parse_verdicts(raw, n_items)
+    ]
 
 
 def _sentence_ids(evidence) -> list[int]:
@@ -49,6 +52,23 @@ def evidence_ids_reason(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
         return "근거 문장 번호 없음"
     if any(not (0 <= s < len(chunk.sentences)) for s in item.evidence_sentence_ids):
         return "존재하지 않는 문장 번호"
+    return None
+
+
+def evidence_scope_reason(item: GeneratedItem, order: ChunkWorkOrder) -> str | None:
+    """근거가 선별(계획) 단계의 후보 문장을 벗어나면 차단 (QUIZ_TUNING §9-①).
+
+    심판·풀이자는 '주어진 근거'를 전제로 판정하므로 근거 자체의 오매칭은 검증
+    배터리가 구조적으로 못 잡는다 — 선별이 승인한 문장만 근거로 인정한다.
+    개념 이름이 계획과 안 맞으면(LLM이 이름을 변형) 조각 내 전체 후보 합집합으로 완화.
+    """
+    by_name = {p.name: set(p.evidence_sentence_ids) for p in order.concept_plans}
+    allowed = by_name.get(item.concept)
+    if allowed is None:
+        allowed = set().union(*by_name.values()) if by_name else set()
+    outside = sorted(set(item.evidence_sentence_ids) - allowed)
+    if outside:
+        return f"근거 문장 {outside}이 선별된 후보 밖 (근거 오매칭 의심)"
     return None
 
 
