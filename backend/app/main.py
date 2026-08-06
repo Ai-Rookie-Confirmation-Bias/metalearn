@@ -13,6 +13,11 @@ from app.core.llm.solar import solar_client
 
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
+    # ⚠️ **여기서 커리큘럼을 올린다.** `@app.on_event("startup")`으로 두면
+    #    안 돈다 — FastAPI는 `lifespan=`이 주어지면 구형 on_event 핸들러를
+    #    **조용히 무시한다.** 병합은 성공했는데 자료가 0개였고, 화면만 비어서
+    #    원인이 안 보였다(통합 1단계에서 실제로 겪었다).
+    _load_curriculum()
     yield
     # Solar 공유 커넥션 풀 정리
     await solar_client.aclose()
@@ -31,7 +36,6 @@ app.add_middleware(
 app.include_router(api_router, prefix="/api")
 
 
-@app.on_event("startup")
 def _load_curriculum() -> None:
     """픽스처로 자료를 올리고, 있으면 진도 스냅샷을 복원한다.
 

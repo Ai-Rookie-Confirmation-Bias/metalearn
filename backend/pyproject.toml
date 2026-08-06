@@ -15,6 +15,10 @@ dependencies = [
     "python-jose[cryptography]>=3.3",
     "passlib[bcrypt]>=1.7",
     "httpx>=0.28",
+    # 파싱 업로드 라우터가 UploadFile/Form을 쓴다. 없으면 **import 단계에서** 앱이
+    # 통째로 죽는다(FastAPI가 라우트 등록 때 검사한다). 선언이 빠져 있어서
+    # 클린 빌드가 안 됐다 — 로컬에 예전에 깔린 것으로 가려져 있었다.
+    "python-multipart>=0.0.9",
 ]
 
 [tool.uv]
