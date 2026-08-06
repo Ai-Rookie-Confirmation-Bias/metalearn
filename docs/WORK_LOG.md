@@ -23,6 +23,16 @@ integration 코드는 **참고만** 하고 가져오지 않는다 — 그쪽 파
 
 ---
 
+## 2026-08-06 · 데모 준비 — 성향 fixture · mode · prewarm
+
+### 정한 것
+- 온보딩 UI 전에도 성향이 생성에 닿아야 한다 → `CURRICULUM_PROFILE`(기본 metaphor)
+- `plan.mode` 배지만으로는 부족 → `mode_block`을 설명 프롬프트에 붙임
+- 데모 영상 cold start → `POST /documents/{id}/prewarm?limit=6`
+
+### 기각한 것
+- 문제은행 attempts를 mastery에 합치기 — QUIZ 격리 + 제품 결정 유지
+
 ## 2026-08-06 · 회의 — 결손을 어디로 보낼 것인가 (+ 구현 4건)
 
 제출까지 2주. **깊이보다 사이클**로 가되, 그 전에 "틀린 걸 다시 만날 자리가
