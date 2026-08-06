@@ -25,6 +25,14 @@ backend/uploads/
 # 파싱 결과 테스트 픽스처 — 용량이 크고 팀 공유 파일이라 별도 관리
 backend/tests/fixtures/*.md
 
+# tree.json도 같다. **확장자만 다를 뿐 같은 교재 원문이다** — md를 막아 둔
+# 이유가 그대로 적용된다(실측: probe.tree.json 115KB에 원문 11,524자).
+# 게다가 파싱 주입이 붙은 뒤로는 같은 PDF가 책장에 두 권으로 뜬다:
+# fixture는 파일명 stem을, bridge는 파싱 UUID를 doc_id로 쓴다.
+# sample_sdlc는 7KB짜리 합성 샘플이라 남긴다 — 테스트가 이걸 쓴다.
+backend/tests/fixtures/*.tree.json
+!backend/tests/fixtures/sample_sdlc.tree.json
+
 # 커리큘럼 진도 스냅샷 (로컬/데모). DB 전 임시 저장
 backend/data/*
 !backend/data/.gitkeep
