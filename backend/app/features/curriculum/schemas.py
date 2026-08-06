@@ -69,6 +69,16 @@ class DocumentOut(_Camel):
     chapters: list[ChapterBrief]
 
 
+class IngestOut(_Camel):
+    """파싱 문서를 학습 store에 올린 결과."""
+
+    doc_id: str
+    title: str
+    chapters: int
+    sections: int
+    source: str = "parsing"
+
+
 class SectionOut(_Camel):
     """목차 화면의 절 한 줄."""
 

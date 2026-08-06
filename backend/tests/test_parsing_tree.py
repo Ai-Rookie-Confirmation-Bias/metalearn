@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.features.curriculum.adapters.parsing_tree import document_from_tree  # noqa: E402
 from app.features.curriculum.store import (  # noqa: E402
     FIXTURE_DIR,
+    Store,
     build_document_from_tree,
 )
 
@@ -95,6 +96,30 @@ def test_모든_개념이_화면에():
     doc = build_document_from_tree(FIXTURE)
     n = sum(len(s.concepts) for ch in doc.chapters for s in ch.sections)
     assert n == 8  # 5 + 3
+
+
+def test_ingest_tree는_파싱_id로_올린다():
+    """책장→`/curriculum/{uuid}`가 그 id로 열려야 한다. 파일명 stem이면 404다."""
+    tree = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    tree["document"] = {
+        **(tree.get("document") or {}),
+        "id": "5528a1e3-b255-45df-9fb9-fcd089d80ee0",
+        "filename": "probe.pdf",
+        "status": "ready",
+    }
+    s = Store()
+    doc = s.ingest_tree(tree)
+    assert doc.doc_id == "5528a1e3-b255-45df-9fb9-fcd089d80ee0"
+    assert doc.doc_id in s.documents
+    assert len(doc.chapters) == 2
+
+
+def test_ingest_tree_명시_id가_우선이다():
+    tree = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    s = Store()
+    doc = s.ingest_tree(tree, doc_id="custom-key")
+    assert doc.doc_id == "custom-key"
+    assert "custom-key" in s.documents
 
 
 def _main() -> int:

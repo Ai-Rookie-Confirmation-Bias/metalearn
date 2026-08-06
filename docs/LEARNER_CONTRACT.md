@@ -305,6 +305,7 @@ CREATE TABLE lesson_cache (
 | GET | `/{course}/sections/{id}` | 학습 화면(설명·비유·⚡·빈칸·객관식·원문) | 2~3콜 |
 | GET | `/{course}/review?days=N` | 복습 큐 | 화면당 1콜 |
 | POST | `/{course}/sections/{id}/answer` | ★ 시도 기록 — **네 출처가 전부 이 문** | – |
+| POST | `/documents/from-parsing/{id}` | 파싱 ready 문서 → 학습 store | – |
 
 ### 기록
 
@@ -375,9 +376,9 @@ mcq      {question, options[], answer, explanation, concept, sectionId}
 
 | | 상태 |
 |---|---|
-| **저장** | 인메모리. 백엔드 재시작하면 진도가 0으로 돌아간다. 이 문서가 그걸 붙이려는 것 |
+| **저장** | JSON 스냅샷(`curriculum_progress.json`). 재시작해도 진도는 남는다. DB는 다음 |
 | **진단** | 생성기도 화면도 없다. `diagnostic 0.5` 자리가 비어 있다 |
-| **성향** | `build_lesson(profile_block=)` 자리는 뚫려 있는데 라우터가 늘 빈 값을 넘긴다 |
-| **분량 배분** | `plan.mode`가 화면에 "설명을 늘렸습니다"라고 뜨는데 **설명은 안 바뀐다** |
-| **실파싱 연결** | 파일 픽스처(`*.tree.json`)를 읽는다. tree API 어댑터는 있다 |
+| **성향** | `CURRICULUM_PROFILE` fixture → `build_lesson`. 온보딩 UI는 아직 |
+| **분량 배분** | `plan.mode` → `mode_block`이 설명 프롬프트에 붙는다 |
+| **실파싱 연결** | `GET /documents`가 ready 문서를 sync · `POST .../from-parsing/{id}` · doc_id=파싱 UUID |
 | **선수 데이터** | 파싱 선수 이름의 절반 넘게가 개념 목록에 없다(필기 122/339, 실기 211/404). 보충 화면 기능의 상한 |

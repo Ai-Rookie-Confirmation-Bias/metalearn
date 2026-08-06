@@ -6,10 +6,15 @@
 from __future__ import annotations
 
 import time
+import uuid
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
+from app.core.database import get_db
 
 from .blocks import ConceptBrief
+from .bridge import ingest_parsing_document, sync_ready_documents
 from .mastery import DAY, WEIGHT, label
 from .planner import formative_ready, weak_for_section
 from .schemas import (
@@ -20,6 +25,7 @@ from .schemas import (
     ChapterOut,
     DocumentOut,
     FormativeOut,
+    IngestOut,
     LessonOut,
     ReviewItem,
     ReviewOut,
@@ -35,13 +41,26 @@ REVIEW_BATCH = 5
 router = APIRouter()
 
 
-def _doc(doc_id: str) -> Document:
+def _doc(doc_id: str, db: Session | None = None) -> Document:
     """이 자료 — **보충 화면이 끼워진 상태로.**
 
     파싱이 준 문서(`store.documents`)는 그대로 두고 읽을 때 계산한다. 순수
     함수라 같은 상태면 같은 결과가 나오고, 어느 엔드포인트로 들어와도 같은
     화면 목록을 본다. 여기 한 곳만 지나면 목차·학습·평가·채점이 다 따라온다.
+
+    store에 없고 id가 UUID면 파싱 DB에서 한 번 당겨 본다 — 책장 sync 전에
+    딥링크로 들어오거나 서버가 재시작된 자리.
     """
+    if doc_id not in store.documents and db is not None:
+        try:
+            uid = uuid.UUID(doc_id)
+        except ValueError:
+            uid = None
+        if uid is not None:
+            try:
+                ingest_parsing_document(db, uid)
+            except LookupError:
+                pass
     doc = store.documents.get(doc_id)
     if doc is None:
         raise HTTPException(404, f"자료를 찾을 수 없습니다: {doc_id}")
@@ -77,14 +96,46 @@ def _sections_out(chapter: Chapter) -> list[SectionOut]:
 
 
 @router.get("/documents", response_model=list[str])
-def list_documents() -> list[str]:
+def list_documents(db: Session = Depends(get_db)) -> list[str]:
+    """학습 가능한 자료 id 목록.
+
+    파일 픽스처 + **파싱 DB에 ready인 문서**(아직 store에 없으면 여기서 주입).
+    책장이 이 목록만 보므로, 이 한 줄이 파싱→학습 이음매다.
+    """
+    sync_ready_documents(db)
     return list(store.documents)
 
 
+@router.post(
+    "/documents/from-parsing/{document_id}",
+    response_model=IngestOut,
+)
+def ingest_from_parsing(
+    document_id: uuid.UUID,
+    refresh: bool = False,
+    db: Session = Depends(get_db),
+) -> IngestOut:
+    """파싱 문서 하나를 학습 store에 올린다(또는 갱신).
+
+    책장 목록이 자동 sync를 하지만, 업로드 직후·재파싱 뒤에는 이걸로 명시한다.
+    """
+    try:
+        doc = ingest_parsing_document(db, document_id, refresh=refresh)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return IngestOut(
+        doc_id=doc.doc_id,
+        title=doc.title,
+        chapters=len(doc.chapters),
+        sections=sum(len(ch.sections) for ch in doc.chapters),
+        source="parsing",
+    )
+
+
 @router.get("/documents/{doc_id}", response_model=DocumentOut)
-def get_document(doc_id: str) -> DocumentOut:
+def get_document(doc_id: str, db: Session = Depends(get_db)) -> DocumentOut:
     """[화면 1] 내 자료 — 준비도와 목차 목록."""
-    doc = _doc(doc_id)
+    doc = _doc(doc_id, db)
     course, plans = summarize(doc, store.progress)
     weakest = course.weakest
     weakest_index = next(
@@ -125,9 +176,9 @@ def get_document(doc_id: str) -> DocumentOut:
 
 
 @router.get("/documents/{doc_id}/chapters/{index}", response_model=ChapterOut)
-def get_chapter(doc_id: str, index: int) -> ChapterOut:
+def get_chapter(doc_id: str, index: int, db: Session = Depends(get_db)) -> ChapterOut:
     """[화면 2] 목차 하나 — 절 목록과 왜 이렇게 나왔는지."""
-    doc = _doc(doc_id)
+    doc = _doc(doc_id, db)
     chapter = doc.chapter(index)
     if chapter is None:
         raise HTTPException(404, f"목차를 찾을 수 없습니다: {index}")
@@ -160,14 +211,14 @@ def get_chapter(doc_id: str, index: int) -> ChapterOut:
     "/documents/{doc_id}/chapters/{index}/formative", response_model=FormativeOut
 )
 async def get_formative(
-    doc_id: str, index: int, refresh: bool = False
+    doc_id: str, index: int, refresh: bool = False, db: Session = Depends(get_db)
 ) -> FormativeOut:
     """[화면 4] 단원 평가 — 화면을 가로질러 구별할 수 있는가.
 
     **여기만 잠근다.** 학습은 절대 안 잠근다(integration이 학습을 잠갔다가
     이탈을 겪었다). 잠금 판정은 `planner.formative_ready` — 진도로만 본다.
     """
-    doc = _doc(doc_id)
+    doc = _doc(doc_id, db)
     chapter = doc.chapter(index)
     if chapter is None:
         raise HTTPException(404, f"목차를 찾을 수 없습니다: {index}")
@@ -226,7 +277,9 @@ async def get_formative(
 @router.get(
     "/documents/{doc_id}/sections/{section_id}", response_model=LessonOut
 )
-async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> LessonOut:
+async def get_lesson(
+    doc_id: str, section_id: str, refresh: bool = False, db: Session = Depends(get_db)
+) -> LessonOut:
     """[화면 3] 절 하나 — 설명·비유·빈칸·객관식 + 원문.
 
     생성이 5~7초라 캐시한다. `?refresh=true`로 다시 만들 수 있다(개발용).
@@ -235,7 +288,7 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
     **분량**은 이 목차의 `plan.mode`를 설명 지시에 넣는다.
     **최근 틀린 개념**도 이어지는 것만 골라 넘긴다.
     """
-    doc = _doc(doc_id)
+    doc = _doc(doc_id, db)
     found = doc.section(section_id)
     if found is None:
         raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")
@@ -286,19 +339,21 @@ async def get_lesson(doc_id: str, section_id: str, refresh: bool = False) -> Les
 
 
 @router.post("/documents/{doc_id}/prewarm")
-async def prewarm(doc_id: str, limit: int = 6) -> dict:
+async def prewarm(doc_id: str, limit: int = 6, db: Session = Depends(get_db)) -> dict:
     """데모용 — 앞 N개 화면을 미리 만들어 캐시에 올린다.
 
     화면당 5~7초라 영상에서 기다리면 안 된다. 찍기 전에 한 번 호출한다.
     """
-    doc = _doc(doc_id)
+    doc = _doc(doc_id, db)
     return await prewarm_document(
         doc, store.progress, limit=limit, profile_block=store.profile_block()
     )
 
 
 @router.get("/documents/{doc_id}/review", response_model=ReviewOut)
-async def get_review(doc_id: str, days: int = 0, limit: int = REVIEW_BATCH) -> ReviewOut:
+async def get_review(
+    doc_id: str, days: int = 0, limit: int = REVIEW_BATCH, db: Session = Depends(get_db)
+) -> ReviewOut:
     """[화면 5] 복습 큐 — 망각곡선이 불러온 화면들.
 
     `days`는 **시연용 시계 이동**이다. 첫 복습은 맞힌 뒤 2.2일에 오는데
@@ -309,7 +364,7 @@ async def get_review(doc_id: str, days: int = 0, limit: int = REVIEW_BATCH) -> R
     문항은 **새로 만든다.** 그때 그 빈칸을 다시 내면 개념이 아니라 그 문장을
     외웠는지를 재게 된다. 설명은 안 준다(복습이지 재학습이 아니다).
     """
-    doc = _doc(doc_id)
+    doc = _doc(doc_id, db)
     now = time.time() + days * DAY
 
     due = [
@@ -345,13 +400,15 @@ async def get_review(doc_id: str, days: int = 0, limit: int = REVIEW_BATCH) -> R
 
 
 @router.post("/documents/{doc_id}/sections/{section_id}/answer", response_model=AnswerOut)
-def answer(doc_id: str, section_id: str, body: AnswerIn) -> AnswerOut:
+def answer(
+    doc_id: str, section_id: str, body: AnswerIn, db: Session = Depends(get_db)
+) -> AnswerOut:
     """시도 한 건을 기록하고 **바뀐 값을 그 자리에서** 돌려준다.
 
     이게 있어야 "학습 → 분석 → 커리큘럼 변경"이 화면에서 눈에 보인다.
     진단·인출·복습·형성이 전부 여기로 들어와 하나의 누적으로 쌓인다(`body.kind`).
     """
-    doc = _doc(doc_id)
+    doc = _doc(doc_id, db)
     found = doc.section(section_id)
     if found is None:
         raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")

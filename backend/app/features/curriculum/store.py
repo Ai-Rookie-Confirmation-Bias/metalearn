@@ -111,6 +111,17 @@ def build_document_from_tree(path: Path) -> Document:
     return document_from_tree(tree, doc_id=stem)
 
 
+def _doc_id_from_tree(tree: dict, *, doc_id: str | None = None) -> str:
+    """파싱 문서면 UUID를 키로 쓴다 — 책장→`/curriculum/{id}`가 그 id로 열려야 한다."""
+    if doc_id:
+        return doc_id
+    meta = tree.get("document") or {}
+    if meta.get("id"):
+        return str(meta["id"])
+    raw = meta.get("filename") or "document"
+    return Path(str(raw)).stem
+
+
 CARRY_LIMIT = 3
 
 
@@ -181,6 +192,17 @@ class Store:
             doc = build_document(path)
             self.documents[doc.doc_id] = doc
         return list(self.documents)
+
+    def ingest_tree(self, tree: dict, *, doc_id: str | None = None) -> Document:
+        """파싱 DocumentTree(dict)를 학습 store에 올린다.
+
+        어댑터는 이미 있었다. 없던 건 **런타임 주입구**다 — 파일 픽스처만
+        읽으면 머지 후 책장이 보여 주는 파싱 문서 id로 `/curriculum/{id}`가 404다.
+        """
+        key = _doc_id_from_tree(tree, doc_id=doc_id)
+        doc = document_from_tree(tree, doc_id=key)
+        self.documents[doc.doc_id] = doc
+        return doc
 
     def load_progress(self) -> int:
         """스냅샷에서 진도를 복원한다. 복원한 화면 수를 돌려준다."""
