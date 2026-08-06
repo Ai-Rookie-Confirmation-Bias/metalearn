@@ -23,6 +23,45 @@ integration 코드는 **참고만** 하고 가져오지 않는다 — 그쪽 파
 
 ---
 
+## 2026-08-07 · integration 검증 + 파싱→학습 주입
+
+`integration` 브랜치에 seedParsec · feat/curriculum · feat/quiz-create tip이
+전부 들어갔다(`50f504c`). 원격에 미병합 tip은 없었다.
+
+### 정한 것
+- 검증 기준은 "각자 사이클이 도느냐"가 아니라 **이음매가 열려 있느냐**
+- 파싱 tree → 커리큘럼 store 주입이 첫 이음매. 어댑터는 이미 있었고
+  **런타임 문만** 없었다 → `bridge.py` + 목록 sync + `POST .../from-parsing/{id}`
+- doc_id는 **파싱 UUID**. 파일명 stem으로 올리면 책장 링크가 404다
+
+### 뒤집은 것 (통합에서 다시 확인)
+- **충돌 0건 ≠ 안전.** lifespan이 있으면 `@on_event("startup")`이 조용히 무시된다
+  (1단계에서 자료 0개). quiz 쪽 alembic `0002` 이중·TOML 이중 테이블도
+  파일 이름이 달라 충돌이 안 났다
+- solar-pro2→pro3로 합치면 quiz 문항이 0개 — 호출은 성공하고 파서만 죽는다.
+  `QUIZ_CHAT_MODEL`로 분리해 둠(담당 결정 사항)
+
+### 검증 숫자 (클린 스택)
+```
+테스트     240 통과 (학습 + quiz + ingest 2)
+alembic    head 0008 하나
+라우트     29 (parsing 10 · courses 8 · curriculum 9 · quiz …)
+학습       필기 5목차 124화면 → 생성 4.8s · {concept1 cloze4 mcq1}
+파싱 주입  probe.pdf ready → 목록에 UUID · 4목차 43화면 127개념
+프론트     tsc 0 · /library /curriculum /quiz 200
+```
+
+### 아직 안 이어진 것
+- 문제집 프론트는 **mock**. 백엔드 `/courses/:id/quiz*`는 붙어 있으나 courses=0
+- 코스 list API 없음 (POST create만)
+- `/learning` 목업과 `/curriculum/:docId` 공존 — 데모 진입은 책장→curriculum
+
+### 기각한 것
+- 파싱 쪽에 list API를 우리가 추가하기 — 소유 경계. 우리는 DB ready를
+  curriculum 목록에서 sync하는 쪽으로 갔다
+
+---
+
 ## 2026-08-06 · 데모 준비 — 성향 fixture · mode · prewarm
 
 ### 정한 것
