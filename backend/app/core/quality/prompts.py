@@ -38,7 +38,8 @@ def build_judge_prompt(items: list[CandidateItem]) -> str:
 - Q10. (빈칸) 빈칸이 번호·기호처럼 의미 없는 자리가 아닌가? 그렇다면 불합격
 - Q11. 문항 표현에 모순·모호함이 없는가?
 
-[출력] JSON 배열만 출력하라:
+[출력] JSON 배열만 출력하라. reason은 **결론만 한 문장(60자 이내)** — 판정 과정·Q번호
+검토·중간 추론을 쓰면 응답이 잘려 전체가 무효 처리된다. 합격이면 빈 문자열.
 [{{"index":0,"pass":true,"reason":""}},{{"index":1,"pass":false,"reason":"오답 선지 '피드백'이 원문에서 참"}}]"""
 
 

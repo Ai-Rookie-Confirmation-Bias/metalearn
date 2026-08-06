@@ -162,3 +162,14 @@ async def test_validator_mechanical_failure_revived_by_revision():
     assert verdicts[0].ok
     assert verdicts[0].revised
     assert verdicts[0].item.data["statement"]
+
+
+def test_extract_json_salvages_truncated_array():
+    """토큰 한도로 잘린 심판 배열 — 완결된 객체만 건진다 (K-EXAONE 실측 패턴)."""
+    from app.core.quality.parsing import parse_verdicts
+
+    raw = '[{"index":0,"pass":true,"reason":""},{"index":1,"pass":false,"reason":"근거 \\"불일치\\""},{"index":2,"pass":fal'
+    verdicts = parse_verdicts(raw, 3)
+    assert verdicts[0] == (True, "")
+    assert verdicts[1] == (False, '근거 "불일치"')
+    assert verdicts[2] == (False, "심판 응답 파싱 실패")  # 잘린 객체는 보수적 불합격

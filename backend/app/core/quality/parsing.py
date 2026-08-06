@@ -4,7 +4,7 @@ import re
 
 
 def extract_json(raw: str):
-    """응답에서 JSON을 꺼낸다. ```json fence·앞뒤 잡담 허용."""
+    """응답에서 JSON을 꺼낸다. ```json fence·앞뒤 잡담·토큰 한도로 잘린 배열 허용."""
     text = raw.strip()
     fence = re.search(r"```(?:json)?\s*(.+?)```", text, re.DOTALL)
     if fence:
@@ -17,7 +17,44 @@ def extract_json(raw: str):
             return json.loads(text[start:end])
         except json.JSONDecodeError:
             continue
-    return None
+    return _salvage_objects(text[start:])
+
+
+def _salvage_objects(text: str) -> list | None:
+    """잘린 배열에서 완결된 객체만 건진다 — `[{a},{b},{잘림` → [a, b].
+
+    추론형 모델이 토큰 한도에 걸려 배열을 못 닫는 경우(K-EXAONE 실측),
+    전체 무효 대신 앞쪽의 멀쩡한 판정이라도 살린다.
+    """
+    objects: list = []
+    depth = 0
+    obj_start = -1
+    in_str = False
+    escape = False
+    for i, ch in enumerate(text):
+        if escape:
+            escape = False
+            continue
+        if ch == "\\":
+            escape = in_str
+            continue
+        if ch == '"':
+            in_str = not in_str
+            continue
+        if in_str:
+            continue
+        if ch == "{":
+            if depth == 0:
+                obj_start = i
+            depth += 1
+        elif ch == "}" and depth > 0:
+            depth -= 1
+            if depth == 0:
+                try:
+                    objects.append(json.loads(text[obj_start : i + 1]))
+                except json.JSONDecodeError:
+                    pass
+    return objects or None
 
 
 def parse_verdicts(raw: str, n_items: int) -> list[tuple[bool, str]]:
