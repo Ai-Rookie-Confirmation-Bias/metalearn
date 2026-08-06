@@ -21,5 +21,13 @@ dependencies = [
     "python-multipart>=0.0.9",
 ]
 
+[dependency-groups]
+# 테스트 도구도 선언이 없어서 `uv run --with pytest` 로 억지로 돌려야 했다.
+# multipart와 같은 종류의 구멍이다 — 새로 클론한 사람은 테스트를 못 돌린다.
+dev = [
+    "pytest>=8.0",
+    "anyio>=4.0",   # 비동기 테스트를 붙일 때
+]
+
 [tool.uv]
 package = false
