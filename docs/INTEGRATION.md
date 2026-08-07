@@ -30,8 +30,8 @@ DB       localhost:5432  (postgres/dev, DB명 metalearn_v3)
 
 확인:
 ```bash
-docker compose exec backend uv run alembic current          # 0008 (head)
-docker compose exec backend uv run --group dev pytest -q    # 251 passed
+docker compose exec backend uv run alembic current          # 0009 (head)
+docker compose exec backend uv run --group dev pytest -q    # 263 passed
 docker compose exec frontend pnpm exec tsc --noEmit         # 통과
 ```
 
@@ -46,7 +46,7 @@ gitignore다(저작물). 클론하면 `sample_sdlc.tree.json`(합성 샘플) 하
 ## 2. 지금 어디까지 이어졌나
 
 ```
-PDF 업로드 ──✅──> 파싱 ✅ ──┬─> 코스 ✅ ──> 학습 ✅  책장에 수업으로 뜬다
+PDF 업로드 ──✅──> 파싱 ✅ ──┬─> 코스 ✅ ─> 진단 ✅ API ─> 학습 ✅  책장에 수업으로
             /create        └─> 문제은행 ✅ API ──❌──> 문제집 화면
                                                  부를 화면 없음(mock)
 ```
@@ -131,7 +131,7 @@ curl -X POST "http://localhost:8000/api/parsing/documents" -F "file=@교재.pdf"
 
 ---
 
-## 3. 실제로 도는 API (32개)
+## 3. 실제로 도는 API (39개)
 
 ⚠️ `docs/API.md`는 **2026-07-03 문서**라 피벗 전 설계다. 실제로 도는 건 이 표다.
 
@@ -152,6 +152,13 @@ GET    /api/courses/{id}                       조회
 GET    /api/courses/{id}/tree                  코스 트리 (다자료 개념 연결 포함)
 GET    /api/courses/{id}/prereqs               선수 판정 (pass/gray/rejected)
 GET    /api/courses/{id}/gaps                  끊긴 고리
+GET    /api/courses/{id}/diagnostic            ★24 진단 화면 ①~④ (LLM 없음)
+GET    /api/courses/{id}/diagnostic/cards      ★③ 카드 4장 (LLM 1콜)
+PATCH  /api/courses/{id}/diagnostic            ★①③ 목표·기간·설명 형식
+POST   /api/courses/{id}/diagnostic/subjects   ★④-1 과목 단위 답 → 펼칠 과목
+POST   /api/courses/{id}/diagnostic/prereqs    ★④-2 펼친 과목의 항목별 답
+GET    /api/courses/{id}/diagnostic/probes     ★⑤ 확인 문항 (오답만 생성)
+POST   /api/courses/{id}/diagnostic/probes     ★⑤ 채점 → known 보정
 ```
 
 ### 학습 커리큘럼
@@ -278,6 +285,28 @@ QUIZ_TUNING의 실측이 전부 pro2 기준이라 **`QUIZ_CHAT_MODEL="solar-pro2
   아니지만(pro2 단독 실행과 동일) 품질은 봐주셔야 합니다.
 - `docs/WORKLOG.md`(문제은행)와 `docs/WORK_LOG.md`(학습)가 **한 글자 차이로 공존**한다.
   이름을 바꾸든 합치든 정하는 게 좋겠다.
+
+### 프론트 — 🟡 진단 화면이 없다 (24번 API는 다 됐다)
+
+백엔드는 붙었고 화면이 없다. 화면 다섯, 순서대로:
+
+```
+① 왜 배우나     PATCH /diagnostic  {goal, deadline_weeks}
+② 분야 맞나     GET   /diagnostic 의 field 를 확인만 받는다
+③ 카드 4장      GET   /diagnostic/cards → 넷 중 하나 → PATCH {style}
+④ 선수 체크     POST  /diagnostic/subjects  (과목 단위)
+                → 돌아온 expand 과목만 항목 펼침 → POST /diagnostic/prereqs
+⑤ 확인 문항     GET   /diagnostic/probes → 채점은 POST 로
+```
+
+- **④가 두 단계다.** 항목을 전부 물으면 54개다. 과목으로 먼저 묻고 "들어봤다"인
+  것만 펼치면 실측 7 + 23 = 30번이 된다.
+- **⑤는 빈 목록일 수 있다.** 정답을 못 세운 항목은 문항을 안 낸다 — 그럼 이
+  화면을 건너뛴다. 개수도 고정이 아니다(1~4).
+- ⚠️ **③ 문구를 조심해야 한다.** "당신에게 맞는 학습법"이 아니라 **"어떤 설명이
+  읽기 편한가"**다. 러닝 스타일 맞춤에 학습 효과 근거는 없다(Pashler 2008).
+  이건 성취가 아니라 이탈을 막는 장치다.
+- ②는 12.5 분야 판정의 **유일한 검증 창구**다. 자동으로 검증할 방법이 없다.
 
 ### 다 같이 정할 것
 

@@ -45,6 +45,7 @@ LLM 호출이 실패하면 **통과 쪽으로 둔다** — 놓치는 것보다 �
 from __future__ import annotations
 
 import logging
+import re
 import uuid
 from dataclasses import dataclass
 
@@ -53,7 +54,8 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.llm.solar import solar_client
-from app.features.course import prompts
+from app.features.course.prompts import gray as gray_prompt
+from app.features.course.prompts import merge as merge_prompt
 from app.features.course.models import Course, CoursePrereq, PrereqStatus
 from app.features.parsing.models import Concept, Document, DocTopic
 from app.features.parsing.repository import ParsingRepository
@@ -104,6 +106,22 @@ def collect(documents: list[Document]) -> list[Candidate]:
                     )
                 )
     return out
+
+
+def _squash(name: str) -> str:
+    """공백·가운뎃점만 지운 이름. `컴퓨터구조` == `컴퓨터 구조`."""
+    return re.sub(r"[\s·・]+", "", name)
+
+
+def _index_of(value, items: list[str]) -> int | None:
+    """LLM이 준 번호. 문자열로 오거나 범위를 벗어날 수 있다."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and value.isdigit():
+        value = int(value)
+    if isinstance(value, int) and 0 <= value < len(items):
+        return value
+    return None
 
 
 class PrereqScreen:
@@ -207,6 +225,9 @@ class PrereqScreen:
         # 없앴다). 임베딩을 방금 만들었으니 여기서 한 번 더 거른다 — 추가
         # 호출이 없다.
         candidates, vectors = self._dedup(candidates, vectors)
+        # 항목은 임베딩으로 합쳤지만 **과목 이름은 임베딩으로 못 가른다**
+        # (같음 0.806 / 다름 0.866으로 분포가 뒤집힌다). LLM에게 맡긴다.
+        await self._merge_subjects(candidates, documents)
 
         rows: list[CoursePrereq] = []
         gray: list[tuple[int, Candidate, Concept]] = []  # LLM에게 물을 것
@@ -238,6 +259,77 @@ class PrereqScreen:
             counts.get("rejected", 0), len(gray),
         )
         return rows
+
+    async def _merge_subjects(
+        self, candidates: list[Candidate], documents: list[Document]
+    ) -> None:
+        """같은 과목의 여러 이름을 대표 이름 하나로 바꾼다. 제자리에서 고친다.
+
+        **항목은 하나도 안 버린다.** 이름표만 바꾸는 것이라 LLM이 틀려도 과목이
+        하나 더 남거나 덜 남을 뿐이다. 실패하면 아무것도 안 합친다.
+
+        공백 정규화를 먼저 한다 — `컴퓨터구조`/`컴퓨터 구조`는 LLM을 부를 것도
+        없고, 부르면 오히려 흔들린다. 실측 15개 중 2쌍이 여기서 걸렸다.
+        """
+        names = sorted({c.subject for c in candidates})
+        if len(names) < 2:
+            return
+
+        # ① 공백·가운뎃점만 다른 것
+        canonical: dict[str, str] = {}
+        by_norm: dict[str, str] = {}
+        for name in names:
+            key = _squash(name)
+            canonical[name] = by_norm.setdefault(key, name)
+
+        remaining = sorted(set(canonical.values()))
+        if len(remaining) < 2:
+            self._apply(candidates, canonical)
+            return
+
+        # ② 뜻이 겹치는 것 — LLM
+        field_name = next((d.field for d in documents if d.field), "")
+        try:
+            raw = await solar_client.generate_json(
+                merge_prompt.build_prompt(field=field_name, subjects=remaining),
+                system=merge_prompt.SYSTEM,
+            )
+            groups = raw.get("groups") or []
+        except Exception as exc:  # noqa: BLE001 — 안 합치고 넘어간다
+            _log.warning("과목 병합 실패 — 그대로 둔다: %s", exc)
+            groups = []
+
+        for group in groups:
+            if not isinstance(group, dict):
+                continue
+            head = _index_of(group.get("canonical"), remaining)
+            members = [_index_of(m, remaining) for m in (group.get("members") or [])]
+            members = [m for m in members if m is not None]
+            if head is None or not members:
+                continue
+            for member in members:
+                if remaining[member] != remaining[head]:
+                    canonical[remaining[member]] = remaining[head]
+
+        # 공백 병합의 결과를 LLM 병합에 이어 붙인다(두 단계를 거쳐 최종 이름으로).
+        for name in list(canonical):
+            seen = {name}
+            target = canonical[name]
+            while target in canonical and canonical[target] != target and target not in seen:
+                seen.add(target)
+                target = canonical[target]
+            canonical[name] = target
+
+        self._apply(candidates, canonical)
+
+    @staticmethod
+    def _apply(candidates: list[Candidate], canonical: dict[str, str]) -> None:
+        merged = {k: v for k, v in canonical.items() if k != v}
+        if not merged:
+            return
+        for candidate in candidates:
+            candidate.subject = canonical.get(candidate.subject, candidate.subject)
+        _log.info("과목 병합 %d개: %s", len(merged), merged)
 
     async def _judge_gray(
         self,
@@ -279,12 +371,12 @@ class PrereqScreen:
             batch = gray[start : start + settings.PREREQ_JUDGE_BATCH_SIZE]
             try:
                 raw = await solar_client.generate_json(
-                    prompts.build_prompt(
+                    gray_prompt.build_prompt(
                         field=field_name,
                         topics=titles,
                         items=[c.item for _, c, _ in batch],
                     ),
-                    system=prompts.SYSTEM,
+                    system=gray_prompt.SYSTEM,
                 )
                 covered = {
                     int(x) for x in (raw.get("covered") or [])

@@ -68,6 +68,23 @@ class Course(Base):
         UUID(as_uuid=True), nullable=False, index=True
     )
     title: Mapped[str] = mapped_column(String(512), nullable=False)
+
+    # ── 24 진단이 채우는 것 ──────────────────────────────────────
+    # exam | work | interest. 분량을 정하는 데 쓴다 — 시험이 2주 앞이면
+    # 아는 단원을 줄이고, 실무면 깊이 가는 쪽이다.
+    goal: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 몇 주 남았나. NULL이면 기한 없음.
+    deadline_weeks: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    # metaphor | definition | table | why — 설명 생성 프롬프트의 성향 블록.
+    #
+    # ⚠️ **학습 효과 근거는 없다.** 러닝 스타일 맞춤(meshing hypothesis)은
+    # 반증됐다(Pashler 2008). 이건 효과가 아니라 **이탈 방지**용이다 —
+    # 읽기 싫은 형식이면 안 읽는다. 성취를 올린다고 말하면 안 된다.
+    style: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    diagnosed_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
@@ -181,10 +198,17 @@ class CoursePrereq(Base):
     정처기 필기 자료에 `데이터베이스 기초`가 선수로 나왔는데 목차 3번이
     "데이터베이스 구축"이었다.
 
-    문턱 0.49는 정답을 아는 21개로 쟀다. 두 무리가 겹치지 않았다:
-        책 안 0.509(데이터베이스 개념)~0.828(CIDR 표기)
-        책 밖 0.344(OSI 7계층)~0.468(입출력 장치 관리)
-    표본이 21개뿐이라 경계 양옆 0.47~0.52는 gray로 빼서 방어한다.
+    문턱은 `settings.PREREQ_REJECT_SIM`(0.75)과 `PREREQ_JUDGE_SIM`(0.50)이다.
+
+    처음엔 0.49 하나로 갈랐다(정답 아는 21개, 두 무리가 안 겹쳤다). 그런데
+    실제 데이터에서 `라우팅 기초`(0.645)·`NAT 원리`(0.552)·`IP 주소 체계`(0.539)
+    같은 **진짜 선수가 기각**됐다. 유사도는 "비슷한 이름의 개념이 있나"를 재지
+    "이걸 가르치나"를 못 잰다. 그래서 기각은 0.75 이상으로 올리고 0.50~0.75는
+    LLM에게 묻는다.
+
+    ⚠️ 그 LLM 판정도 흔들린다(`라우팅 원리`가 실행마다 통과·기각을 오갔다).
+    그래서 **LLM은 항목을 지우지 못한다** — gray로 표시만 하고, 기각은 임베딩
+    0.75 이상일 때만이다. 최종 확인은 24번 사용자 확인 화면이 한다.
     """
 
     __tablename__ = "course_prereqs"
@@ -215,8 +239,13 @@ class CoursePrereq(Base):
     similarity: Mapped[float | None] = mapped_column(Float, nullable=True)
     rejected_by: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # 사용자 답: known | heard | unknown. 24번 진단이 채운다. 지금은 NULL.
+    # 사용자 답: known | heard | unknown. 24번 진단이 채운다.
     known: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    # 확인 문항으로 검증했나. `known`이 스스로 말한 것이라면 이건 재본 것이다.
+    #   NULL   안 물어봤다 (문항을 다 낼 수는 없다)
+    #   True   맞혔다
+    #   False  틀렸다 → known을 heard로 낮춘다
+    verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

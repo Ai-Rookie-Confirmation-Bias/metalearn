@@ -1,8 +1,18 @@
 """코스 라우터.
 
-  POST /courses            자료 묶어 수업 만들기 (역할 자동 제안 + 목차 복사)
-  GET  /courses/{id}       자료·역할·목차
-  GET  /courses/{id}/gaps  끊긴 고리 (외부 조달 후보)
+  POST   /courses                        자료 묶어 수업 만들기 (역할 제안 + 목차 복사)
+  GET    /courses/{id}                   자료·역할·목차
+  GET    /courses/{id}/tree              뼈대 목차 + 본문 자료 설명
+  GET    /courses/{id}/prereqs           선수 판정
+  GET    /courses/{id}/gaps              끊긴 고리 (외부 조달 후보)
+
+  GET    /courses/{id}/diagnostic         진단 화면 ①~④ (LLM 없음)
+  GET    /courses/{id}/diagnostic/cards   ③ 카드 4장 (LLM 1콜)
+  PATCH  /courses/{id}/diagnostic         ①③ 목표·기간·형식 저장
+  POST   /courses/{id}/diagnostic/subjects ④-1 과목 단위 답 → 펼칠 과목
+  POST   /courses/{id}/diagnostic/prereqs  ④-2 펼친 과목의 항목별 답
+  GET    /courses/{id}/diagnostic/probes  ⑤ 확인 문항
+  POST   /courses/{id}/diagnostic/probes  ⑤ 채점
 """
 from __future__ import annotations
 
@@ -12,12 +22,23 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.features.course.diagnostic import DiagnosticService
+from app.features.course.models import Course
 from app.features.course.schemas import (
     CourseCreate,
     CourseOut,
     CourseTree,
+    DiagnosticCardsOut,
+    DiagnosticConfigIn,
+    DiagnosticSetupOut,
     GapOut,
+    PrereqAnswersIn,
     PrereqOut,
+    ProbeGradeOut,
+    ProbeOut,
+    ProbeResultsIn,
+    SubjectAnswersIn,
+    SubjectAnswersOut,
 )
 from app.features.course.service import CourseService
 
@@ -101,3 +122,128 @@ def get_gaps(course_id: uuid.UUID, db: Session = Depends(get_db)) -> list[GapOut
         return [GapOut(**g) for g in CourseService(db).gaps(course_id)]
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+# ── 24 진단 ──────────────────────────────────────────────────────
+#
+# 시험이 아니라 설정이다. 화면 다섯.
+#   ① 왜 배우나 ② 분야 맞나 ③ 카드 4장 ④ 선수 체크 ⑤ 확인 문항
+#
+# ④가 두 단계인 이유: 항목을 전부 물으면 실측 54개다. 과목으로 먼저 묻고
+# ("들어봤다"인 것만 펼친다) 실측 7 + 23 = 30번으로 줄었다.
+#
+# setup/cards가 갈린 이유: setup은 LLM을 안 불러 즉시 뜨고, cards만 한 콜이
+# 든다. 한 엔드포인트로 묶으면 첫 화면이 카드 생성을 기다린다.
+
+
+def _course(course_id: uuid.UUID, db: Session) -> Course:
+    try:
+        return CourseService(db).get(course_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/{course_id}/diagnostic", response_model=DiagnosticSetupOut)
+async def diagnostic_setup(
+    course_id: uuid.UUID, db: Session = Depends(get_db)
+) -> DiagnosticSetupOut:
+    """화면 ①~④가 필요한 것 전부.
+
+    선수 목록이 아직 없으면 여기서 계산한다(16'). 그 다음부터는 조회뿐이다.
+    """
+    course = _course(course_id, db)
+    service = DiagnosticService(db)
+    if not service.setup(course)["subjects"]:
+        await CourseService(db).prereqs(course_id)
+        db.commit()
+    return DiagnosticSetupOut(**service.setup(course))
+
+
+@router.get("/{course_id}/diagnostic/cards", response_model=DiagnosticCardsOut)
+async def diagnostic_cards(
+    course_id: uuid.UUID, db: Session = Depends(get_db)
+) -> DiagnosticCardsOut:
+    """③ 같은 개념을 네 형식으로. LLM 1콜."""
+    course = _course(course_id, db)
+    return DiagnosticCardsOut(**await DiagnosticService(db).cards(course))
+
+
+@router.patch("/{course_id}/diagnostic", response_model=DiagnosticSetupOut)
+def diagnostic_configure(
+    course_id: uuid.UUID,
+    body: DiagnosticConfigIn,
+    db: Session = Depends(get_db),
+) -> DiagnosticSetupOut:
+    """①③ 저장 — 목표·기간·설명 형식. 모르는 값은 조용히 무시한다."""
+    course = _course(course_id, db)
+    service = DiagnosticService(db)
+    service.configure(
+        course,
+        goal=body.goal,
+        deadline_weeks=body.deadline_weeks,
+        style=body.style,
+    )
+    db.commit()
+    return DiagnosticSetupOut(**service.setup(course))
+
+
+@router.post("/{course_id}/diagnostic/subjects", response_model=SubjectAnswersOut)
+def diagnostic_subjects(
+    course_id: uuid.UUID,
+    body: SubjectAnswersIn,
+    db: Session = Depends(get_db),
+) -> SubjectAnswersOut:
+    """④-1 과목 단위로 먼저 묻는다. `{과목명: known|heard|unknown}`.
+
+    "들어봤다"인 과목만 `expand`로 돌려준다 — 그것만 항목을 펼쳐 다시 묻는다.
+    아는 것과 모르는 것은 더 물어도 얻을 게 없다.
+    """
+    course = _course(course_id, db)
+    service = DiagnosticService(db)
+    expand = service.record_subjects(course, answers=body.answers)
+    db.commit()
+    return SubjectAnswersOut(
+        expand=expand, setup=DiagnosticSetupOut(**service.setup(course))
+    )
+
+
+@router.post("/{course_id}/diagnostic/prereqs", response_model=DiagnosticSetupOut)
+def diagnostic_answers(
+    course_id: uuid.UUID,
+    body: PrereqAnswersIn,
+    db: Session = Depends(get_db),
+) -> DiagnosticSetupOut:
+    """④-2 펼친 과목의 항목별 답. `{prereq_id: known|heard|unknown}`."""
+    course = _course(course_id, db)
+    service = DiagnosticService(db)
+    service.record(course, answers=body.answers)
+    db.commit()
+    return DiagnosticSetupOut(**service.setup(course))
+
+
+@router.get("/{course_id}/diagnostic/probes", response_model=list[ProbeOut])
+async def diagnostic_probes(
+    course_id: uuid.UUID, db: Session = Depends(get_db)
+) -> list[ProbeOut]:
+    """⑤ "안다"고 한 것 중 몇 개만 실제로 물어본다.
+
+    개수는 고정이 아니다 — "안다"가 많을수록 몇 개 더 본다(상한 4).
+    정답을 못 세운 항목은 문항을 안 낸다. 빈 목록이면 이 화면을 건너뛴다.
+    """
+    course = _course(course_id, db)
+    return [
+        ProbeOut(**q.__dict__) for q in await DiagnosticService(db).probes(course)
+    ]
+
+
+@router.post("/{course_id}/diagnostic/probes", response_model=ProbeGradeOut)
+def diagnostic_grade(
+    course_id: uuid.UUID,
+    body: ProbeResultsIn,
+    db: Session = Depends(get_db),
+) -> ProbeGradeOut:
+    """⑤ 채점. 틀리면 그 **과목 전체**를 heard로 낮춘다."""
+    course = _course(course_id, db)
+    result = DiagnosticService(db).grade(course, results=body.results)
+    db.commit()
+    return ProbeGradeOut(**result)
