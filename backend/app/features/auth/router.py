@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import get_db
-from app.core.deps import DEV_USER_ID, get_current_user_id
+from app.core.deps import get_current_user_id
 from app.core.security import create_access_token, decode_access_token
 from app.features.auth import oauth
 from app.features.auth.repository import AuthRepository
@@ -97,13 +97,9 @@ def me(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> UserOut:
-    repo = AuthRepository(db)
-    user = repo.get_by_id(user_id)
-    if user is None:
-        # 로그인 안 한 상태(dev 폴백)에서 화면이 이걸 부른다. 여기서 404를 주면
-        # 헤더가 비어 로그인 전 화면이 깨진 것처럼 보인다.
-        if user_id != DEV_USER_ID:
-            raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
-        user = repo.get_or_create_dev_user()
-        db.commit()
+    """미로그인이면 dev 유저가 온다. **에러가 아니다** — 헤더가 로그인 여부를
+    이걸로 그리는데 404를 주면 로그인 전 화면이 깨진 것처럼 보인다."""
+    user = AuthRepository(db).get_by_id(user_id)
+    if user is None:  # 의존성이 존재를 보장한다. 여기 오면 그 사이에 지워진 것
+        raise HTTPException(status_code=404, detail="사용자를 찾을 수 없습니다.")
     return UserOut.model_validate(user)

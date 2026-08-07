@@ -15,11 +15,41 @@ from app.core.security import create_access_token, decode_access_token
 from app.features.auth import oauth
 
 
+class FakeDB:
+    """users 테이블 대역. `known`에 있는 id만 실재하는 계정이다."""
+
+    def __init__(self, known: set[uuid.UUID] | None = None) -> None:
+        self.known = known or set()
+        self.added: list[object] = []
+
+    def get(self, _model, user_id):
+        return object() if user_id in self.known else None
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    def commit(self):
+        pass
+
+
 class TestCurrentUser:
     # 인자를 생략하면 FastAPI의 Header 기본값 객체가 들어온다(FastAPI가 실행
     # 시점에 풀어주는 값이다). 헤더가 없는 상태는 None을 명시해서 만든다.
     def test_no_headers_falls_back_to_dev(self):
-        assert get_current_user_id(authorization=None, x_user_id=None) == DEV_USER_ID
+        db = FakeDB({DEV_USER_ID})
+        assert (
+            get_current_user_id(authorization=None, x_user_id=None, db=db)
+            == DEV_USER_ID
+        )
+
+    def test_dev_user_is_created_if_missing(self):
+        # 볼륨을 지우고 마이그레이션 없이 뜬 경우. 첫 요청이 죽으면 안 된다.
+        db = FakeDB()
+        assert (
+            get_current_user_id(authorization=None, x_user_id=None, db=db)
+            == DEV_USER_ID
+        )
+        assert len(db.added) == 1
 
     def test_bearer_token_wins_over_x_user_id(self):
         me = uuid.uuid4()
@@ -27,31 +57,59 @@ class TestCurrentUser:
         token = create_access_token(str(me))
         assert (
             get_current_user_id(
-                authorization=f"Bearer {token}", x_user_id=str(other)
+                authorization=f"Bearer {token}",
+                x_user_id=str(other),
+                db=FakeDB({me, other}),
             )
             == me
         )
 
     def test_x_user_id_used_when_no_token(self):
         me = uuid.uuid4()
-        assert get_current_user_id(authorization=None, x_user_id=str(me)) == me
+        assert (
+            get_current_user_id(authorization=None, x_user_id=str(me), db=FakeDB({me}))
+            == me
+        )
 
     def test_broken_token_is_401_not_a_silent_fallback(self):
         # 조용히 dev로 떨어지면 만료된 토큰을 든 사람이 남의 자료를 본다.
         with pytest.raises(HTTPException) as exc:
-            get_current_user_id(authorization="Bearer not-a-jwt", x_user_id=None)
+            get_current_user_id(
+                authorization="Bearer not-a-jwt", x_user_id=None, db=FakeDB()
+            )
         assert exc.value.status_code == 401
 
     def test_token_subject_must_be_uuid(self):
         with pytest.raises(HTTPException) as exc:
             get_current_user_id(
-                authorization=f"Bearer {create_access_token('hello')}", x_user_id=None
+                authorization=f"Bearer {create_access_token('hello')}",
+                x_user_id=None,
+                db=FakeDB(),
+            )
+        assert exc.value.status_code == 401
+
+    def test_token_for_deleted_account_is_401(self):
+        gone = uuid.uuid4()
+        with pytest.raises(HTTPException) as exc:
+            get_current_user_id(
+                authorization=f"Bearer {create_access_token(str(gone))}",
+                x_user_id=None,
+                db=FakeDB(),
             )
         assert exc.value.status_code == 401
 
     def test_bad_x_user_id_is_400(self):
         with pytest.raises(HTTPException) as exc:
-            get_current_user_id(authorization=None, x_user_id="nope")
+            get_current_user_id(authorization=None, x_user_id="nope", db=FakeDB())
+        assert exc.value.status_code == 400
+
+    def test_x_user_id_of_a_ghost_account_is_400(self):
+        # 통과시키면 읽기는 되고 소유를 남기는 순간 FK가 터진다 — 업로드가
+        # 500으로 죽고 원인은 로그에만 남는다.
+        with pytest.raises(HTTPException) as exc:
+            get_current_user_id(
+                authorization=None, x_user_id=str(uuid.uuid4()), db=FakeDB()
+            )
         assert exc.value.status_code == 400
 
 

@@ -20,6 +20,7 @@ from fastapi import (
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, get_db
+from app.core.deps import get_current_user_id
 from app.features.parsing.models import MaterialRole
 from app.features.parsing.schemas import ConceptHitOut, DocumentOut, DocumentTree
 from app.features.parsing.service import ParsingService
@@ -43,12 +44,15 @@ async def upload_document(
     background: BackgroundTasks,
     file: UploadFile = File(...),
     role: str = MaterialRole.SKELETON.value,
+    user_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> DocumentOut:
     """자료 업로드. 파싱은 백그라운드로 돌고 상태는 폴링으로 확인한다.
 
     같은 파일(지문 일치)이 이미 파싱돼 있으면 그대로 재사용한다 —
-    문서가 공용이라 가능한 일이다.
+    문서가 공용이라 가능한 일이다. 그래도 **소유는 사람마다 따로 남는다**
+    (user_documents). 그래서 남이 올려둔 책을 내가 올리면 파싱은 0초인데
+    내 책장에는 새로 꽂힌다.
     """
     file_bytes = await file.read()
     if not file_bytes:
@@ -58,6 +62,7 @@ async def upload_document(
     document_id, needs_parse = service.register(
         file_bytes=file_bytes,
         filename=file.filename or "document.pdf",
+        user_id=user_id,
         role=role,
     )
     if needs_parse:

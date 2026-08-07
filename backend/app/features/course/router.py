@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.deps import get_current_user_id
 from app.features.course.schemas import (
     CourseCreate,
     CourseOut,
@@ -26,12 +27,14 @@ router = APIRouter()
 
 @router.post("", response_model=CourseOut, status_code=201)
 def create_course(
-    body: CourseCreate, db: Session = Depends(get_db)
+    body: CourseCreate,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
 ) -> CourseOut:
     service = CourseService(db)
     try:
         course = service.create(
-            user_id=body.user_id,
+            user_id=user_id,
             document_ids=body.document_ids,
             title=body.title,
             roles=body.roles,

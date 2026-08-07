@@ -7,8 +7,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CourseCreate(BaseModel):
-    # users 테이블이 아직 없어 클라이언트가 직접 준다. auth가 들어오면 토큰에서.
-    user_id: uuid.UUID
+    # 주인은 토큰에서 온다(Depends(get_current_user_id)). 바디로 받으면
+    # 아무나 남의 이름으로 코스를 만들 수 있다.
     document_ids: list[uuid.UUID] = Field(..., min_length=1)
     title: str | None = None
     # 비우면 밀도로 제안한다. {document_id: skeleton|body|reference}
