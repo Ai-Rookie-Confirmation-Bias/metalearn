@@ -129,12 +129,16 @@ POST   .../prewarm?limit=N                                미리 생성 (데모 
 
 ### 문제은행
 ```
-POST   /api/courses/{cid}/quiz/from-parsing/{did}?budget=N   ★파싱 문서로 은행 생성
-POST   /api/courses/{cid}/quiz/generate                      파싱 JSON을 바디로 받는 구 경로
+POST   /api/courses/{cid}/quiz/from-parsing/{did}?budget=N   ★파싱 문서로 은행 생성 접수 (202)
+GET    /api/courses/{cid}/quiz/from-parsing/{did}/status     생성 상태 폴링 (idle|running|done|failed)
+POST   /api/courses/{cid}/quiz/generate                      파싱 JSON을 바디로 받는 구 경로 (동기)
 GET    /api/courses/{cid}/quiz                               문서·목차별 문항 수
 POST   /api/courses/{cid}/quiz/session                       범위 골라 문항 받기(정답 제외)
 POST   /api/quiz/attempts                                    채점 → 정답·해설·근거 원문
 ```
+★ from-parsing은 08-07에 **202 접수 + 폴링**으로 바뀌었다 — 실데이터 생성이
+888초라 동기로 붙잡으면 타임아웃 난다. 업로드→파싱 폴링과 같은 사용법.
+`saved`·`discarded`는 폴링 응답의 `done` 상태에서 온다. 진행 중 재접수는 409.
 
 ⚠️ **표기가 갈린다.** curriculum은 camelCase(`docId`·`sectionId`), quiz는
 snake_case(`toc_index`·`course_id`). 프론트가 둘을 같이 쓰면 걸린다. **정해야 한다.**

@@ -40,6 +40,9 @@ class QuizGenerationResult:
         self.report = report
         self.saved = 0
         self.discarded: list[str] = []  # "개념/유형: [단계] 사유"
+        # 폐기 문항의 실제 내용 (품질 분석용 — API 응답에는 안 나감).
+        # {"concept","type","reason","data"} — data가 없는 폐기(선별 제외·파싱 실패)는 미포함
+        self.discarded_items: list[dict] = []
 
 
 class QuizService:
@@ -119,12 +122,12 @@ class QuizService:
         prompt = build_generation_prompt(order, chunk, stem_patterns)
         items: list[GeneratedItem] = []
         for attempt in range(2):
-            # ⚠️ 모델을 명시한다. 통합 전 이 호출은 solar 클라이언트가 하드코딩한
-            #    solar-pro2로 나갔는데, 파싱 쪽 클라이언트로 합쳐지며 기본이
-            #    solar-pro3가 됐고 **문항이 0개가 됐다** — pro3는 배열이 아니라
-            #    객체를 이어붙여 답해서 parse_generation_response가 못 읽는다.
-            #    config.QUIZ_CHAT_MODEL 주석에 실측을 남겼다.
-            raw = await self.llm.generate(prompt, model=settings.QUIZ_CHAT_MODEL)
+            # 모델 명시 + json_mode: pro3는 자유 출력에서 배열 대신 객체를
+            # 이어붙여 답한다(QUIZ_TUNING §12) — response_format=json_object로
+            # 원천 고정하고 프롬프트는 {"items":[...]} 래퍼를 요구한다.
+            raw = await self.llm.generate(
+                prompt, model=settings.QUIZ_CHAT_MODEL, json_mode=True
+            )
             items = generation.parse_generation_response(raw)
             if items:
                 break
@@ -137,14 +140,22 @@ class QuizService:
             )
             return []
 
-        # quiz 고유 사전 검사: 근거 문장 번호 실존 + 선별 후보 이탈 차단 (§9-①)
+        # quiz 고유 사전 검사: cloze 조립(코드 생성) → 근거 번호 실존 → 후보 이탈 차단
         checked: list[GeneratedItem] = []
         for item in items:
-            reason = generation.evidence_ids_reason(
-                item, chunk
-            ) or generation.evidence_scope_reason(item, order)
+            reason = None
+            if item.type == "cloze":
+                reason = generation.build_cloze_segments(item, chunk)
+            reason = (
+                reason
+                or generation.evidence_ids_reason(item, chunk)
+                or generation.evidence_scope_reason(item, order)
+            )
             if reason:
                 result.discarded.append(f"{item.concept}/{item.type}: {reason}")
+                result.discarded_items.append(
+                    {"concept": item.concept, "type": item.type, "reason": reason, "data": item.data}
+                )
             else:
                 checked.append(item)
 
@@ -176,6 +187,14 @@ class QuizService:
             else:
                 result.discarded.append(
                     f"{item.concept}/{item.type}: [{verdict.stage}] {verdict.reason}"
+                )
+                result.discarded_items.append(
+                    {
+                        "concept": item.concept,
+                        "type": item.type,
+                        "reason": f"[{verdict.stage}] {verdict.reason}",
+                        "data": verdict.item.data,  # 수정 루프를 거쳤다면 최종본
+                    }
                 )
         return passed
 

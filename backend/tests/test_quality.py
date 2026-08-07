@@ -190,6 +190,125 @@ def test_extract_json_salvages_truncated_array():
     assert verdicts[2] is None  # 잘린 객체 = 판독 불가 (해석은 validator 몫)
 
 
+def test_extract_json_concatenated_objects():
+    """객체 이어붙임 `{...}{...}` — solar-pro3 실측 형태. 전부 건져 배열로."""
+    from app.core.quality.parsing import extract_json
+
+    raw = '{"index":0,"pass":true,"reason":""}\n{"index":1,"pass":false,"reason":"모호"}'
+    assert extract_json(raw) == [
+        {"index": 0, "pass": True, "reason": ""},
+        {"index": 1, "pass": False, "reason": "모호"},
+    ]
+
+
+def test_extract_json_single_object_with_trailing_prose():
+    """단일 객체 뒤 잡담(중괄호 포함)은 이어붙임이 아니다 — 객체 그대로."""
+    from app.core.quality.parsing import extract_json
+
+    raw = '{"a":1} 참고: {중괄호가 든 설명}'
+    assert extract_json(raw) == {"a": 1}
+
+
+def test_check_solution_normalizes_string_bool_and_option_text():
+    """pro3 풀이자 형식 편차 — 'False' 문자열, 선지 텍스트 답변을 내용 기준으로 판정."""
+    from app.core.quality.checks import check_solution
+
+    tf = {"statement": "s", "answer": False}
+    assert check_solution("trueFalse", tf, "False") is None
+    assert check_solution("trueFalse", tf, "true") is not None  # 오답은 여전히 불합격
+
+    mcq = {"question": "q", "options": ["COMMIT", "ROLLBACK", "START", "REDO"], "answerIndex": 3}
+    assert check_solution("mcq", mcq, "REDO") is None
+    assert check_solution("mcq", mcq, "COMMIT") is not None  # 다른 선지 = 오답
+    assert check_solution("mcq", mcq, "없는 선지") is not None  # 일치 없음 = 형식 불량
+
+
+def test_parse_solutions_accepts_bare_object():
+    """문항 1개 배치에 배열 없이 답하는 경우(pro3 실측) — 1원소 배열로 취급."""
+    from app.core.quality.parsing import parse_solutions, parse_verdicts
+
+    assert parse_solutions('{"index":0,"answer":"델파이 기법"}', 1) == ["델파이 기법"]
+    assert parse_verdicts('{"index":0,"pass":true,"reason":""}', 1) == [(True, "")]
+
+
+def test_extract_list_unwraps_wrapper_objects():
+    """json_object 강제 시 래퍼 계약 — {"items"/"verdicts"/"answers"/"revisions":[...]}."""
+    from app.core.quality.parsing import extract_list
+
+    assert extract_list('{"verdicts":[{"index":0,"pass":true}]}') == [{"index": 0, "pass": True}]
+    assert extract_list('{"answers":[{"index":0,"answer":[2]}]}') == [{"index": 0, "answer": [2]}]
+    # 래퍼 키가 아니어도 리스트 값이 유일하면 그걸 취한다 (키 이름 변형 대비)
+    assert extract_list('{"results":[{"index":0}]}') == [{"index": 0}]
+    # 배열 그대로 답하는 모델(EXAONE)도 그대로 통과
+    assert extract_list('[{"index":0}]') == [{"index": 0}]
+
+
+def test_scrub_sentence_refs_removes_citations():
+    """pro3의 sN 인용을 코드로 제거 — 폐기 대신 전처리로 살린다 (§12)."""
+    from app.core.quality.checks import mechanical_check, scrub_sentence_refs
+
+    d = {
+        "statement": "s31에 따르면 반정규화는 정규화 원칙을 위반한다.",
+        "answer": True,
+        "explanation": "반정규화는 의도적 중복 허용이다 (s31).",
+    }
+    scrub_sentence_refs("trueFalse", d)
+    assert d["statement"] == "반정규화는 정규화 원칙을 위반한다."
+    assert d["explanation"] == "반정규화는 의도적 중복 허용이다."
+    assert mechanical_check("trueFalse", d, "반정규화 근거") is None
+
+    # 패턴 밖 변형은 못 지워도 검사가 잡는다 (조용히 통과 금지)
+    d2 = {"statement": "정답은 s31 문장이 결정한다.", "answer": True, "explanation": ""}
+    scrub_sentence_refs("trueFalse", d2)
+    assert mechanical_check("trueFalse", d2, "근거") is not None
+
+
+def test_mechanical_check_cloze_phrase_blank_limits():
+    """§9-② — 빈칸 3개 이상·정답 15자 초과·화살표 포함 cloze 폐기."""
+    from app.core.quality.checks import mechanical_check
+
+    def cloze(*blanks):
+        segs = [{"kind": "text", "text": "본문 "}]
+        segs += [{"kind": "blank", "answer": a, "aliases": []} for a in blanks]
+        return {"segments": segs}
+
+    ev = "고객의 need 파악 위해 견본/시제품을 통해 최종 결과 예측 A B C D 계획→분석"
+    assert "15자 초과" in mechanical_check(
+        "cloze", cloze("고객의 need 파악 위해 견본/시제품을 통해 최종 결과 예측"), ev
+    )
+    assert "화살표" in mechanical_check("cloze", cloze("계획→분석"), ev)
+    assert "2개 초과" in mechanical_check("cloze", cloze("A", "B", "C"), ev)
+    assert mechanical_check("cloze", cloze("시제품"), ev) is None  # 낱말 빈칸은 통과
+
+
+def test_check_solution_short_answer_colon_prefix():
+    """단답에 '용어 : 정의'로 답하는 pro3 편차 — 콜론 앞 용어로 채점."""
+    from app.core.quality.checks import check_solution
+
+    data = {"prompt": "p", "accepted": ["COMMIT"]}
+    assert check_solution("shortAnswer", data, "COMMIT : 트랜잭션 정상 종료 후 반영") is None
+    assert check_solution("shortAnswer", data, "ROLLBACK : 취소") is not None
+
+
+def test_check_solution_leniency_suffix_paren_and_cloze_string():
+    """풀이 대조 완화 ②: 괄호 병기·접미 수식·cloze 문자열 답변을 내용 기준 판정."""
+    from app.core.quality.checks import check_solution
+
+    sa = {"prompt": "p", "accepted": ["개발 단계별 인월 수"]}
+    assert check_solution("shortAnswer", sa, "개발 단계별 인월 수 (Effort Per Task)") is None
+    assert check_solution("shortAnswer", sa, "개발 단계별 인월 수 산정 방법") is None
+    assert check_solution("shortAnswer", sa, "LOC 기법") is not None
+
+    mcq = {"question": "q", "options": ["a", "b", "c", "d"], "answerIndex": 2}
+    assert check_solution("mcq", mcq, "2번") is None
+
+    cloze = {"segments": [
+        {"kind": "text", "text": "본문 "},
+        {"kind": "blank", "answer": "델파이", "aliases": []},
+    ]}
+    assert check_solution("cloze", cloze, "델파이") is None  # 배열 없이 문자열
+
+
 # ── 배심원단 (second_llm) ────────────────────────────────
 
 

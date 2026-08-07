@@ -3,21 +3,22 @@
 풀이 경로(요약·세션·채점)는 LLM 호출 0 — DB 조회만.
 
 생성은 두 문이 있다.
-  · `/quiz/generate`               파싱 결과 JSON을 **요청 바디로** 받는다
-  · `/quiz/from-parsing/{doc_id}`  파싱 DB에서 **서버가 직접** 읽어 온다
+  · `/quiz/generate`               파싱 결과 JSON을 **요청 바디로** 받는다 (동기, 구경로)
+  · `/quiz/from-parsing/{doc_id}`  파싱 DB에서 서버가 직접 읽는다 (**202 접수 + 폴링**)
 앞의 것은 파싱이 붙기 전에 쓰던 문이고, 지금 정상 경로는 뒤쪽이다.
 """
+import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
-from app.core.database import get_db
+from app.core.database import SessionLocal, get_db
 from app.core.llm.exaone import exaone_client
 from app.core.llm.solar import solar_client
-from app.features.quiz import bridge
+from app.features.quiz import bridge, jobs
 from app.features.quiz.schemas import (
     AttemptRequest,
     AttemptResponse,
@@ -27,6 +28,8 @@ from app.features.quiz.schemas import (
     SessionResponse,
 )
 from app.features.quiz.service import QuizService
+
+logger = logging.getLogger("uvicorn.error")
 
 
 def _verify_llm():
@@ -73,29 +76,22 @@ async def generate_bank(
     )
 
 
-@router.post(
-    "/courses/{course_id}/quiz/from-parsing/{document_id}",
-    response_model=GenerateBankResponse,
-)
-async def generate_bank_from_parsing(
-    course_id: uuid.UUID,
-    document_id: uuid.UUID,
-    db: Session = Depends(get_db),
-    budget: int | None = Query(
-        None, ge=1, le=200, description="목차당 문항 예산. 안 주면 기본 배분"
-    ),
-) -> GenerateBankResponse:
-    """파싱이 끝난 문서로 문제은행을 만든다.
+class GenStatusResponse(BaseModel):
+    """생성 작업 상태 — 파싱의 DocStatus 폴링과 같은 사용법."""
 
-    ⚠️ **읽기 요청에 딸려 돌게 하지 않는다.** 커리큘럼은 목록을 열 때 자동
-       주입하지만(싼 변환), 문항 생성은 조각마다 LLM을 여러 번 부른다.
-       업로드·재파싱이 끝난 뒤 명시적으로 부르는 문이다.
+    status: str  # idle | running | done | failed
+    saved: int = 0
+    discarded: list[str] = []
+    report_errors: list[str] = []
+    report_warnings: list[str] = []
+    error: str | None = None
 
-    같은 문서를 다시 부르면 그 문서의 기존 문항을 **교체**한다.
-    """
-    from app.features.quiz.schemas import QuizGenConfig
 
-    config = QuizGenConfig(toc_min=budget, toc_max=budget) if budget else None
+async def _run_generation(
+    course_id: uuid.UUID, document_id: uuid.UUID, config
+) -> None:
+    """백그라운드 생성 본체. 요청 세션은 응답과 함께 닫히므로 새 세션을 연다."""
+    db = SessionLocal()
     try:
         result = await bridge.generate_from_parsing(
             db,
@@ -105,18 +101,79 @@ async def generate_bank_from_parsing(
             verify_llm=_verify_llm(),
             config=config,
         )
+        if not result.report.ok:
+            jobs.fail(course_id, document_id, "파싱 산출물 계약 위반: " + " / ".join(result.report.errors))
+            return
+        jobs.finish(
+            course_id,
+            document_id,
+            saved=result.saved,
+            discarded=result.discarded,
+            report_errors=result.report.errors,
+            report_warnings=result.report.warnings,
+        )
+    except Exception as exc:  # noqa: BLE001 — 폴링으로 전달할 최종 방어선
+        logger.exception("문제은행 생성 실패: course=%s doc=%s", course_id, document_id)
+        jobs.fail(course_id, document_id, str(exc))
+    finally:
+        db.close()
+
+
+@router.post(
+    "/courses/{course_id}/quiz/from-parsing/{document_id}",
+    status_code=202,
+    response_model=GenStatusResponse,
+)
+async def generate_bank_from_parsing(
+    course_id: uuid.UUID,
+    document_id: uuid.UUID,
+    background: BackgroundTasks,
+    db: Session = Depends(get_db),
+    budget: int | None = Query(
+        None, ge=1, le=200, description="목차당 문항 예산. 안 주면 기본 배분"
+    ),
+) -> GenStatusResponse:
+    """파싱이 끝난 문서로 문제은행 생성을 **접수**한다 (202).
+
+    생성은 분 단위 작업이라(실데이터 실측 888초) 동기로 붙잡으면 타임아웃이
+    난다. 접수 즉시 돌아오고, 진행 상태는 같은 경로의 GET `/status`로 폴링한다
+    — 업로드→파싱의 202+폴링과 같은 사용법.
+
+    같은 문서를 다시 부르면 그 문서의 기존 문항을 **교체**한다.
+    이미 생성 중이면 409.
+    """
+    from app.features.quiz.schemas import QuizGenConfig
+
+    # 파싱이 안 끝난 문서는 접수 시점에 걸러 404를 즉시 준다
+    try:
+        bridge.parsed_document_of(db, document_id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    if not result.report.ok:
-        # 파싱 산출물이 계약을 어긴 것이라 사유를 그대로 돌려준다 —
-        # 파싱 쪽에 되돌릴 수 있는 형태여야 한다.
-        raise HTTPException(status_code=422, detail=result.report.errors)
-    return GenerateBankResponse(
-        saved=result.saved,
-        discarded=result.discarded,
-        report_errors=result.report.errors,
-        report_warnings=result.report.warnings,
+    if jobs.start(course_id, document_id) is None:
+        raise HTTPException(status_code=409, detail="이미 생성 작업이 진행 중입니다")
+
+    config = QuizGenConfig(toc_min=budget, toc_max=budget) if budget else None
+    background.add_task(_run_generation, course_id, document_id, config)
+    return GenStatusResponse(status="running")
+
+
+@router.get(
+    "/courses/{course_id}/quiz/from-parsing/{document_id}/status",
+    response_model=GenStatusResponse,
+)
+def generation_status(course_id: uuid.UUID, document_id: uuid.UUID) -> GenStatusResponse:
+    """생성 작업 상태 폴링. 접수 이력이 없으면 idle."""
+    job = jobs.get(course_id, document_id)
+    if job is None:
+        return GenStatusResponse(status="idle")
+    return GenStatusResponse(
+        status=job.status,
+        saved=job.saved,
+        discarded=job.discarded,
+        report_errors=job.report_errors,
+        report_warnings=job.report_warnings,
+        error=job.error,
     )
 
 
