@@ -46,12 +46,46 @@ gitignore다(저작물). 클론하면 `sample_sdlc.tree.json`(합성 샘플) 하
 ## 2. 지금 어디까지 이어졌나
 
 ```
-PDF 업로드 ──✅──> 파싱 ✅ ──> 학습 ✅  책장에 자동으로 뜬다
-            /create       └─> 문제은행 ✅ API ──❌──> 문제집 화면
-                                              부를 화면 없음(mock)
+PDF 업로드 ──✅──> 파싱 ✅ ──┬─> 코스 ✅ ──> 학습 ✅  책장에 수업으로 뜬다
+            /create        └─> 문제은행 ✅ API ──❌──> 문제집 화면
+                                                 부를 화면 없음(mock)
 ```
 
 **백엔드는 한 바퀴가 돈다. 화면으로는 한 군데가 남았다.**
+
+### 08-07에 이은 것 — 코스가 학습 화면에 닿았다
+
+여태 학습 화면은 **자료 하나**만 봤다. 파일 3개를 올리면 책이 3권 떴고, 코스
+층(`course_topics`·`concept_links`)이 만든 값은 부르는 화면이 없었다.
+
+```
+전       GET /api/curriculum/documents  →  파싱 문서 id만
+지금     GET /api/curriculum/documents  →  파싱 문서 + **코스**(코스에 묶인 자료는 뺀다)
+```
+
+책장이 이 목록만 보므로 이 한 줄로 수업이 책 한 권이 된다. 프론트는 안 고쳤다 —
+`/curriculum/:docId`가 문자열 id를 받고 코스 id도 UUID 문자열이라 그대로 열린다.
+
+```
+학습 화면이 처음으로 볼 수 있게 된 것
+  · 자료 여러 개가 한 권으로 — 뼈대(PPT) 목차 순서에 본문(교재) 설명이 붙는다
+  · 사용자가 고친 목차 (course_topics — 제목 변경·순서·합치기·쪼개기)
+  · 보강 단원(origin=inserted)이 들어올 자리 — 24·27번이 채운다
+```
+
+⚠️ **목차는 화면에 도착하기 전에 확정돼 있다.** 보강 단원 삽입은 코스 층(진단
+시점)에서 끝나고 학습 중에 목차가 늘어나지 않는다. `grouping`의 "목차는 고정"
+원칙과 부딪히지 않는 이유가 이것이다.
+
+실측 (필기 + 실기 요약노트):
+
+```
+코스 트리   뼈대 58,681자(조각 18/18) · 교재 76,839자(조각 21/21)  ← 자르지 않는다
+학습 화면   목차 5 · 화면 132 · 원문 빈 화면 0
+```
+
+🔴 **교재를 다 보내는데 화면이 1.4%만 쓴다** (뼈대 39,349자 / 교재 1,052자).
+아래 §4 참고 — 우리가 정할 일이 아니다.
 
 ### 실측 (실제 PDF 한 권, 254KB)
 
@@ -90,7 +124,7 @@ curl -X POST "http://localhost:8000/api/parsing/documents" -F "file=@교재.pdf"
 
 ---
 
-## 3. 실제로 도는 API (31개)
+## 3. 실제로 도는 API (32개)
 
 ⚠️ `docs/API.md`는 **2026-07-03 문서**라 피벗 전 설계다. 실제로 도는 건 이 표다.
 
@@ -115,8 +149,9 @@ GET    /api/courses/{id}/gaps                  끊긴 고리
 
 ### 학습 커리큘럼
 ```
-GET    /api/curriculum/documents                          자료 목록 (파싱 ready 자동 주입)
+GET    /api/curriculum/documents                          자료 + **코스** 목록 (자동 주입)
 POST   /api/curriculum/documents/from-parsing/{doc_id}    명시 주입 (?refresh=true 재파싱 반영)
+POST   /api/curriculum/documents/from-course/{course_id}  ★코스 주입 (?refresh=true 목차 변경 반영)
 GET    /api/curriculum/documents/{doc_id}                 자료 개요
 GET    /api/curriculum/documents/{doc_id}/chapters/{i}    목차 하나
 GET    .../chapters/{i}/formative                         단원 평가
@@ -157,6 +192,51 @@ integration에서만 고쳤다. 그쪽에서 새로 빌드하거나 볼륨을 �
 그리고 `GET /tree`에 `segments[].sentences[]`를 추가했다(문제은행이 근거 표시에
 쓴다). `text`는 안 싣는다 — `content[char_start:char_end]`로 복원된다.
 
+### 윤현석(학습) — 🔴 교재를 다 보내는데 화면이 1.4%만 쓴다
+
+**손댄 건 코스를 여는 문 셋뿐이다.** `adapters/parsing_tree.py`·`grouping.py` 등
+화면을 만드는 로직은 하나도 안 건드렸다.
+
+| 파일 | 무엇 |
+| --- | --- |
+| `adapters/course_tree.py` | **신규.** 코스 트리 → Document. 겉껍데기만 맞추고 나머지는 `document_from_tree` 재사용 |
+| `bridge.py` | `ingest_course`(async) · `ingest_course_stored`(동기) · `sync_courses` |
+| `store.py` | `ingest_course_tree` |
+| `router.py` | `/documents`가 코스도 준다(+ `async`) · `/documents/from-course/{id}` 신설 |
+
+코스 트리는 **조각을 자르지 않고 통째로** 준다. 단원 하나에 뼈대 조각과 본문
+조각이 함께 오고, 조각마다 `document_id`·`filename`·`role`(skeleton\|body)이 붙는다.
+`segments`는 seq로 정렬하면 뼈대가 먼저 오도록 본문 seq를 1000 이상으로 밀어 뒀다.
+
+**그런데 화면에 거의 안 실린다.**
+
+```
+우리가 보내는 것   뼈대 58,681자 · 교재 76,839자
+화면 원문         뼈대 39,349자 · 교재  1,052자   ← 교재의 1.4%
+```
+
+원인은 `grouping._source_for`다.
+
+```python
+excerpts = split_by_concepts(source, list(keys))
+if not excerpts or any(not e.matched for e in excerpts):
+    return ""
+```
+
+개념명이 **제목으로** 나온 자리에서만 뽑고, 화면 개념 셋 중 하나라도 못 찾으면
+원문을 통째로 비운다. 필기 개념명은 `상태 패턴`인데 교재엔 영문 표(`| State |`)로
+있어서 거의 안 걸린다. 요약노트처럼 제목 없이 표·목록으로 흐르는 자료는
+제목 기반 매칭이 109개 중 17개밖에 안 걸렸다(실측).
+
+한때 우리 쪽에서 개념명 언저리를 창으로 잘라 억지로 붙여 33%를 만들었으나
+걷어냈다 — **화면을 만드는 건 우리 층이 아니고**, 자르면 그쪽이 쓸 재료가 준다.
+재료는 다 넘겼으니 쓰는 방법은 정해 주세요.
+
+그리고 하나 더: **`section_id`에 자료 id가 안 들어간다**(`hash(chunk_id|개념명들)`).
+코스와 그 뼈대 자료를 둘 다 열면 진도가 같은 키를 쓴다. 같은 내용이라 맞을 수도
+있는데, 코스가 목차 순서를 바꾸면 `chunk_id`가 달라져 진도가 갈린다. 지금은 코스에
+묶인 자료를 책장에서 빼서 둘을 동시에 못 열게 해 뒀다 — 회피지 해결이 아니다.
+
 ### 소민섭(문제은행) — 🔴 모델 결정이 필요하다
 
 `solar.py`를 합치며 quiz 호출이 `solar-pro2`(하드코딩)에서 `solar-pro3`로 넘어갔고
@@ -191,8 +271,8 @@ QUIZ_TUNING의 실측이 전부 pro2 기준이라 **`QUIZ_CHAT_MODEL="solar-pro2
 1. API 표기      camelCase(curriculum) vs snake_case(quiz)
 2. 교재 공유     fixtures/*.md 가 gitignore라 실물이 로컬에만 있다
 3. 다음 우선순위  문제집 실 API 연결 (업로드 화면은 08-07에 끝) — 코스 목록 API가 선행이다
-4. 코스 단위     책장이 자료 단위로 돈다. 파일 3개를 올리면 책이 3권 뜬다.
-                 한 수업으로 묶으려면 POST /courses를 부를 자리와 목록 API가 필요하다
+4. 코스 만드는 화면  책장이 코스를 보여주긴 한다(08-07). 없는 건 **만드는 자리**다 —
+                 `POST /api/courses`를 부를 UI와 코스 목록 API가 아직 없다
 ```
 
 ---

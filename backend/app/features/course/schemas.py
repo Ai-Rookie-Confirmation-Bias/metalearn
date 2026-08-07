@@ -92,12 +92,22 @@ class BodyRefOut(BaseModel):
 
 
 class BodySegmentOut(BaseModel):
+    """원문 조각 하나. **자르지 않고 통째로 준다.**
+
+    어느 자료 것인지 밝힌다 — 단원 하나에 뼈대 조각과 본문 조각이 함께 들어오고,
+    화면이 "AI가 지어낸 게 아니라 이 책의 이 쪽"을 보이려면 출처가 있어야 한다.
+    """
+
     id: uuid.UUID
     seq: int
     heading: str | None = None
     content: str
     page_from: int | None = None
     page_to: int | None = None
+    document_id: uuid.UUID | None = None
+    filename: str | None = None
+    # skeleton | body — 목차 순서를 정한 자료인가, 설명을 대는 자료인가.
+    role: str = "skeleton"
 
 
 class CourseConceptOut(BaseModel):
@@ -126,6 +136,11 @@ class CourseTopicNode(BaseModel):
     plan: str
     # 복사 원본(doc_topics). 보강 단원은 없으므로 NULL.
     source_topic_id: uuid.UUID | None = None
+    # 이 단원이 뼈대 자료의 몇 쪽인가. 조각들의 범위를 그대로 합친 값이고
+    # 추정하지 않는다 — 화면이 "p.51-53"으로 원문을 짚어줄 때 쓴다.
+    # 보강 단원은 원본이 없으므로 둘 다 NULL이다.
+    page_from: int | None = None
+    page_to: int | None = None
     concepts: list[CourseConceptOut] = Field(default_factory=list)
     segments: list[BodySegmentOut] = Field(default_factory=list)
 
