@@ -153,6 +153,12 @@ Solar+EXAONE 둘 다, 한쪽이 잡으면 탈락, 2차 판독 불가는 기권) 
   인메모리(`quiz/jobs.py` — 프로세스 재시작이면 생성 자체가 죽으므로 DB 불필요,
   워커 늘리면 이관). 도커 실검증: 접수 2초·409·done 도달·기존 은행 무손상.
   INTEGRATION.md API 표 갱신. 테스트 265개 통과
+- **문제집 화면 실 API 연결** (08-08): ① `GET /api/courses` 목록 API 신설
+  (코스 feature에 순수 추가 31줄 — CourseListItem·list_courses) ② `pages/quiz/api.ts`
+  신설 — 과목 목록(코스+quiz 요약+gen_status 합성)·세션·채점을 실 서버로.
+  mock은 타입 원본 + 기출 스타일(§3.6 백엔드 전) 시연용으로만 잔류.
+  studied·추천 배너는 §3.5 백엔드 전이라 자연 비활성. tsc 통과·실화면 확인.
+  (한 차례 롤백 후 사용자 지시로 재적용) **커밋 대기**
 
 ---
 

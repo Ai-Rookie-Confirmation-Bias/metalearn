@@ -179,6 +179,16 @@ class CourseService:
             raise ValueError(f"코스를 찾을 수 없습니다: {course_id}")
         return course
 
+    def list_courses(self) -> list[Course]:
+        """전체 코스, 최신 생성 순 — 책장·문제집 목록 화면용.
+
+        users 테이블이 아직 없어 소유자 필터가 없다 (create의 user_id 사정과 같음).
+        auth가 들어오면 user_id 필터를 여기 한 곳에 추가하면 된다.
+        """
+        return list(
+            self.db.query(Course).order_by(Course.created_at.desc()).all()
+        )
+
     async def prereqs(
         self, course_id: uuid.UUID, *, refresh: bool = False
     ) -> list[CoursePrereq]:

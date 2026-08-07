@@ -1,7 +1,10 @@
-// 문제 페이지 목데이터 — 백엔드 응답 모양(JSON 스키마) 그대로.
-// GET /courses/:id/quiz → QuizBankSummary / POST .../session → SessionItem[] /
-// POST /quiz/attempts → AttemptResponse. 백엔드 붙일 때 fetch 함수로 교체만 하면 됨.
-// 정답은 이 파일의 비공개 배열에만 있고(서버 역할), 세션 응답에선 제거되어 나감.
+// 문제 페이지 타입 정의 + (기출 스타일 시연용) 목데이터.
+//
+// ⚠️ 08-08부터 화면은 실 API(./api.ts)를 쓴다 — 이 파일의 fetchSession/
+// submitAttempt/courseBanks는 화면에서 더 이상 부르지 않는다.
+// 남겨두는 이유: ① 타입 정의의 원본(백엔드 스키마와 1:1) ② 기출 스타일 모드
+// (QuizStyle="exam")는 백엔드(style 컬럼, QUIZ.md §3.6)가 생기기 전까지
+// 이 mock 세트가 유일한 시연 수단.
 
 export type QuizType = "mcq" | "cloze" | "shortAnswer" | "trueFalse";
 

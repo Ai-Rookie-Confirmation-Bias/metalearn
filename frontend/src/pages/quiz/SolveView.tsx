@@ -8,7 +8,8 @@ import {
   ArrowRightIcon,
 } from "@phosphor-icons/react";
 
-import { submitAttempt, type AttemptResponse, type SessionItem } from "./mock";
+import { submitAttempt } from "./api";
+import type { AttemptResponse, SessionItem } from "./mock";
 
 export type SolveResult = { tocIndex: number; correct: boolean };
 

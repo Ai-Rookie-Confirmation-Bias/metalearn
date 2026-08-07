@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.features.course.schemas import (
     CourseCreate,
+    CourseListItem,
     CourseOut,
     CourseTree,
     GapOut,
@@ -40,6 +41,14 @@ def create_course(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     return CourseOut.model_validate(course)
+
+
+@router.get("", response_model=list[CourseListItem])
+def list_courses(db: Session = Depends(get_db)) -> list[CourseListItem]:
+    """코스 목록, 최신 생성 순 — 문제집 과목 선택 화면이 쓴다 (INTEGRATION §4 선행 과제)."""
+    return [
+        CourseListItem.model_validate(c) for c in CourseService(db).list_courses()
+    ]
 
 
 @router.get("/{course_id}", response_model=CourseOut)

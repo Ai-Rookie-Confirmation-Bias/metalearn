@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -44,6 +45,17 @@ class CourseOut(BaseModel):
     title: str
     documents: list[CourseDocumentOut] = []
     topics: list[CourseTopicOut] = []
+
+
+class CourseListItem(BaseModel):
+    """목록 화면용 한 줄 — topics(무거움)는 빼고 자료 구성만 싣는다."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    created_at: datetime
+    documents: list[CourseDocumentOut] = []
 
 
 class PrereqOut(BaseModel):

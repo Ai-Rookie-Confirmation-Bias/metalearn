@@ -84,9 +84,12 @@ curl -X POST "http://localhost:8000/api/parsing/documents" -F "file=@교재.pdf"
 # → 202 {"id": "...", "status": "pending"}  이후 GET /api/parsing/documents/{id} 로 폴링
 ```
 
-**② 문제집 화면이 mock이다.** `/quiz`가 보여주는 "데이터 통신 128문항" 등은 전부
-`pages/quiz/mock.ts`다. `submitAttempt`까지 mock에서 온다. 실 API는 아래 3번 참고.
-코스를 만들 화면도 없다(`POST /api/courses`만 있고 목록 API가 없다).
+**② 문제집 화면 — 08-08에 실 API로 이었다.** `/quiz`가 이제 `GET /api/courses` +
+코스별 quiz 요약으로 과목 카드를 그리고, 세션·채점도 실 서버를 부른다
+(`pages/quiz/api.ts`). mock은 타입 정의 + 기출 스타일 시연용으로만 남았다.
+문제은행이 없는 코스는 목록에서 빠지고, 생성 중(gen_status=running)이면
+"생성 중" 카드로 뜬다. 코스를 만들 화면은 여전히 없다(업로드 흐름이 자료
+단위 — §4 코스 단위 논의 참고).
 
 ---
 
@@ -107,6 +110,7 @@ POST   /api/parsing/debug/*                    단계별 실행기 (개발용, 6
 ### 코스
 ```
 POST   /api/courses                            생성
+GET    /api/courses                            목록 (최신순 — 08-08 추가, 문제집 화면용)
 GET    /api/courses/{id}                       조회
 GET    /api/courses/{id}/tree                  코스 트리 (다자료 개념 연결 포함)
 GET    /api/courses/{id}/prereqs               선수 판정 (pass/gray/rejected)

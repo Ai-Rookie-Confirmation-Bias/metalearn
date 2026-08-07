@@ -1,16 +1,11 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { CourseSelect } from "@/pages/quiz/CourseSelect";
 import { ScopeSelect } from "@/pages/quiz/ScopeSelect";
 import { SolveView, type SolveResult } from "@/pages/quiz/SolveView";
 import { ResultView } from "@/pages/quiz/ResultView";
-import {
-  courseBanks,
-  fetchSession,
-  type CourseBank,
-  type QuizStyle,
-  type SessionItem,
-} from "@/pages/quiz/mock";
+import { fetchCourseBanks, fetchSession } from "@/pages/quiz/api";
+import type { CourseBank, QuizStyle, SessionItem } from "@/pages/quiz/mock";
 
 // 문제 페이지 — 확정안 §6. 과목(책) 선택 → 범위 선택 → 풀이 → 결과.
 // 문제은행이 코스 단위라 책장처럼 과목부터 고른다.
@@ -25,6 +20,19 @@ export function QuizPage() {
   const [results, setResults] = useState<SolveResult[]>([]);
   const [lastScope, setLastScope] = useState<{ tocIndexes: number[]; count: number } | null>(null);
   const [loading, setLoading] = useState(false);
+
+  // 과목 목록 — 서버의 코스 + 문제은행 요약 (mock 시절 courseBanks 하드코딩 대체)
+  const [banks, setBanks] = useState<CourseBank[] | null>(null); // null = 로딩 중
+  const [loadError, setLoadError] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    fetchCourseBanks()
+      .then((b) => alive && setBanks(b))
+      .catch(() => alive && setLoadError(true));
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const tocTitles = useMemo(
     () =>
@@ -41,10 +49,16 @@ export function QuizPage() {
   };
 
   const start = async (tocIndexes: number[], count: number) => {
-    if (!course) return;
+    if (!course?.summary) return;
     setLoading(true);
     try {
-      const session = await fetchSession(course.course_id, tocIndexes, count, style); // 정답 없는 문항만 도착
+      // 정답 없는 문항만 도착. style은 기출 백엔드(§3.6) 전이라 아직 안 보낸다.
+      const session = await fetchSession(
+        course.course_id,
+        course.summary.document_id,
+        tocIndexes,
+        count,
+      );
       setLastScope({ tocIndexes, count });
       setItems(session);
       setResults([]);
@@ -87,5 +101,20 @@ export function QuizPage() {
       />
     );
 
-  return <CourseSelect courses={courseBanks} onSelect={pickCourse} />;
+  if (loadError)
+    return (
+      <p className="px-12 py-16 text-text-secondary">
+        과목 목록을 불러오지 못했어요. 백엔드가 켜져 있는지 확인해 주세요.
+      </p>
+    );
+  if (banks === null)
+    return <p className="px-12 py-16 text-text-secondary">과목을 불러오는 중…</p>;
+  if (banks.length === 0)
+    return (
+      <p className="px-12 py-16 text-text-secondary">
+        아직 문제은행이 있는 과목이 없어요. 자료를 올려 파싱이 끝나면 문제은행을 만들 수
+        있어요.
+      </p>
+    );
+  return <CourseSelect courses={banks} onSelect={pickCourse} />;
 }
