@@ -4,6 +4,7 @@ import App from "@/App";
 import AppLayout from "@/AppLayout";
 import { LandingPage } from "@/pages/LandingPage";
 import { AuthPage } from "@/pages/AuthPage";
+import { AuthCallbackPage } from "@/pages/AuthCallbackPage";
 import { ProfileSetupPage } from "@/pages/ProfileSetupPage";
 import { LearningPage } from "@/pages/LearningPage";
 import { LibraryPage } from "@/pages/LibraryPage";
@@ -34,6 +35,10 @@ export const router = createBrowserRouter([
       { path: "welcome", element: <ProfileSetupPage /> },
     ],
   },
+  // OAuth 착지점. 제공자 → 백엔드 → 여기(#token=…)로 온다. 셸이 없다 —
+  // 토큰을 저장하고 곧바로 /library로 넘어가는 통과 지점이라 사이드바가 한 번
+  // 깜빡일 이유가 없다.
+  { path: "/auth/callback", element: <AuthCallbackPage /> },
   // 학습 화면 — 자체 헤더를 가진 전체화면 3컬럼 (셸 밖)
   { path: "/learning", element: <LearningPage /> },
   {

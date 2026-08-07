@@ -12,6 +12,19 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-env"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
+    # ── 소셜 로그인 (Google / Naver) ─────────────────────────────
+    # 비어 있으면 그 제공자는 "미설정"이다 — /api/auth/providers가 false를 주고
+    # 프론트가 버튼을 잠근다. 키를 넣고 백엔드만 재시작하면 켜진다.
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    NAVER_CLIENT_ID: str = ""
+    NAVER_CLIENT_SECRET: str = ""
+    # 콜백 주소를 이 값으로 조립한다 — {OAUTH_BACKEND_BASE_URL}/api/auth/callback/{provider}.
+    # **제공자 콘솔에 등록한 Redirect URI와 글자 하나까지 같아야 한다.**
+    OAUTH_BACKEND_BASE_URL: str = "http://localhost:8000"
+    # 로그인이 끝나면 여기로 돌려보낸다(토큰은 URL 해시로).
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
+
     # ── Upstage Solar ────────────────────────────────────────────
     UPSTAGE_API_KEY: str = ""
     SOLAR_BASE_URL: str = "https://api.upstage.ai/v1"
