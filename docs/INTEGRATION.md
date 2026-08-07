@@ -30,8 +30,8 @@ DB       localhost:5432  (postgres/dev, DB명 metalearn_v3)
 
 확인:
 ```bash
-docker compose exec backend uv run alembic current          # 0008 (head)
-docker compose exec backend uv run --group dev pytest -q    # 251 passed
+docker compose exec backend uv run alembic current          # 0009 (head)
+docker compose exec backend uv run --group dev pytest -q    # 268 passed
 docker compose exec frontend pnpm exec tsc --noEmit         # 통과
 ```
 
@@ -46,9 +46,9 @@ gitignore다(저작물). 클론하면 `sample_sdlc.tree.json`(합성 샘플) 하
 ## 2. 지금 어디까지 이어졌나
 
 ```
-PDF 업로드 ──✅──> 파싱 ✅ ──> 학습 ✅  책장에 자동으로 뜬다
-            /create       └─> 문제은행 ✅ API ──❌──> 문제집 화면
-                                              부를 화면 없음(mock)
+로그인 ✅ ──> PDF 업로드 ──✅──> 파싱 ✅ ──> 학습 ✅  내 책장에 자동으로 뜬다
+Google        /create                    └─> 문제은행 ✅ API ──❌──> 문제집 화면
+(선택)                                                        부를 화면 없음(mock)
 ```
 
 **백엔드는 한 바퀴가 돈다. 화면으로는 한 군데가 남았다.**
@@ -75,7 +75,9 @@ PDF 업로드 ──✅──> 파싱 ✅ ──> 학습 ✅  책장에 자동�
 - 대기 목록(문서 id + 파일명)은 localStorage에 남는다. 파이프라인이 분 단위라
   그 사이 새로고침이 실제로 일어난다. **진행 상태는 안 들고 있다** — 서버가 진실이다.
 - 같은 파일을 다시 올리면 지문이 같아 재파싱이 없다(실측: 같은 id·ready 즉시).
-- `role`은 안 보낸다. 서버가 user_documents에만 쓰는데 users 테이블이 없어 저장되지 않는다.
+  **그래도 내 책장에는 꽂힌다** — 문서는 공용이고 소유는 따로 기록된다.
+- `role`은 안 보낸다. 서버의 역할은 뼈대/본문/참고인데 위저드가 묻는 건 메인/추가라
+  축이 다르다. 임의로 짝지으면 사용자가 고르지 않은 값이 저장된다.
 - 링크·텍스트 자료는 받는 문이 없어 위저드에서 뺐다.
 
 curl로도 여전히 된다:
@@ -90,9 +92,71 @@ curl -X POST "http://localhost:8000/api/parsing/documents" -F "file=@교재.pdf"
 
 ---
 
-## 3. 실제로 도는 API (31개)
+## 2.5 로그인 — 08-07에 붙였다 (안 해도 다 돌아간다)
+
+`feat/oauth-login`의 코드를 **파일로 옮겨** 왔다. 브랜치를 머지하지 않은 이유는
+alembic 계보가 갈려서다 — 그쪽 `0020_oauth_user`는 이미 있는 users에 컬럼을 붙이는
+마이그레이션이고 이 브랜치엔 users가 아예 없었다. 파이썬/TS만 옮기고 마이그레이션은
+`0009_users`로 최종 모양을 새로 썼다.
+
+### 요청 하나가 누구 것인지 정하는 순서
+
+```
+Authorization: Bearer <JWT>   로그인한 사람           ← 정식
+X-User-Id: <UUID>             계정을 지정하는 개발 경로
+(둘 다 없음)                   dev 유저 00000000-…-0001
+```
+
+**로그인을 안 해도 지금까지처럼 전부 돈다.** 다만 셋 다 *실재하는 계정*이어야 한다 —
+users에 없는 id는 읽기는 되는데 소유를 남기는 순간 FK가 터져서(업로드 500) 앞에서 막는다.
+유령 id는 400, 지워진 계정의 토큰은 401(프론트가 그때 토큰을 비우고 dev로 내려간다).
+
+### 왕복
+
+```
+AuthPage → GET /api/auth/login/google → 구글 동의화면
+        → GET /api/auth/callback/google?code&state (백엔드가 교환·find-or-create)
+        → 302 http://localhost:5173/auth/callback#token=JWT
+        → localStorage 저장 후 /library
+```
+
+- 실패해도 500을 안 던진다. 사용자는 브라우저로 거기 도착해 있어서 JSON을 주면
+  흰 화면에 detail만 남는다. `#error=denied|bad_state|exchange_failed|…`로 302한다.
+- 네이버는 자격증명이 비어 있어 **버튼이 잠겨 있다**(`GET /api/auth/providers`).
+  `.env`에 키를 넣고 백엔드를 재시작하면 켜진다.
+
+⚠️ **구글 콘솔의 승인된 리디렉션 URI에 `http://localhost:8000/api/auth/callback/google`이
+있어야 한다.** 핸드오프 문서 기준은 58001(트라이얼 스택)이라 8000이 없으면 콜백에서 막힌다.
+
+### 내 책장
+
+```
+자료(파싱 결과)   공용 — 같은 책을 둘이 올려도 파싱은 1회
+소유              user_documents — 사람마다 따로
+진도              data/progress/{user_id}.json — 사람마다 따로
+파일 픽스처       공용 (DB 행이 없는 데모 자료라 누구에게나 보인다)
+```
+
+실측: dev 7권 / 다른 계정 4권(픽스처 3 + 자기 것 1). 같은 파일을 다른 계정이 올리면
+같은 문서 id가 재파싱 없이 그 계정 책장에만 추가된다.
+
+⚠️ **구글로 처음 들어가면 책장이 비어 보이는 게 정상이다.** 지금 진도와 자료는
+dev 유저에 붙어 있고, 로그인하면 그와 다른 계정이 된다. 이걸 모르면 "로그인하니
+자료가 사라졌다"로 읽힌다.
+
+---
+
+## 3. 실제로 도는 API (35개)
 
 ⚠️ `docs/API.md`는 **2026-07-03 문서**라 피벗 전 설계다. 실제로 도는 건 이 표다.
+
+### 인증
+```
+GET    /api/auth/providers                    {"google":true,"naver":false}
+GET    /api/auth/login/{provider}             302 제공자 동의화면 (미설정이면 503)
+GET    /api/auth/callback/{provider}          302 프론트 #token= 또는 #error=
+GET    /api/auth/me                           지금 요청이 누구 것인가 (미로그인이면 dev)
+```
 
 ### 파싱
 ```
@@ -106,7 +170,7 @@ POST   /api/parsing/debug/*                    단계별 실행기 (개발용, 6
 
 ### 코스
 ```
-POST   /api/courses                            생성
+POST   /api/courses                            생성 (주인은 토큰에서 — 바디에 user_id 없다)
 GET    /api/courses/{id}                       조회
 GET    /api/courses/{id}/tree                  코스 트리 (다자료 개념 연결 포함)
 GET    /api/courses/{id}/prereqs               선수 판정 (pass/gray/rejected)
@@ -115,7 +179,7 @@ GET    /api/courses/{id}/gaps                  끊긴 고리
 
 ### 학습 커리큘럼
 ```
-GET    /api/curriculum/documents                          자료 목록 (파싱 ready 자동 주입)
+GET    /api/curriculum/documents                          내 자료 목록 (픽스처 + 내가 올린 ready)
 POST   /api/curriculum/documents/from-parsing/{doc_id}    명시 주입 (?refresh=true 재파싱 반영)
 GET    /api/curriculum/documents/{doc_id}                 자료 개요
 GET    /api/curriculum/documents/{doc_id}/chapters/{i}    목차 하나
@@ -157,6 +221,15 @@ integration에서만 고쳤다. 그쪽에서 새로 빌드하거나 볼륨을 �
 그리고 `GET /tree`에 `segments[].sentences[]`를 추가했다(문제은행이 근거 표시에
 쓴다). `text`는 안 싣는다 — `content[char_start:char_end]`로 복원된다.
 
+**08-07 소유 경계 관련 — `POST /parsing/documents`에 `user_id`를 넣었다.**
+`ParsingService.register`는 **이미 `user_id`를 받아 `link_user`까지 하도록 돼 있었고
+라우터만 안 넘기고 있었다.** 새 API가 아니라 끊긴 인자 하나를 이은 것이다.
+설계 원칙 ①(문서는 공용, 소유는 user_documents로만)은 그대로다 — `documents`에는
+여전히 주인이 없고, 지문이 같으면 파싱은 1회다.
+
+`user_documents.user_id`에 이제 FK가 걸린다(`fk_user_documents_user`, 0009).
+`models.py`의 "users 테이블이 아직 없어 FK를 걸지 않는다" 주석은 지웠다.
+
 ### 소민섭(문제은행) — 🔴 모델 결정이 필요하다
 
 `solar.py`를 합치며 quiz 호출이 `solar-pro2`(하드코딩)에서 `solar-pro3`로 넘어갔고
@@ -190,9 +263,12 @@ QUIZ_TUNING의 실측이 전부 pro2 기준이라 **`QUIZ_CHAT_MODEL="solar-pro2
 ```
 1. API 표기      camelCase(curriculum) vs snake_case(quiz)
 2. 교재 공유     fixtures/*.md 가 gitignore라 실물이 로컬에만 있다
-3. 다음 우선순위  문제집 실 API 연결 (업로드 화면은 08-07에 끝) — 코스 목록 API가 선행이다
+3. 다음 우선순위  문제집 실 API 연결 (업로드·로그인은 08-07에 끝) — 코스 목록 API가 선행이다
 4. 코스 단위     책장이 자료 단위로 돈다. 파일 3개를 올리면 책이 3권 뜬다.
                  한 수업으로 묶으려면 POST /courses를 부를 자리와 목록 API가 필요하다
+5. 시연 계정     구글로 로그인하면 dev 유저와 다른 계정이다. 지금 자료·진도는 dev에
+                 붙어 있으니, 로그인해서 찍을지 미로그인으로 찍을지 미리 정해야 한다
+6. 진도 저장소   data/progress/{user_id}.json 파일이다. 계정이 늘면 DB로 옮겨야 한다
 ```
 
 ---
