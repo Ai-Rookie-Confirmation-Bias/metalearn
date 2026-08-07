@@ -3,6 +3,10 @@
  *   STEP 1 메인 자료 → STEP 2 추가 자료(선택) → STEP 3 목표 → 책장으로.
  * 진단(바닥 찾기)은 여기 없음: 책장 카드의 "진단 시작하기"에서 별도.
  * 참고 원본: UXUI_ANT/create_course.html · 스키마: docs/SCHEMA.md
+ *
+ * 파일은 **고르는 순간 서버로 올라간다.** 마지막에 몰아 올리면 사용자가 목표를
+ * 고르는 동안 놀고 있던 시간만큼 파싱이 늦어진다(파이프라인이 분 단위다).
+ * 여기서 하는 일은 접수까지고, 그 뒤 진행 상황은 책장이 폴링해서 보여준다.
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -10,8 +14,6 @@ import { clsx } from "clsx";
 import {
   ArrowLeftIcon,
   UploadSimpleIcon,
-  LinkIcon,
-  FileIcon,
   TrashIcon,
   ArrowUpIcon,
   ArrowDownIcon,
@@ -19,27 +21,27 @@ import {
   BriefcaseIcon,
   BookOpenIcon,
   SmileyIcon,
+  WarningCircleIcon,
+  CheckCircleIcon,
   type Icon,
 } from "@phosphor-icons/react";
 
-import { useCreatedCourses } from "@/features/course-create/store";
+import { ACCEPT_EXTENSIONS, uploadDocument } from "@/features/parsing/api/documents";
+import { usePendingUploads } from "@/features/parsing/store";
 import type {
   DocumentKind,
   Material,
   Purpose,
-  CreateCoursePayload,
 } from "@/features/course-create/types";
 
+// 링크·텍스트는 뺐다 — 서버에 그걸 받는 문이 없다. 고를 수 있게 두면
+// 제출할 수 없는 행이 목록에 남는다.
 const KINDS: { value: DocumentKind; label: string }[] = [
   { value: "textbook", label: "교재" },
   { value: "slide", label: "슬라이드" },
   { value: "notes", label: "필기" },
   { value: "exam", label: "기출/문제" },
-  { value: "text", label: "텍스트" },
-  { value: "link", label: "링크" },
 ];
-// 메인 자료엔 링크 제외 (링크는 보조 자료로만)
-const PRIMARY_KINDS = KINDS.filter((k) => k.value !== "link");
 
 const PURPOSES: { value: Purpose; label: string; desc: string; icon: Icon }[] = [
   { value: "exam", label: "시험 · 자격증", desc: "합격이 목표예요", icon: CertificateIcon },
@@ -50,13 +52,27 @@ const PURPOSES: { value: Purpose; label: string; desc: string; icon: Icon }[] = 
 
 let uid = 0;
 const nextId = () => `m_${Date.now()}_${uid++}`;
-const stripExt = (name: string) => name.replace(/\.[^.]+$/, "");
 
 const cardBase = "border-2 rounded-xl bg-white cursor-pointer transition-all";
 const cardState = (selected: boolean) =>
   selected
     ? "border-primary bg-black/[0.03]"
     : "border-border-primary hover:border-text-tertiary hover:bg-bg-secondary";
+
+const uploading = (m: Material) => !m.docId && !m.error;
+
+function formatSize(bytes: number) {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function describe(error: unknown): string {
+  const detail = (error as { response?: { data?: { detail?: string } } })?.response
+    ?.data?.detail;
+  if (detail) return detail;
+  return (error as Error)?.message ?? String(error);
+}
 
 // 매 스텝 오른쪽에서 슬라이드-인 (전역 keyframe 대신 transition)
 function StepFade({ children }: { children: ReactNode }) {
@@ -79,34 +95,60 @@ function StepFade({ children }: { children: ReactNode }) {
 
 function UploadZone({ label, onFiles }: { label: string; onFiles: (files: FileList) => void }) {
   const ref = useRef<HTMLInputElement>(null);
+  const [over, setOver] = useState(false);
+
   return (
-    <>
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        setOver(true);
+      }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        setOver(false);
+        if (e.dataTransfer.files.length) onFiles(e.dataTransfer.files);
+      }}
+    >
       <button
         type="button"
         onClick={() => ref.current?.click()}
-        className="group flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed border-border-primary py-8 text-center transition-colors hover:border-accent hover:bg-accent/5"
+        className={clsx(
+          "group flex w-full flex-col items-center justify-center rounded-xl border-2 border-dashed py-8 text-center transition-colors",
+          over
+            ? "border-accent bg-accent/5"
+            : "border-border-primary hover:border-accent hover:bg-accent/5",
+        )}
       >
-        <UploadSimpleIcon className="mb-2 text-[2rem] text-text-tertiary transition-colors group-hover:text-accent" />
+        <UploadSimpleIcon
+          className={clsx(
+            "mb-2 text-[2rem] transition-colors",
+            over ? "text-accent" : "text-text-tertiary group-hover:text-accent",
+          )}
+        />
         <span className="text-[0.9rem] font-medium text-text-secondary">{label}</span>
+        <span className="mt-1 text-[0.8rem] text-text-tertiary">
+          PDF · 이미지(PNG · JPG · TIFF · BMP · HEIC)
+        </span>
       </button>
       <input
         ref={ref}
         type="file"
         multiple
         hidden
+        accept={ACCEPT_EXTENSIONS}
         onChange={(e) => {
           if (e.target.files) onFiles(e.target.files);
           e.target.value = "";
         }}
       />
-    </>
+    </div>
   );
 }
 
-// 자료 한 줄 (파일명 · 형태 선택 · [순서] · 삭제)
+// 자료 한 줄 (파일명 · 크기/상태 · 형태 선택 · [순서] · 삭제)
 function MaterialRow({
   material,
-  kinds,
   onKind,
   onRemove,
   onUp,
@@ -115,7 +157,6 @@ function MaterialRow({
   canDown,
 }: {
   material: Material;
-  kinds: { value: DocumentKind; label: string }[];
   onKind: (k: DocumentKind) => void;
   onRemove: () => void;
   onUp?: () => void;
@@ -123,18 +164,44 @@ function MaterialRow({
   canUp?: boolean;
   canDown?: boolean;
 }) {
-  const FileTypeIcon = material.kind === "link" ? LinkIcon : FileIcon;
+  const busy = uploading(material);
   return (
-    <div className="flex items-center gap-3 rounded-xl border border-border-primary bg-white px-4 py-3">
-      <FileTypeIcon className="shrink-0 text-lg text-text-tertiary" />
-      <span className="min-w-0 flex-1 truncate text-[0.9rem] text-text-primary">{material.name}</span>
+    <div
+      className={clsx(
+        "flex items-center gap-3 rounded-xl border bg-white px-4 py-3",
+        material.error ? "border-red-200 bg-red-50/50" : "border-border-primary",
+      )}
+    >
+      {busy ? (
+        <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-border-primary border-t-accent" />
+      ) : material.error ? (
+        <WarningCircleIcon weight="fill" className="shrink-0 text-lg text-red-500" />
+      ) : (
+        <CheckCircleIcon weight="fill" className="shrink-0 text-lg text-emerald-500" />
+      )}
+
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[0.9rem] text-text-primary">{material.name}</div>
+        <div
+          className={clsx(
+            "text-[0.75rem]",
+            material.error ? "text-red-600" : "text-text-tertiary",
+          )}
+        >
+          {material.error
+            ? material.error
+            : busy
+              ? `${formatSize(material.size)} · 올리는 중…`
+              : `${formatSize(material.size)} · 접수됨`}
+        </div>
+      </div>
 
       <select
         value={material.kind}
         onChange={(e) => onKind(e.target.value as DocumentKind)}
         className="shrink-0 rounded-lg border border-border-primary bg-bg-secondary px-2 py-1 text-[0.8rem] text-text-secondary focus:outline-none"
       >
-        {kinds.map((k) => (
+        {KINDS.map((k) => (
           <option key={k.value} value={k.value}>
             {k.label}
           </option>
@@ -174,35 +241,45 @@ function MaterialRow({
 
 export function CreateCoursePage() {
   const navigate = useNavigate();
-  const addDraft = useCreatedCourses((s) => s.addDraft);
+  const addPending = usePendingUploads((s) => s.add);
 
   const [step, setStep] = useState(0); // 0 메인 / 1 추가 / 2 목표
   const [primaries, setPrimaries] = useState<Material[]>([]);
   const [supps, setSupps] = useState<Material[]>([]);
-  const [linkUrl, setLinkUrl] = useState("");
   const [purpose, setPurpose] = useState<Purpose | null>(null);
+
+  const patch = (id: string, changes: Partial<Material>) => {
+    const upd = (arr: Material[]) =>
+      arr.map((m) => (m.id === id ? { ...m, ...changes } : m));
+    setPrimaries(upd);
+    setSupps(upd);
+  };
 
   const addFiles = (files: FileList, role: "primary" | "supplementary") => {
     const items: Material[] = Array.from(files).map((f) => ({
       id: nextId(),
       name: f.name,
+      size: f.size,
       kind: "textbook",
       role,
     }));
     (role === "primary" ? setPrimaries : setSupps)((prev) => [...prev, ...items]);
-  };
 
-  const addLink = () => {
-    const url = linkUrl.trim();
-    if (!url) return;
-    setSupps((prev) => [...prev, { id: nextId(), name: url, kind: "link", role: "supplementary" }]);
-    setLinkUrl("");
+    // 접수증(docId)만 받고 끝낸다. 파싱은 서버 백그라운드에서 계속 돈다.
+    items.forEach((item, i) => {
+      const file = files[i];
+      uploadDocument(file)
+        .then((doc) => patch(item.id, { docId: doc.id }))
+        .catch((e) => patch(item.id, { error: describe(e) }));
+    });
   };
 
   const setKind = (which: "p" | "s", id: string, kind: DocumentKind) => {
     const upd = (arr: Material[]) => arr.map((m) => (m.id === id ? { ...m, kind } : m));
     (which === "p" ? setPrimaries : setSupps)(upd);
   };
+  // 서버에서 지우지는 않는다. 문서는 공용이고 지문이 같으면 재사용되므로
+  // 지웠다 다시 올려도 파싱이 다시 돌지 않는다.
   const remove = (which: "p" | "s", id: string) => {
     const f = (arr: Material[]) => arr.filter((m) => m.id !== id);
     (which === "p" ? setPrimaries : setSupps)(f);
@@ -217,7 +294,16 @@ export function CreateCoursePage() {
     });
   };
 
-  const canNext = step === 0 ? primaries.length > 0 : step === 1 ? true : purpose !== null;
+  const all = [...primaries, ...supps];
+  const accepted = all.filter((m) => m.docId);
+  const busy = all.some(uploading);
+
+  const canNext =
+    step === 0
+      ? primaries.some((m) => m.docId)
+      : step === 1
+        ? true
+        : purpose !== null && accepted.length > 0 && !busy;
 
   const back = () => (step === 0 ? navigate("/library") : setStep((s) => s - 1));
   const next = () => {
@@ -226,14 +312,12 @@ export function CreateCoursePage() {
       setStep((s) => s + 1);
       return;
     }
-    // 제출 — 백엔드 붙으면 이 payload를 POST /courses 로 전송(문서는 업로드 후 받은 id로 치환)
-    const payload: CreateCoursePayload = {
-      documentIds: [...primaries, ...supps].map((m) => m.id),
-      primaryIds: primaries.map((m) => m.id),
-      purpose: purpose!,
-    };
-    void payload; // mock: 전송 대신 스토어에 "생성중" 코스로 추가
-    addDraft(stripExt(primaries[0]?.name ?? "새 학습"));
+    // 파일은 이미 서버에 있다. 여기서 하는 건 "책장아, 이것들 지켜봐"뿐이다 —
+    // 커리큘럼 목록은 ready인 문서만 주므로 그전까지는 이 목록이 유일한 단서다.
+    //
+    // ⚠️ 목표(purpose)와 메인/추가 구분은 아직 서버로 안 간다. POST /courses가
+    //    받을 자리는 있지만 코스 목록 API가 없어 책장이 자료 단위로 돈다.
+    addPending(accepted.map((m) => ({ docId: m.docId as string, filename: m.name })));
     navigate("/library");
   };
 
@@ -253,14 +337,16 @@ export function CreateCoursePage() {
               <p className="mb-8 text-[0.95rem] text-text-secondary">
                 이 자료가 학습의 기준(천장)이 돼요. 여러 파일로 나뉘어 있으면 순서대로 올려주세요.
               </p>
-              <UploadZone label="클릭해서 파일 선택 (여러 개 가능)" onFiles={(f) => addFiles(f, "primary")} />
+              <UploadZone
+                label="클릭하거나 파일을 여기로 드래그하세요 (여러 개 가능)"
+                onFiles={(f) => addFiles(f, "primary")}
+              />
               {primaries.length > 0 && (
                 <div className="mt-4 flex flex-col gap-2">
                   {primaries.map((m, i) => (
                     <MaterialRow
                       key={m.id}
                       material={m}
-                      kinds={PRIMARY_KINDS}
                       onKind={(k) => setKind("p", m.id, k)}
                       onRemove={() => remove("p", m.id)}
                       onUp={() => move(i, -1)}
@@ -281,32 +367,15 @@ export function CreateCoursePage() {
                 <span className="text-[1.1rem] font-medium text-text-tertiary">(선택)</span>
               </h2>
               <p className="mb-8 text-[0.95rem] text-text-secondary">
-                기출·문제, 링크, 필기 같은 보조 자료예요. 없으면 건너뛰어도 돼요.
+                기출·문제, 필기 같은 보조 자료예요. 없으면 건너뛰어도 돼요.
               </p>
               <UploadZone label="파일 추가" onFiles={(f) => addFiles(f, "supplementary")} />
-              <div className="mt-3 flex gap-2">
-                <input
-                  value={linkUrl}
-                  onChange={(e) => setLinkUrl(e.target.value)}
-                  onKeyDown={(e) => e.key === "Enter" && (e.preventDefault(), addLink())}
-                  placeholder="https:// 링크 붙여넣기"
-                  className="flex-1 rounded-xl border border-border-primary bg-white px-4 py-2.5 text-[0.9rem] text-text-primary placeholder:text-text-tertiary focus:border-accent focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={addLink}
-                  className="shrink-0 rounded-xl border border-border-primary bg-white px-4 py-2.5 text-[0.9rem] font-semibold text-text-primary transition-colors hover:bg-bg-secondary"
-                >
-                  추가
-                </button>
-              </div>
               {supps.length > 0 && (
                 <div className="mt-4 flex flex-col gap-2">
                   {supps.map((m) => (
                     <MaterialRow
                       key={m.id}
                       material={m}
-                      kinds={KINDS}
                       onKind={(k) => setKind("s", m.id, k)}
                       onRemove={() => remove("s", m.id)}
                     />
@@ -341,6 +410,11 @@ export function CreateCoursePage() {
                   </button>
                 ))}
               </div>
+              {busy && (
+                <p className="mt-6 text-[0.85rem] text-text-tertiary">
+                  자료를 아직 올리는 중이에요. 끝나면 생성할 수 있어요.
+                </p>
+              )}
             </>
           )}
         </StepFade>

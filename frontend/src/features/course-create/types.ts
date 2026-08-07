@@ -3,25 +3,23 @@
 export type DocumentKind = "textbook" | "slide" | "notes" | "exam" | "link" | "text";
 export type Purpose = "exam" | "career" | "culture" | "hobby";
 
-// 업로드한 자료 한 건 (documents + course_documents.role 를 클라에서 임시 표현).
-// 순서(분할 메인)는 배열 인덱스로 관리.
+// 업로드한 자료 한 건. 파일을 고르는 순간 서버로 올라가므로 화면에 사는 동안
+// 상태가 셋 중 하나다 — 올리는 중 / 접수됨(docId 있음) / 실패.
+// 파싱 진행 상황은 여기 없다. 그건 접수 후 서버에 물어본다.
 export type Material = {
-  id: string;
-  name: string; // 파일명 또는 링크 URL
+  id: string; // 화면 안에서만 쓰는 행 id (서버 id는 docId)
+  name: string;
+  size: number; // bytes
   kind: DocumentKind;
   role: "primary" | "supplementary";
+  docId?: string; // 업로드 성공 시 서버가 준 파싱 문서 UUID
+  error?: string; // 실패 사유. 있으면 이 행은 제출에 못 들어간다
 };
 
 // POST /courses 요청 바디 모양 (백엔드 붙으면 이대로 전송).
+// ⚠️ 아직 안 부른다 — 코스 목록 API가 없어 책장이 코스가 아니라 자료 단위다.
 export type CreateCoursePayload = {
   documentIds: string[]; // 업로드 후 서버가 준 documentId들
   primaryIds: string[]; // 그중 메인
   purpose: Purpose;
-};
-
-// 책장에 잠깐 뜨는 "생성 중" 코스 (mock 대역).
-export type DraftCourse = {
-  id: string;
-  title: string;
-  generating: boolean;
 };

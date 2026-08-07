@@ -46,12 +46,12 @@ gitignore다(저작물). 클론하면 `sample_sdlc.tree.json`(합성 샘플) 하
 ## 2. 지금 어디까지 이어졌나
 
 ```
-PDF 업로드 ──❌──> 파싱 ✅ ──> 학습 ✅  책장에 자동으로 뜬다
-            화면없음      └─> 문제은행 ✅ API ──❌──> 문제집 화면
+PDF 업로드 ──✅──> 파싱 ✅ ──> 학습 ✅  책장에 자동으로 뜬다
+            /create       └─> 문제은행 ✅ API ──❌──> 문제집 화면
                                               부를 화면 없음(mock)
 ```
 
-**백엔드는 한 바퀴가 돈다. 화면으로는 두 군데가 끊긴다.**
+**백엔드는 한 바퀴가 돈다. 화면으로는 한 군데가 남았다.**
 
 ### 실측 (실제 PDF 한 권, 254KB)
 
@@ -61,16 +61,27 @@ PDF 업로드 ──❌──> 파싱 ✅ ──> 학습 ✅  책장에 자동�
 문제   from-parsing 213초 → 저장 3 · 폐기 55 · 세션 → 채점 → 근거 원문 반환
 ```
 
-### 끊긴 곳 둘
+### ① 업로드 — 08-07에 이었다
 
-**① 업로드 화면이 없다.** 프론트가 부르는 API는 `/api/curriculum`,
-`/api/learning/generate`(구 목업), `/api/parsing/debug`(개발용) 셋뿐이다.
-`POST /api/parsing/documents`를 부르는 화면이 하나도 없어서, 지금은 curl로 올린다.
+책장 → **새로운 학습 시작하기** → `/create` 위저드. 위저드는 라우트까지 이미
+있었고 없던 건 `POST /api/parsing/documents` 한 줄이었다.
 
+```
+파일 고름 → 그 자리에서 업로드(202 접수증) → 목표 고르는 동안 서버가 파싱
+        → 책장에 "분석 중" 카드(2초 폴링, 단계 문구는 DocStatus 그대로)
+        → ready → 책 카드로 바뀐다
+```
+
+- 대기 목록(문서 id + 파일명)은 localStorage에 남는다. 파이프라인이 분 단위라
+  그 사이 새로고침이 실제로 일어난다. **진행 상태는 안 들고 있다** — 서버가 진실이다.
+- 같은 파일을 다시 올리면 지문이 같아 재파싱이 없다(실측: 같은 id·ready 즉시).
+- `role`은 안 보낸다. 서버가 user_documents에만 쓰는데 users 테이블이 없어 저장되지 않는다.
+- 링크·텍스트 자료는 받는 문이 없어 위저드에서 뺐다.
+
+curl로도 여전히 된다:
 ```bash
-curl -X POST "http://localhost:8000/api/parsing/documents?role=skeleton" -F "file=@교재.pdf"
-# → {"id": "...", "status": "pending"}  이후 GET /api/parsing/documents/{id} 로 폴링
-# status가 "ready"가 되면 책장(/library)에 자동으로 나타난다
+curl -X POST "http://localhost:8000/api/parsing/documents" -F "file=@교재.pdf"
+# → 202 {"id": "...", "status": "pending"}  이후 GET /api/parsing/documents/{id} 로 폴링
 ```
 
 **② 문제집 화면이 mock이다.** `/quiz`가 보여주는 "데이터 통신 128문항" 등은 전부
@@ -179,7 +190,9 @@ QUIZ_TUNING의 실측이 전부 pro2 기준이라 **`QUIZ_CHAT_MODEL="solar-pro2
 ```
 1. API 표기      camelCase(curriculum) vs snake_case(quiz)
 2. 교재 공유     fixtures/*.md 가 gitignore라 실물이 로컬에만 있다
-3. 다음 우선순위  업로드 화면 / 문제집 실 API 연결 — 데모 첫 장면은 업로드다
+3. 다음 우선순위  문제집 실 API 연결 (업로드 화면은 08-07에 끝) — 코스 목록 API가 선행이다
+4. 코스 단위     책장이 자료 단위로 돈다. 파일 3개를 올리면 책이 3권 뜬다.
+                 한 수업으로 묶으려면 POST /courses를 부를 자리와 목록 API가 필요하다
 ```
 
 ---

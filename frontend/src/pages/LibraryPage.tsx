@@ -1,5 +1,6 @@
+import { useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useQueries } from "@tanstack/react-query";
+import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
   PlusIcon,
   PlayIcon,
@@ -9,6 +10,7 @@ import {
   NotebookIcon,
   GraduationCapIcon,
   BookmarkIcon,
+  WarningCircleIcon,
   type Icon,
 } from "@phosphor-icons/react";
 
@@ -17,7 +19,13 @@ import {
   curriculumKeys,
   useDocuments,
 } from "@/features/curriculum/queries/useCurriculum";
-import { useCreatedCourses } from "@/features/course-create/store";
+import {
+  PARSE_LABEL,
+  parseProgress,
+  type ParsingDocumentOut,
+} from "@/features/parsing/api/documents";
+import { useParsingDocuments } from "@/features/parsing/queries/useParsingDocuments";
+import { usePendingUploads } from "@/features/parsing/store";
 
 // 커버(색+아이콘)는 표현 계층. docId로 파생해 책장 안에서 안 겹치게.
 type Cover = { grad: string; icon: Icon };
@@ -150,30 +158,85 @@ function BookCard({ doc, cover }: { doc: DocumentOut; cover: Cover }) {
   );
 }
 
-function DraftCard({
-  title,
+// 올렸지만 아직 안 끝난 자료. **여기 보이는 건 전부 서버가 준 status다** —
+// 화면이 시간을 재거나 단계를 추측하지 않는다.
+function PendingCard({
+  filename,
+  doc,
+  unreachable,
   cover,
+  onDismiss,
 }: {
-  title: string;
+  filename: string;
+  doc: ParsingDocumentOut | undefined;
+  unreachable: boolean;
   cover: Cover;
+  onDismiss: () => void;
 }) {
-  const CoverIcon = cover.icon;
+  const failed = doc?.status === "failed";
+  const broken = failed || unreachable;
+  const progress = doc ? Math.round(parseProgress(doc.status) * 100) : 0;
+  const message = failed
+    ? (doc?.error ?? PARSE_LABEL.failed)
+    : unreachable
+      ? "상태를 확인할 수 없어요. 백엔드가 켜져 있는지 확인해 주세요."
+      : doc
+        ? PARSE_LABEL[doc.status]
+        : "상태를 확인하는 중…";
+
   return (
     <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm">
       <div
-        className={`relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`}
+        className={
+          broken
+            ? "relative flex h-[140px] items-center justify-center bg-gradient-to-br from-[#7f1d1d] to-[#b91c1c] text-white"
+            : `relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`
+        }
       >
-        <span className="h-9 w-9 animate-spin rounded-full border-[3px] border-white/40 border-t-white" />
+        {broken ? (
+          <WarningCircleIcon weight="fill" className="text-[3.5rem] opacity-90" />
+        ) : (
+          <span className="h-9 w-9 animate-spin rounded-full border-[3px] border-white/40 border-t-white" />
+        )}
       </div>
+
       <div className="flex flex-1 flex-col p-6">
-        <h4 className="mb-1 text-[1.125rem] font-bold leading-snug text-text-primary">{title}</h4>
-        <p className="mb-6 flex-1 text-[0.9rem] text-text-secondary">
-          AI가 커리큘럼을 만들고 있어요…
+        <h4 className="mb-1 truncate text-[1.125rem] font-bold leading-snug text-text-primary">
+          {filename}
+        </h4>
+        <p
+          className={`mb-6 flex-1 text-[0.9rem] ${broken ? "text-red-600" : "text-text-secondary"}`}
+        >
+          {message}
         </p>
-        <div className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
-          <CoverIcon className="text-base opacity-50" />
-          생성 중…
-        </div>
+
+        {!broken && (
+          <div className="mb-4">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-bg-secondary">
+              <div
+                className="h-full rounded-full bg-accent transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="mt-1.5 text-[0.75rem] text-text-tertiary">
+              분석이 끝나면 자동으로 책장에 꽂혀요.
+            </p>
+          </div>
+        )}
+
+        {broken ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="mt-auto inline-flex w-full items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:bg-bg-secondary"
+          >
+            치우기
+          </button>
+        ) : (
+          <div className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
+            분석 중…
+          </div>
+        )}
       </div>
     </div>
   );
@@ -181,7 +244,9 @@ function DraftCard({
 
 export function LibraryPage() {
   const navigate = useNavigate();
-  const drafts = useCreatedCourses((s) => s.drafts);
+  const qc = useQueryClient();
+  const pending = usePendingUploads((s) => s.pending);
+  const dropPending = usePendingUploads((s) => s.remove);
   const { data: docIds, isLoading, isError } = useDocuments();
 
   const docs = useQueries({
@@ -191,9 +256,32 @@ export function LibraryPage() {
     })),
   });
 
+  const parsing = useParsingDocuments(pending.map((p) => p.docId));
+
   const ready = docs
     .map((q) => q.data)
     .filter((d): d is DocumentOut => Boolean(d));
+
+  // 파싱이 끝나도 커리큘럼 목록은 다시 물어봐야 안다 — 그 목록 API가 호출될
+  // 때 ready 문서를 학습 store로 끌어오기 때문이다(파싱→학습 이음매).
+  const readyKey = parsing
+    .map((q) => q.data)
+    .filter((d): d is ParsingDocumentOut => d?.status === "ready")
+    .map((d) => d.id)
+    .join(",");
+  useEffect(() => {
+    if (!readyKey) return;
+    void qc.invalidateQueries({ queryKey: curriculumKeys.documents });
+  }, [readyKey, qc]);
+
+  // 책장이 그 자료를 알아본 뒤에야 대기 목록에서 뺀다. 먼저 빼면 카드가
+  // 한 번 사라졌다가 다시 나타난다.
+  useEffect(() => {
+    if (!docIds) return;
+    for (const p of pending) {
+      if (docIds.includes(p.docId)) dropPending(p.docId);
+    }
+  }, [docIds, pending, dropPending]);
 
   // 이어서 = 한 번이라도 본 자료 중 준비도가 가장 높은 것(아직 미완).
   const continueDoc = ready
@@ -201,11 +289,11 @@ export function LibraryPage() {
     .sort((a, b) => b.readiness - a.readiness)[0];
 
   const coverById = assignCovers([
-    ...drafts.map((d) => d.id),
+    ...pending.map((p) => p.docId),
     ...ready.map((d) => d.docId),
   ]);
 
-  const empty = !isLoading && !isError && ready.length === 0 && drafts.length === 0;
+  const empty = !isLoading && !isError && ready.length === 0 && pending.length === 0;
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-12 py-12">
@@ -267,11 +355,14 @@ export function LibraryPage() {
                 <p className="text-[0.9rem] text-text-secondary">새 자료를 책장에 꽂아보세요.</p>
               </button>
 
-              {drafts.map((d) => (
-                <DraftCard
-                  key={d.id}
-                  title={d.title}
-                  cover={coverById.get(d.id) ?? COVERS[0]}
+              {pending.map((p, i) => (
+                <PendingCard
+                  key={p.docId}
+                  filename={p.filename}
+                  doc={parsing[i]?.data}
+                  unreachable={Boolean(parsing[i]?.isError)}
+                  cover={coverById.get(p.docId) ?? COVERS[0]}
+                  onDismiss={() => dropPending(p.docId)}
                 />
               ))}
 
