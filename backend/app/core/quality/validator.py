@@ -16,7 +16,12 @@ import logging
 from app.core.config import settings
 from app.core.llm.base import LLMClient
 from app.core.quality import parsing
-from app.core.quality.checks import check_solution, mechanical_check, polish_mcq
+from app.core.quality.checks import (
+    check_solution,
+    mechanical_check,
+    polish_mcq,
+    scrub_sentence_refs,
+)
 from app.core.quality.prompts import (
     build_judge_prompt,
     build_revision_prompt,
@@ -40,7 +45,11 @@ async def validate_items(
     verdicts = await _screen(items, llm, config, second_llm)
 
     if config.enable_revise:
-        failed_idx = [i for i, v in enumerate(verdicts) if not v.ok]
+        # cloze는 수정 대상에서 제외 — 지문(segments)은 코드가 조립하는 것이라
+        # LLM 재작성이 손대면 정답 노출을 재생산한다 (pro3 실측 3건, QUIZ_TUNING §12).
+        failed_idx = [
+            i for i, v in enumerate(verdicts) if not v.ok and v.item.type != "cloze"
+        ]
         if failed_idx:
             await _revise_and_rescreen(
                 items, verdicts, failed_idx, llm, revise_llm or llm, config, second_llm
@@ -57,6 +66,7 @@ async def _screen(
     """기계 → 심판(1차→배심) → 풀이(1차→배심) 순서로 거른다. 싼 검사가 먼저."""
     verdicts: list[ItemVerdict] = []
     for it in items:
+        scrub_sentence_refs(it.type, it.data)
         if it.type == "mcq":
             polish_mcq(it.data)
         reason = mechanical_check(it.type, it.data, it.evidence_text)
@@ -89,8 +99,13 @@ async def _judge_stage(
     for start in range(0, len(survivors), config.batch_size):
         idx_batch = survivors[start : start + config.batch_size]
         batch = [verdicts[i].item for i in idx_batch]
+        # json_mode: Solar(pro3)가 배열을 객체 이어붙임으로 답하는 문제를
+        # response_format=json_object로 원천 차단. EXAONE 클라이언트는 kwargs를
+        # 무시하므로(model 포함) 배심원 콜에는 영향 없다.
         raw = await llm.generate(
-            build_judge_prompt(batch, neutral_example=jury), model=settings.QUIZ_CHAT_MODEL
+            build_judge_prompt(batch, neutral_example=jury),
+            model=settings.QUIZ_CHAT_MODEL,
+            json_mode=True,
         )
         results = parsing.parse_verdicts(raw, len(batch))
         for i, res in zip(idx_batch, results):
@@ -113,8 +128,16 @@ async def _solve_stage(
     for start in range(0, len(survivors), config.batch_size):
         idx_batch = survivors[start : start + config.batch_size]
         batch = [verdicts[i].item for i in idx_batch]
-        raw = await llm.generate(build_solve_prompt(batch), model=settings.QUIZ_CHAT_MODEL)
+        raw = await llm.generate(
+            build_solve_prompt(batch), model=settings.QUIZ_CHAT_MODEL, json_mode=True
+        )
         answers = parsing.parse_solutions(raw, len(batch))
+        if any(a is None for a in answers):
+            # "풀이자 응답 없음"의 원인 추적용 — 어떤 형태로 답했는지 남긴다
+            logger.warning(
+                "풀이자 응답 일부 판독 불가 (%d/%d) — raw 앞 300자: %r",
+                sum(a is None for a in answers), len(batch), raw[:300],
+            )
         for i, answer in zip(idx_batch, answers):
             if answer is None and jury:
                 continue  # 배심원 기권
@@ -140,7 +163,9 @@ async def _revise_and_rescreen(
         reasons = [verdicts[i].reason for i in idx_batch]
 
         raw = await revise_llm.generate(
-            build_revision_prompt(failed_items, reasons), model=settings.QUIZ_CHAT_MODEL
+            build_revision_prompt(failed_items, reasons),
+            model=settings.QUIZ_CHAT_MODEL,
+            json_mode=True,
         )
         revisions = parsing.parse_revisions(raw, len(idx_batch))
 

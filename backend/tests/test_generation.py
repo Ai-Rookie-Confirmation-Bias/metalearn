@@ -49,6 +49,17 @@ def test_parse_generation_with_fence_and_chatter():
     assert items[0].evidence_sentence_ids == [1]
 
 
+def test_parse_generation_rescues_evidence_nested_in_data():
+    """pro3 편차: evidence를 data 안에 넣음 — '근거 문장 번호 없음' 억울 폐기 구제."""
+    raw = '{"items":[{"type":"trueFalse","concept":"폭포수",' \
+          '"data":{"statement":"폭포수는 고전적 모형이다","answer":true,' \
+          '"explanation":"","evidence":["s1"]},"difficulty":1}]}'
+    items = parse_generation_response(raw)
+    assert len(items) == 1
+    assert items[0].evidence_sentence_ids == [1]
+    assert "evidence" not in items[0].data  # data에서는 걷어냄
+
+
 def test_parse_generation_drops_invalid_entries_individually():
     raw = '[{"type":"nope","concept":"x","data":{},"evidence":[]},' \
           '{"type":"trueFalse","concept":"y","data":{"statement":"s","answer":true},' \
@@ -60,6 +71,37 @@ def test_parse_generation_drops_invalid_entries_individually():
 
 def test_mechanical_check_passes_good_mcq():
     assert mechanical_check(_item(), CHUNK) is None
+
+
+def test_build_cloze_segments_assembles_from_pick():
+    """cloze 재구성 ①: LLM 픽(문장·정답) → 코드가 지문 조립, 정답은 지문에서 제거."""
+    from app.features.quiz.generation import build_cloze_segments
+
+    item = _item(
+        type="cloze",
+        data={"sentence": "s0", "answer": "델파이 기법", "aliases": ["Delphi"]},
+        evidence_sentence_ids=[0],
+    )
+    assert build_cloze_segments(item, CHUNK) is None
+    kinds = [s["kind"] for s in item.data["segments"]]
+    assert "blank" in kinds and "text" in kinds
+    text = " ".join(s.get("text", "") for s in item.data["segments"] if s["kind"] == "text")
+    assert "델파이 기법" not in text  # 정답 노출 원천 차단
+    assert mechanical_check(item, CHUNK) is None  # 조립본이 기계 검사 통과
+
+
+def test_build_cloze_segments_rejects_bad_picks():
+    from app.features.quiz.generation import build_cloze_segments
+
+    # 문장에 없는 정답
+    missing = _item(type="cloze", data={"sentence": "s0", "answer": "없는 용어"},
+                    evidence_sentence_ids=[0])
+    assert "글자 그대로 없음" in build_cloze_segments(missing, CHUNK)
+    # 구형 segments 응답은 그대로 통과 (기존 검사 경로)
+    legacy = _item(type="cloze", data={"segments": [{"kind": "blank", "answer": "x"}]},
+                   evidence_sentence_ids=[0])
+    assert build_cloze_segments(legacy, CHUNK) is None
+    assert "segments" in legacy.data
 
 
 def test_mechanical_check_rejects_missing_evidence():
