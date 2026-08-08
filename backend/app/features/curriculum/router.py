@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
@@ -26,6 +27,8 @@ from .bridge import (
 from .mastery import DAY, WEIGHT, label
 from .planner import formative_ready, weak_for_section
 from .schemas import (
+    AnalysisDoc,
+    AnalysisOut,
     AnswerIn,
     AnswerOut,
     BlockOut,
@@ -114,6 +117,95 @@ def _sections_out(chapter: Chapter, progress: Progress) -> list[SectionOut]:
             )
         )
     return out
+
+
+async def _my_doc_ids(db: Session, user_id: uuid.UUID) -> list[str]:
+    """책장에 뜨는 것 = 분석이 세는 것. **한 곳에서 정한다.**
+
+    두 군데서 각자 고르면 "책장엔 6권인데 분석은 4권"이 되고, 어느 쪽이 맞는지
+    화면에서 알 수 없다.
+    """
+    mine = set(sync_ready_documents(db, user_id=user_id))
+    mine |= set(await sync_courses(db, user_id=user_id))
+    members = course_member_document_ids(db, user_id=user_id)
+    return [
+        k
+        for k in store.documents
+        if (k in store.fixture_ids or k in mine) and k not in members
+    ]
+
+
+@router.get("/analysis", response_model=AnalysisOut)
+async def analysis(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> AnalysisOut:
+    """메타인지 분석 — **네 출처가 하나로 모인 것**을 자료 가로질러 보여준다.
+
+    계산은 전부 `summarize()`가 이미 한다. 여기가 하는 일은 자료별 결과를 모아
+    화면 수로 가중해 합치는 것뿐이다.
+
+    ⚠️ 단순 평균을 쓰면 안 된다 — 3화면짜리 샘플과 124화면짜리 교재를 같은
+       무게로 평균내면 준비도가 샘플에 끌려간다. 분량이 곧 비중이다.
+
+    ⚠️ `by_kind`에서 **비어 있는 출처가 곧 빈 구멍**이다. 진단이 0이면 누적이
+       사실상 3출처로 돌고 있다는 뜻이고, 그건 화면에 보여야 한다.
+    """
+    progress = _me(user_id)
+    docs: list[AnalysisDoc] = []
+    weak_count: Counter[str] = Counter()
+    by_kind: Counter[str] = Counter()
+    w_ready = w_under = 0.0
+    total = done = due = attempts = 0
+
+    for doc_id in await _my_doc_ids(db, user_id):
+        doc = _doc(doc_id, db, progress)
+        course, _plans = summarize(doc, progress)
+        n = sum(c.sections_total for c in course.chapters)
+        weakest = course.weakest
+
+        for ch in course.chapters:
+            for k, v in ch.by_kind.items():
+                by_kind[k] += v
+            attempts += ch.attempts
+            for name in ch.weak_concepts:
+                weak_count[name] += 1
+
+        docs.append(
+            AnalysisDoc(
+                doc_id=doc.doc_id,
+                title=doc.title,
+                readiness=round(course.readiness, 4),
+                understanding=round(course.understanding, 4),
+                sections_total=n,
+                sections_done=sum(c.sections_touched for c in course.chapters),
+                sections_due=course.sections_due,
+                weakest_chapter=weakest.chapter if weakest else None,
+                weak_concepts=list(weakest.weak_concepts) if weakest else [],
+                by_kind=dict(
+                    Counter(
+                        {k: v for c in course.chapters for k, v in c.by_kind.items()}
+                    )
+                ),
+            )
+        )
+        total += n
+        done += sum(c.sections_touched for c in course.chapters)
+        due += course.sections_due
+        w_ready += course.readiness * n
+        w_under += course.understanding * n
+
+    return AnalysisOut(
+        readiness=round(w_ready / total, 4) if total else 0.0,
+        understanding=round(w_under / total, 4) if total else 0.0,
+        sections_total=total,
+        sections_done=done,
+        sections_due=due,
+        attempts_total=attempts,
+        by_kind=dict(by_kind),
+        documents=docs,
+        weak_concepts=weak_count.most_common(12),
+    )
 
 
 @router.get("/documents", response_model=list[str])
