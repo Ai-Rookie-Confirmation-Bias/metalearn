@@ -30,6 +30,7 @@ import asyncio
 import logging
 import math
 import random
+import re
 import uuid
 from dataclasses import dataclass, field as dc_field
 from datetime import UTC, datetime
@@ -37,7 +38,9 @@ from datetime import UTC, datetime
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.llm.solar import solar_client
+from app.features.course import search
 from app.features.course.models import Course, CoursePrereq, PrereqStatus
 from app.features.course.prompts import cards, probe
 from app.features.parsing.models import Concept, ConceptSegment, Document, DocSegment
@@ -84,41 +87,37 @@ class Question:
     answer_index: int = 0
 
 
-# ── ⑤ 확인 문항을 몇 개 낼 것인가 ────────────────────────────────
+# ── ⑤ 판정 — 임베딩으로 거르고 LLM이 정한다 ──────────────────────
 #
-# **고정 개수가 아니다.** 이건 점수를 내는 시험이 아니라 "자기 말이 믿을 만한가"를
-# 재는 표본이라, 자기 말이 많을수록 몇 개 더 본다. 대신 상한을 둔다 —
-# 진단이 길어지면 시험처럼 느껴지고, 그 순간 이 화면의 목적이 깨진다.
+# **새 문턱을 만들지 않는다.** 여기 쓰는 값은 `CONCEPT_DEDUP_SIM_THRESHOLD`
+# (0.92) 하나뿐이고, 그건 "동일 개념 병합"으로 이미 실측된 보수적인 값이다.
+# 그 이상이면 명백하니 LLM을 안 부르고, **그 아래는 전부 LLM이 견준다.**
 #
-#   "안다" 1~3개   → 1문항
-#   4~8개          → 2문항
-#   9~15개         → 3문항
-#   16개 이상      → 4문항 (상한)
+#   정의 2회 생성   0.92 이상 → 같다        아래 → LLM "같은 말인가?"
+#   오답            0.92 이상 → 정답 베낌   아래 → LLM "같은 말인가 / 상관없나?"
 #
-# 틀리면 그 **과목 전체**를 heard로 낮춘다. 문항 하나로 항목 하나를 판정하는 게
-# 아니라, 그 사람의 자기평가가 후한지를 보는 것이다.
-PROBE_DIVISOR = 4
-PROBE_MIN = 1
-PROBE_MAX = 4
-
-# 오답 유사도 채택 구간. 실측:
-#   0.98  정답을 말만 바꿔 옮김 → 정답이 둘이 된다   버림
-#   0.83  한 군데만 뒤집음                            채택
-#   0.77  같은 결이지만 뜻이 다름                     채택
-#   0.25  딴소리 → 아무나 골라낸다                    버림
-DISTRACTOR_MIN_SIM = 0.60
-DISTRACTOR_MAX_SIM = 0.95
-
-# 책 밖 항목의 정답을 만들 때, 두 번 생성한 답이 이만큼 닮아야 쓴다.
-# 실측 일치 시 0.84~0.91.
-DEFINE_AGREE_SIM = 0.75
+# 한때 0.75 · 0.60~0.95 같은 선을 그었는데 표본 4개로 그은 값이라 뺐다.
+# 비교 과제는 18단계 회색지대에서 14/14로 검증됐다(§prompts/probe.py).
 
 
-def probe_count(known_items: int) -> int:
-    """확인 문항 수. 0이면 물을 게 없다."""
-    if known_items <= 0:
-        return 0
-    return max(PROBE_MIN, min(PROBE_MAX, math.ceil(known_items / PROBE_DIVISOR)))
+def _as_index(value, size: int) -> int | None:
+    """LLM이 준 번호. 문자열로 오거나 범위를 벗어날 수 있다."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value)
+    if isinstance(value, int) and 0 <= value < size:
+        return value
+    return None
+
+
+def _plain(text: str) -> str:
+    """보기에서 서식을 벗긴다.
+
+    LLM이 바꾼 자리를 `**하드웨어**`처럼 강조해서 보낼 때가 있다. 정답에는
+    강조가 없으니 **그것만 보고 오답을 고를 수 있다.** 문항이 통째로 무의미해진다.
+    """
+    return re.sub(r"\s+", " ", text.replace("*", "").replace("_", "")).strip()
 
 
 def _cosine(a: list[float], b: list[float]) -> float:
@@ -277,7 +276,9 @@ class DiagnosticService:
                 continue
             if value == Known.HEARD:
                 expand.append(subject)
-                continue
+            # "들어봤다"도 항목에 적어 둔다. ②를 건너뛰거나 창을 닫아도 화면이
+            # 복원되고, 나중에 항목별 답이 덮이면 그 차이가 곧 "펼쳤다"는 표시가
+            # 된다(§search._expanded).
             for row in rows:
                 if row.subject == subject:
                     row.known = value
@@ -297,138 +298,335 @@ class DiagnosticService:
             n += 1
         return n
 
-    # ── ⑤ 확인 문항 ──────────────────────────────────────────
+    # ── ⑤ 확인 문항 — 과목을 넣나 마나 ─────────────────────────
+    #
+    # 한 번에 다 내지 않는다. 답을 받아야 다음이 정해지기 때문이다.
+    # 화면은 빈 배열이 올 때까지 `GET → POST`를 반복한다.
+    #
+    #   1라운드  과목마다 문항 하나 (전 과목. 모른다고 한 사람도 묻는다)
+    #   2라운드  1라운드를 맞힌 과목만 한 번 더 — 찍어서 맞은 걸 거른다
+    #
+    # 판정 규칙은 `search.py`에 있다. 틀리면 한 번으로 모른다, 맞으면 두 번을 본다.
+    # 상태는 `course_prereqs.known/verified`가 그대로 들고 있다. 세션 테이블이
+    # 없으므로 중간에 창을 닫아도 이어진다.
     async def probes(self, course: Course) -> list[Question]:
-        """"안다"고 한 것 중 몇 개만 실제로 물어본다.
-
-        고르는 방식은 **무작위**다. 어려운 것만 고르면 그 사람이 후한지가
-        아니라 그 항목이 어려운지를 재게 된다.
-        """
-        claimed = [r for r in self._prereqs(course.id) if r.known == Known.KNOWN]
-        n = probe_count(len(claimed))
-        if n == 0:
+        """이번 라운드에 물을 문항들. 빈 목록이면 진단이 끝났다."""
+        pending: list[tuple[str, list[search.Item], search.Item]] = []
+        for subject, items in self._subject_states(course.id):
+            target = search.next_item(items)
+            if target is not None:
+                pending.append((subject, items, target))
+        if not pending:
             return []
 
-        picked = random.sample(claimed, min(n, len(claimed)))
+        targets = [(subject, target) for subject, _, target in pending]
+        answers = await self._answers_of(targets)
+
+        usable = [
+            (subject, row, answers[row.key])
+            for subject, row in targets
+            if answers.get(row.key)
+        ]
+        if not usable:
+            # 정답을 하나도 못 세웠다. 이 라운드는 문항 없이 끝난다 —
+            # 못 낸 항목은 자기신고가 그대로 남는다(§_answers_of).
+            _log.info("확인 문항 없음 — 정답을 세우지 못함 (%s)", course.title)
+            self._give_up(targets)
+            return []
+
+        choices = await self._choices_of(usable)
         out: list[Question] = []
-        for row in picked:
-            question = await self._build(row)
-            if question is not None:
-                out.append(question)
+        for subject, row, answer in usable:
+            options = choices.get(row.key)
+            if not options:
+                continue
+            picks = [answer, *options[: probe.DISTRACTORS]]
+            random.shuffle(picks)
+            out.append(
+                Question(
+                    prereq_id=uuid.UUID(row.key),
+                    subject=subject,
+                    item=row.item,
+                    stem=f"'{row.item}'에 대한 설명으로 옳은 것은?",
+                    choices=picks,
+                    answer_index=picks.index(answer),
+                )
+            )
+
+        made = {str(q.prereq_id) for q in out}
+        self._give_up(
+            [(s, t, "정답 없음" if not answers.get(t.key) else "오답 없음")
+             for s, _, t in pending if t.key not in made]
+        )
         return out
 
-    async def _build(self, row: CoursePrereq) -> Question | None:
-        """문항 하나. 정답을 못 세우면 **문항을 안 낸다.**
+    def _subject_states(
+        self, course_id: uuid.UUID
+    ) -> list[tuple[str, list[search.Item]]]:
+        """과목별 상태. 항목은 `seq` 순 — 어느 걸 먼저 물을지에만 쓴다.
 
-        확인 문항이 없어도 `known`이 그대로 남을 뿐이라 손해가 작다. 반대로
-        정답이 불확실한 문항을 내면 아는 사람을 모른다고 판정한다 — 그게 훨씬 나쁘다.
+        `seq`를 선후관계로 안 읽는다. 병합된 과목은 원본마다 0부터 다시 세는
+        값이 섞여 있어서 순서가 아니다(§search 머리말).
         """
-        answer = await self._answer_of(row)
-        if not answer:
-            return None
+        rows = self._prereqs(course_id)
+        grouped: dict[str, list[CoursePrereq]] = {}
+        for row in rows:
+            grouped.setdefault(row.subject, []).append(row)
 
-        try:
-            raw = await solar_client.generate_json(
-                probe.build_prompt(subject=row.subject, item=row.item, answer=answer),
-                system=probe.SYSTEM,
+        out = []
+        for subject, items in grouped.items():
+            items.sort(key=lambda r: r.seq)
+            out.append(
+                (
+                    subject,
+                    [
+                        search.Item(
+                            key=str(r.id), item=r.item, known=r.known, verified=r.verified
+                        )
+                        for r in items
+                    ],
+                )
             )
-            candidates = [
-                str(x).strip() for x in (raw.get("distractors") or []) if str(x).strip()
-            ]
-        except Exception as exc:  # noqa: BLE001 — 문항을 안 낼 뿐이다
-            _log.warning("확인 문항 오답 생성 실패 (%s): %s", row.item, exc)
-            return None
+        return out
 
-        usable = await self._usable(answer, candidates)
-        if len(usable) < 2:  # 보기 3개는 돼야 찍기를 거른다
-            _log.info("확인 문항 버림 — 쓸 만한 오답 %d개 (%s)", len(usable), row.item)
-            return None
+    def _give_up(self, missed: list[tuple[str, search.Item, str]]) -> None:
+        """문항을 못 낸 항목을 기록만 한다.
 
-        choices = [answer, *usable[: probe.DISTRACTORS]]
-        random.shuffle(choices)
-        return Question(
-            prereq_id=row.id,
-            subject=row.subject,
-            item=row.item,
-            stem=f"'{row.item}'에 대한 설명으로 옳은 것은?",
-            choices=choices,
-            answer_index=choices.index(answer),
-        )
+        `verified`를 건드리면 "틀렸다"가 되어 과목이 통째로 탈락한다. 그래서
+        **아무것도 안 바꾼다.** 다음 라운드에 다시 시도하고(LLM이라 될 수도
+        있다), 끝내 못 내면 그 과목은 자기신고가 그대로 남는다. 진단이 문항
+        생성 실패로 멈춰서도, 안 물어본 것을 모른다고 단정해서도 안 된다.
+        """
+        for subject, row, why in missed:
+            _log.info("확인 문항 생략 — %s: [%s] %s", why, subject, row.item)
 
-    async def _answer_of(self, row: CoursePrereq) -> str:
-        """정답 문장. **LLM이 정하게 두지 않는다.**
+    # ── 정답 세우기 — LLM이 정답을 정하지 않는다 ────────────────
+    async def _answers_of(
+        self, targets: list[tuple[str, search.Item]]
+    ) -> dict[str, str]:
+        """`{prereq_id: 정답 문장}`. 못 세운 항목은 안 들어간다.
 
         선수 항목은 코스 자료 밖의 것이라(그게 선수의 정의다) 원문에서 가져올
-        수 없다. 그래서 생성하되 혼자 믿지 않는다 — 같은 물음을 두 번 던져
-        두 답이 충분히 닮았을 때만 쓴다.
+        수 없다. 그래서 생성하되 혼자 믿지 않는다 — **같은 물음을 두 번 던져
+        두 답이 같은 말일 때만** 쓴다.
         """
+        if not targets:
+            return {}
+        payload = [(subject, row.item) for subject, row in targets]
         try:
             first, second = await asyncio.gather(
-                self._define(row), self._define(row)
+                self._define(payload), self._define(payload)
             )
-        except Exception as exc:  # noqa: BLE001
-            _log.warning("정답 생성 실패 (%s): %s", row.item, exc)
-            return ""
-        if not first or not second:
-            return ""
+        except Exception as exc:  # noqa: BLE001 — 문항을 안 낼 뿐이다
+            _log.warning("정답 생성 실패: %s", exc)
+            return {}
 
-        vectors = await solar_client.embed_batch([first, second], purpose="query")
-        agreement = _cosine(vectors[0], vectors[1])
-        if agreement < DEFINE_AGREE_SIM:
-            _log.info(
-                "정답 버림 — 두 답이 안 맞음 %.3f (%s)", agreement, row.item
-            )
-            return ""
-        return first
+        pairs = [
+            (row.item, first.get(i, ""), second.get(i, ""))
+            for i, (_, row) in enumerate(targets)
+        ]
+        agreed = await self._agree(pairs)
+        return {
+            targets[i][1].key: pairs[i][1] for i in agreed if pairs[i][1]
+        }
 
-    async def _define(self, row: CoursePrereq) -> str:
+    async def _define(self, payload: list[tuple[str, str]]) -> dict[int, str]:
         raw = await solar_client.generate_json(
-            probe.build_define_prompt(subject=row.subject, item=row.item),
-            system=probe.DEFINE_SYSTEM,
+            probe.build_define_prompt(items=payload), system=probe.DEFINE_SYSTEM
         )
-        return str(raw.get("definition") or "").strip()
-
-    async def _usable(self, answer: str, candidates: list[str]) -> list[str]:
-        """정답과 너무 닮았거나 너무 먼 오답을 버린다."""
-        if not candidates:
-            return []
-        vectors = await solar_client.embed_batch(
-            [answer, *candidates], purpose="query"
-        )
-        base = vectors[0]
-        out = []
-        for text, vector in zip(candidates, vectors[1:]):
-            sim = _cosine(base, vector)
-            if DISTRACTOR_MIN_SIM <= sim <= DISTRACTOR_MAX_SIM:
-                out.append(text)
-            else:
-                _log.debug("오답 버림 %.3f: %s", sim, text[:40])
+        out: dict[int, str] = {}
+        for key, value in (raw.get("definitions") or {}).items():
+            index = _as_index(key, len(payload))
+            text = str(value or "").strip()
+            if index is not None and text:
+                out[index] = text
         return out
 
-    def grade(self, course: Course, *, results: dict[uuid.UUID, bool]) -> dict:
-        """확인 문항 채점. 틀리면 그 **과목 전체**를 heard로 낮춘다.
+    async def _agree(self, pairs: list[tuple[str, str, str]]) -> set[int]:
+        """쓸 수 있는 번호들 — **모순이 아닌 것.**
 
-        문항 하나로 항목 하나를 판정하는 게 아니다 — 표본으로 그 사람의
-        자기평가가 후한지를 보는 것이다. 그래서 번지는 범위가 과목이다.
+        기본값이 "쓸 수 있다"다. 지어낸 답을 막는 게 목적이고, 지어내면 두 답이
+        서로 어긋난다. 표현이 갈리는 건 정상이라 그것까지 막으면 문항이 다
+        사라진다(실측: "같은 말인가"로 물었더니 7개 중 0개 통과).
+
+        임베딩은 명백히 같은 것만 먼저 통과시켜 LLM 콜을 아낀다
+        (`CONCEPT_DEDUP_SIM_THRESHOLD` 0.92 — 새로 만든 숫자가 아니다).
         """
-        rows = self._prereqs(course.id)
-        by_id = {r.id: r for r in rows}
-        demoted: set[str] = set()
+        both = [(i, a, b) for i, (_, a, b) in enumerate(pairs) if a and b]
+        if not both:
+            return set()
 
-        for prereq_id, correct in results.items():
-            row = by_id.get(prereq_id)
-            if row is None:
+        texts: list[str] = []
+        for _, a, b in both:
+            texts.extend([a, b])
+        try:
+            vectors = await solar_client.embed_batch(texts, purpose="query")
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("정답 비교 임베딩 실패 — 전부 LLM에게: %s", exc)
+            vectors = []
+
+        obvious: set[int] = set()
+        unclear: list[int] = []
+        for offset, (index, _, _) in enumerate(both):
+            if not vectors:
+                unclear.append(index)
                 continue
-            row.verified = bool(correct)
-            if not correct:
-                demoted.add(row.subject)
+            sim = _cosine(vectors[offset * 2], vectors[offset * 2 + 1])
+            if sim >= settings.CONCEPT_DEDUP_SIM_THRESHOLD:
+                obvious.add(index)
+            else:
+                unclear.append(index)
 
-        n = 0
-        for row in rows:
-            if row.subject in demoted and row.known == Known.KNOWN:
-                row.known = Known.HEARD
-                n += 1
-        return {"demoted_subjects": sorted(demoted), "demoted_items": n}
+        if not unclear:
+            return obvious
+        try:
+            raw = await solar_client.generate_json(
+                probe.build_agree_prompt(pairs=[pairs[i] for i in unclear]),
+                system=probe.COMPARE_SYSTEM,
+            )
+        except Exception as exc:  # noqa: BLE001 — 기본값이 "쓸 수 있다"다
+            _log.warning("정답 모순 검사 실패 — 그대로 쓴다: %s", exc)
+            return obvious | set(unclear)
+        conflict = {
+            unclear[i]
+            for i in (_as_index(x, len(unclear)) for x in (raw.get("conflict") or []))
+            if i is not None
+        }
+        if conflict:
+            _log.info("정답 버림 — 두 답이 모순: %s", [pairs[i][0] for i in conflict])
+        return obvious | (set(unclear) - conflict)
+
+    # ── 오답 만들기 ────────────────────────────────────────────
+    async def _choices_of(
+        self, usable: list[tuple[str, search.Item, str]]
+    ) -> dict[str, list[str]]:
+        """`{prereq_id: [쓸 만한 오답...]}`. 두 개 미만이면 안 들어간다."""
+        payload = [(row.item, answer) for _, row, answer in usable]
+        try:
+            raw = await solar_client.generate_json(
+                probe.build_distractor_prompt(items=payload),
+                system=probe.DISTRACTOR_SYSTEM,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _log.warning("오답 생성 실패: %s", exc)
+            return {}
+
+        candidates: dict[int, list[str]] = {}
+        for key, value in (raw.get("distractors") or {}).items():
+            index = _as_index(key, len(payload))
+            if index is None or not isinstance(value, list):
+                continue
+            texts = [str(x).strip() for x in value if str(x).strip()]
+            if texts:
+                candidates[index] = texts
+
+        kept = self._drop_bad(payload, candidates)
+        out: dict[str, list[str]] = {}
+        for index, texts in kept.items():
+            # 보기 3개는 돼야 찍기를 거른다.
+            if len(texts) >= 2:
+                out[usable[index][1].key] = texts
+        if len(kept) != len(candidates) or any(
+            len(v) != len(candidates[i]) for i, v in kept.items()
+        ):
+            # 문항이 왜 안 나왔는지 되짚는 유일한 자리다. 멀쩡할 땐 안 찍는다.
+            _log.info(
+                "오답 %s → %s",
+                {payload[i][0]: len(v) for i, v in sorted(candidates.items())},
+                {payload[i][0]: len(v) for i, v in sorted(kept.items())},
+            )
+        return out
+
+    @staticmethod
+    def _drop_bad(
+        payload: list[tuple[str, str]], candidates: dict[int, list[str]]
+    ) -> dict[int, list[str]]:
+        """보기를 다듬는다. **글자만 본다 — LLM도 임베딩도 안 부른다.**
+
+        하는 일은 셋뿐이다. `**강조`를 벗기고, 정답과 글자가 같은 보기를 빼고,
+        서로 겹치는 보기를 뺀다.
+
+        ## 왜 LLM에게 안 맡기나
+
+        "실수로 맞게 써진 보기가 있나"를 물었다. **3번에 1번 전부를 버렸다**
+        (실측). 묶음 하나면 3/3 깨끗한데 5~7묶음이면 가끔
+        `[[0,0],[0,1],...[4,4]]`로 뒤집혀 25개를 통째로 버리고, 그러면 그
+        라운드 문항이 전부 사라진다. 문구를 두 번 갈아엎어도 남았다.
+
+        ## 왜 유사도로 안 자르나
+
+        **좋은 오답일수록 정답과 닮는다.** 프롬프트가 "딱 한 군데만 틀리게"를
+        요구하니 나머지는 그대로 베껴 온다. 실측:
+
+            정답  ... 검색을 위한 소프트웨어 구조로, 사용자 또는 응용 프로그램과 ...
+            오답  ... 검색을 위한  하드웨어  구조로, 사용자 또는 응용 프로그램과 ...
+                                                              코사인 1.000
+
+        한 라운드에서 30개 중 28개가 0.94 이상이었다. 0.92로 자르면 **가장 좋은
+        오답부터 사라진다.** 반대로 문장을 통째로 다시 쓴 오답은 0.58~0.67로
+        내려간다 — 같은 모델이 실행마다 두 방식을 오간다. 문턱을 세울 자리가 없다.
+
+        ## 그럼 정답이 둘 되는 건 누가 막나
+
+        생성 프롬프트의 "말만 바꿔 옮기지 마라"와 여기의 글자 비교뿐이다.
+        뚫리면 맞은 사람이 틀린 판정을 받는다 — 그 방향은 **보강을 더 받는
+        쪽**이라 덜 해롭다. 진단 하나 때문에 라운드를 통째로 날리는 것보다 낫다.
+        """
+        out: dict[int, list[str]] = {}
+        for index, items in candidates.items():
+            answer = _plain(payload[index][1])
+            seen = {answer}
+            kept: list[str] = []
+            for text in items:
+                clean = _plain(text)
+                if not clean or clean in seen:
+                    continue
+                seen.add(clean)
+                kept.append(clean)
+            if kept:
+                # **정답과 길이가 비슷한 것부터 세운다.** 버리는 게 아니라
+                # 고르는 것이라 문항이 사라지지 않는다.
+                #
+                # 실측에서 오답이 정답에 절을 덧붙이는 식으로 나와 정답만 혼자
+                # 짧았다 — 내용을 몰라도 제일 짧은 걸 고르면 맞는다.
+                kept.sort(key=lambda t: abs(len(t) - len(answer)))
+                out[index] = kept
+        return out
+
+    # ── 채점 ───────────────────────────────────────────────────
+    def grade(self, course: Course, *, results: dict[uuid.UUID, bool]) -> dict:
+        """답을 반영하고 과목 판정을 한 칸 진행한다.
+
+        판정이 확정된 과목만 `known`을 쓴다. 진행 중에 건드리면 다음 라운드가
+        자기신고 대신 중간 결과를 읽게 되고, 보강 범위를 좁힐 근거가 사라진다.
+
+        `verified`는 **실제로 문항에 나간 항목만** True/False다. 나머지가 비어
+        있는 건 "안 물어봤다"는 뜻이고, 그 항목의 `known`은 과목 판정을 내린
+        값이지 그 항목을 잰 값이 아니다.
+        """
+        rows = {r.id: r for r in self._prereqs(course.id)}
+        graded = 0
+        for _, items in self._subject_states(course.id):
+            changed = False
+            for row in items:
+                key = uuid.UUID(row.key)
+                if key in results:
+                    search.apply(items, row.key, bool(results[key]))
+                    changed = True
+                    graded += 1
+            if not changed:
+                continue
+            search.finalize(items)
+            for row in items:
+                target = rows.get(uuid.UUID(row.key))
+                if target is not None:
+                    target.known = row.known
+                    target.verified = row.verified
+
+        remaining = sum(
+            1 for _, items in self._subject_states(course.id) if not search.done(items)
+        )
+        return {"graded": graded, "subjects_left": remaining}
 
     # ── ①③ 설정 저장 ────────────────────────────────────────
     def configure(

@@ -260,7 +260,11 @@ class PrereqAnswersIn(BaseModel):
 
 
 class ProbeOut(BaseModel):
-    """⑤ 확인 문항 하나. **정답은 우리가 정했고 LLM은 오답만 만들었다.**"""
+    """⑤ 확인 문항 하나. **정답은 우리가 정했고 LLM은 오답만 만들었다.**
+
+    한 번에 다 오지 않는다 — 답을 받아야 다음이 정해지는 계층 탐색이라,
+    화면은 **빈 배열이 올 때까지** `GET → POST`를 반복한다.
+    """
 
     prereq_id: uuid.UUID
     subject: str
@@ -276,7 +280,11 @@ class ProbeResultsIn(BaseModel):
 
 
 class ProbeGradeOut(BaseModel):
-    """틀리면 그 **과목 전체**를 heard로 낮춘다 — 표본으로 자기평가를 재는 것."""
+    """채점 결과. `subjects_left`가 0이면 진단이 끝났다.
 
-    demoted_subjects: list[str] = Field(default_factory=list)
-    demoted_items: int = 0
+    한 답이 구간을 통째로 정한다 — 순서가 있는 과목이라 맞힌 자리 아래는 전부
+    안다, 틀린 자리 위는 전부 모른다다.
+    """
+
+    graded: int = 0
+    subjects_left: int = 0
