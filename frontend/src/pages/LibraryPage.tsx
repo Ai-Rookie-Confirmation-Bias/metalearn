@@ -10,6 +10,7 @@ import {
   NotebookIcon,
   GraduationCapIcon,
   BookmarkIcon,
+  CompassIcon,
   WarningCircleIcon,
   type Icon,
 } from "@phosphor-icons/react";
@@ -26,6 +27,10 @@ import {
 } from "@/features/parsing/api/documents";
 import { useParsingDocuments } from "@/features/parsing/queries/useParsingDocuments";
 import { usePendingUploads } from "@/features/parsing/store";
+import {
+  useDraftCourses,
+  type DraftView,
+} from "@/features/course/useDraftCourses";
 
 // 커버(색+아이콘)는 표현 계층. docId로 파생해 책장 안에서 안 겹치게.
 type Cover = { grad: string; icon: Icon };
@@ -100,7 +105,17 @@ function ContinueBanner({ doc }: { doc: DocumentOut }) {
   );
 }
 
-function BookCard({ doc, cover }: { doc: DocumentOut; cover: Cover }) {
+function BookCard({
+  doc,
+  cover,
+  needsDiagnostic,
+}: {
+  doc: DocumentOut;
+  cover: Cover;
+  /** 수업인데 아직 진단을 안 했다. 진단이 목차 앞에 보강 단원을 넣으므로
+   *  **학습보다 먼저** 권한다 — 나중에 하면 이미 읽은 단원 앞에 끼워진다. */
+  needsDiagnostic?: boolean;
+}) {
   const done = sectionsDone(doc);
   const progress = Math.round(doc.readiness * 100);
   const started = done > 0;
@@ -147,12 +162,88 @@ function BookCard({ doc, cover }: { doc: DocumentOut; cover: Cover }) {
           <div className="mb-4 text-[0.85rem] text-text-tertiary">아직 시작하지 않았어요</div>
         )}
 
-        <Link
-          to={learnPath(doc.docId)}
-          className="mt-auto inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
+        {needsDiagnostic ? (
+          <div className="mt-auto flex flex-col gap-2">
+            <Link
+              to={`/diagnostic/${encodeURIComponent(doc.docId)}`}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-accent px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
+            >
+              <CompassIcon weight="fill" />
+              진단 시작하기
+            </Link>
+            <Link
+              to={learnPath(doc.docId)}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-border-primary px-5 py-2.5 text-[0.85rem] font-medium text-text-secondary transition-colors hover:bg-bg-secondary"
+            >
+              건너뛰고 학습하기
+            </Link>
+          </div>
+        ) : (
+          <Link
+            to={learnPath(doc.docId)}
+            className="mt-auto inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
+          >
+            {cta}
+          </Link>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 자료는 다 올렸는데 아직 수업이 안 된 것. 파싱이 끝나야 만들 수 있다. */
+function DraftCard({ draft, cover }: { draft: DraftView; cover: Cover }) {
+  const total = draft.docIds.length;
+  const done = draft.statuses.filter((s) => s === "ready").length;
+  const broken = draft.failed || Boolean(draft.error);
+  const message = draft.error
+    ? draft.error
+    : draft.failed
+      ? "자료 분석에 실패한 파일이 있어요."
+      : draft.creating
+        ? "수업으로 묶는 중…"
+        : `자료 ${done}/${total}개 분석 완료`;
+
+  return (
+    <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm">
+      <div
+        className={
+          broken
+            ? "relative flex h-[140px] items-center justify-center bg-gradient-to-br from-[#7f1d1d] to-[#b91c1c] text-white"
+            : `relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`
+        }
+      >
+        {broken ? (
+          <WarningCircleIcon weight="fill" className="text-[3.5rem] opacity-90" />
+        ) : (
+          <span className="h-9 w-9 animate-spin rounded-full border-[3px] border-white/40 border-t-white" />
+        )}
+      </div>
+      <div className="flex flex-1 flex-col p-6">
+        <h4 className="mb-1 truncate text-[1.125rem] font-bold leading-snug text-text-primary">
+          {draft.title}
+        </h4>
+        <p
+          className={`mb-6 flex-1 text-[0.9rem] ${broken ? "text-red-600" : "text-text-secondary"}`}
         >
-          {cta}
-        </Link>
+          {message}
+        </p>
+        {!broken && (
+          <div className="mb-4">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-bg-secondary">
+              <div
+                className="h-full rounded-full bg-accent transition-all"
+                style={{ width: `${total ? Math.round((done / total) * 100) : 0}%` }}
+              />
+            </div>
+            <p className="mt-1.5 text-[0.75rem] text-text-tertiary">
+              분석이 끝나면 수업으로 묶어드려요.
+            </p>
+          </div>
+        )}
+        <div className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
+          {broken ? "확인이 필요해요" : "준비 중…"}
+        </div>
       </div>
     </div>
   );
@@ -258,6 +349,14 @@ export function LibraryPage() {
 
   const parsing = useParsingDocuments(pending.map((p) => p.docId));
 
+  // 초안 → 코스. 자료가 전부 ready가 되면 여기서 POST /courses가 나간다.
+  const drafts = useDraftCourses();
+  const waitingDrafts = drafts.filter((d) => !d.courseId);
+  // 이 코스는 아직 진단을 안 했다 → 카드에 "진단 시작하기"를 띄운다.
+  const undiagnosed = new Set(
+    drafts.filter((d) => d.courseId && !d.diagnosed).map((d) => d.courseId as string),
+  );
+
   const ready = docs
     .map((q) => q.data)
     .filter((d): d is DocumentOut => Boolean(d));
@@ -288,12 +387,23 @@ export function LibraryPage() {
     .filter((d) => sectionsDone(d) > 0 && !d.complete)
     .sort((a, b) => b.readiness - a.readiness)[0];
 
+  // 초안에 묶인 자료는 초안 카드가 대신 보여준다 — 같은 파일이 두 장으로
+  // 뜨면 몇 개를 올렸는지 셀 수 없다.
+  const inDraft = new Set(waitingDrafts.flatMap((d) => d.docIds));
+  const loosePending = pending.filter((p) => !inDraft.has(p.docId));
+
   const coverById = assignCovers([
-    ...pending.map((p) => p.docId),
+    ...waitingDrafts.map((d) => d.id),
+    ...loosePending.map((p) => p.docId),
     ...ready.map((d) => d.docId),
   ]);
 
-  const empty = !isLoading && !isError && ready.length === 0 && pending.length === 0;
+  const empty =
+    !isLoading &&
+    !isError &&
+    ready.length === 0 &&
+    pending.length === 0 &&
+    waitingDrafts.length === 0;
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-12 py-12">
@@ -355,12 +465,18 @@ export function LibraryPage() {
                 <p className="text-[0.9rem] text-text-secondary">새 자료를 책장에 꽂아보세요.</p>
               </button>
 
-              {pending.map((p, i) => (
+              {waitingDrafts.map((d) => (
+                <DraftCard key={d.id} draft={d} cover={coverById.get(d.id) ?? COVERS[0]} />
+              ))}
+
+              {loosePending.map((p) => (
                 <PendingCard
                   key={p.docId}
                   filename={p.filename}
-                  doc={parsing[i]?.data}
-                  unreachable={Boolean(parsing[i]?.isError)}
+                  doc={parsing[pending.findIndex((q) => q.docId === p.docId)]?.data}
+                  unreachable={Boolean(
+                    parsing[pending.findIndex((q) => q.docId === p.docId)]?.isError,
+                  )}
                   cover={coverById.get(p.docId) ?? COVERS[0]}
                   onDismiss={() => dropPending(p.docId)}
                 />
@@ -371,6 +487,7 @@ export function LibraryPage() {
                   key={doc.docId}
                   doc={doc}
                   cover={coverById.get(doc.docId) ?? COVERS[0]}
+                  needsDiagnostic={undiagnosed.has(doc.docId)}
                 />
               ))}
             </div>

@@ -327,14 +327,9 @@ class DiagnosticService:
             for subject, row in targets
             if answers.get(row.key)
         ]
-        if not usable:
-            # 정답을 하나도 못 세웠다. 이 라운드는 문항 없이 끝난다 —
-            # 못 낸 항목은 자기신고가 그대로 남는다(§_answers_of).
-            _log.info("확인 문항 없음 — 정답을 세우지 못함 (%s)", course.title)
-            self._give_up(targets)
-            return []
-
-        choices = await self._choices_of(usable)
+        # 정답을 하나도 못 세웠으면 오답을 만들 것도 없다. 빈 목록으로 부르면
+        # 항목 0개짜리 프롬프트가 나가므로 그때만 건너뛴다.
+        choices = await self._choices_of(usable) if usable else {}
         out: list[Question] = []
         for subject, row, answer in usable:
             options = choices.get(row.key)
@@ -353,11 +348,16 @@ class DiagnosticService:
                 )
             )
 
+        # **문항을 못 낸 것을 적는 자리는 여기 하나뿐이다.** 예전엔 "정답을 하나도
+        # 못 세운" 경우를 따로 빠져나가면서 같은 함수를 다른 모양으로 불렀고,
+        # 그 경로만 안 지나가다가 실제로 터졌다(ValueError: expected 3, got 2).
         made = {str(q.prereq_id) for q in out}
         self._give_up(
             [(s, t, "정답 없음" if not answers.get(t.key) else "오답 없음")
              for s, _, t in pending if t.key not in made]
         )
+        if not out:
+            _log.info("확인 문항 없음 — 이 라운드는 빈손이다 (%s)", course.title)
         return out
 
     def _subject_states(

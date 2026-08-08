@@ -2,6 +2,10 @@
  * 수업 생성(Create Course) 위저드 — 모델 B(진단 분리).
  *   STEP 1 메인 자료 → STEP 2 추가 자료(선택) → STEP 3 목표 → 책장으로.
  * 진단(바닥 찾기)은 여기 없음: 책장 카드의 "진단 시작하기"에서 별도.
+ *
+ * 마지막에 만드는 건 코스가 아니라 **초안**이다(features/course/store.ts).
+ * 코스는 자료가 전부 ready여야 만들 수 있고 파싱이 분 단위라, 그 사이에
+ * 사용자를 붙잡아 두지 않는다. 초안을 코스로 바꾸는 건 책장이 한다.
  * 참고 원본: UXUI_ANT/create_course.html · 스키마: docs/SCHEMA.md
  *
  * 파일은 **고르는 순간 서버로 올라간다.** 마지막에 몰아 올리면 사용자가 목표를
@@ -28,6 +32,7 @@ import {
 
 import { ACCEPT_EXTENSIONS, uploadDocument } from "@/features/parsing/api/documents";
 import { usePendingUploads } from "@/features/parsing/store";
+import { useCourseDrafts } from "@/features/course/store";
 import type {
   DocumentKind,
   Material,
@@ -242,6 +247,7 @@ function MaterialRow({
 export function CreateCoursePage() {
   const navigate = useNavigate();
   const addPending = usePendingUploads((s) => s.add);
+  const addDraft = useCourseDrafts((s) => s.add);
 
   const [step, setStep] = useState(0); // 0 메인 / 1 추가 / 2 목표
   const [primaries, setPrimaries] = useState<Material[]>([]);
@@ -312,12 +318,20 @@ export function CreateCoursePage() {
       setStep((s) => s + 1);
       return;
     }
-    // 파일은 이미 서버에 있다. 여기서 하는 건 "책장아, 이것들 지켜봐"뿐이다 —
-    // 커리큘럼 목록은 ready인 문서만 주므로 그전까지는 이 목록이 유일한 단서다.
+    // 파일은 이미 서버에 있다. 여기서 코스를 만들지는 **못한다** — 서버가
+    // 그 자리에서 뼈대의 목차를 복사하고 밀도로 역할을 정하는데, 둘 다 파싱이
+    // 끝나야 생기는 값이라 지금 부르면 목차 0개짜리 코스가 만들어진다.
     //
-    // ⚠️ 목표(purpose)와 메인/추가 구분은 아직 서버로 안 간다. POST /courses가
-    //    받을 자리는 있지만 코스 목록 API가 없어 책장이 자료 단위로 돈다.
+    // 그래서 초안만 남기고 나간다. 책장이 파싱을 지켜보다가 전부 ready가 되면
+    // 그때 POST /courses를 부른다(§LibraryPage).
+    const docIds = accepted.map((m) => m.docId as string);
     addPending(accepted.map((m) => ({ docId: m.docId as string, filename: m.name })));
+    addDraft({
+      id: nextId(),
+      title: (primaries.find((m) => m.docId) ?? accepted[0]).name,
+      docIds,
+      purpose: purpose as Purpose,
+    });
     navigate("/library");
   };
 

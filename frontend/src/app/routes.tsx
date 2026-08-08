@@ -10,6 +10,7 @@ import { LibraryPage } from "@/pages/LibraryPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
+import { DiagnosticPage } from "@/pages/DiagnosticPage";
 import { ParsingDebugPage } from "@/pages/ParsingDebugPage";
 import { CurriculumLayout } from "@/pages/CurriculumLayout";
 import { CurriculumPage } from "@/pages/CurriculumPage";
@@ -71,6 +72,9 @@ export const router = createBrowserRouter([
   },
   // 수업 생성 위저드 — 셸 없는 전체화면 집중 플로우
   { path: "/create", element: <CreateCoursePage /> },
+  // 진단 — 위저드와 같은 이유로 셸 밖이다. 코스가 있어야 열리므로
+  // 책장 카드에서만 들어온다(§LibraryPage).
+  { path: "/diagnostic/:courseId", element: <DiagnosticPage /> },
   // 파싱 단계별 실행기 (개발용) — 셸 없이 단독. 배포 시 제외 대상.
   { path: "/debug/parsing", element: <ParsingDebugPage /> },
 ]);
