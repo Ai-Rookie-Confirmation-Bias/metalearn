@@ -5,12 +5,20 @@
 
 ```
 integration
-  ├ seedParsec        2812be7   파싱 (박지성)
-  ├ feat/curriculum   5fbcfd7   학습 커리큘럼 (윤현석)
-  └ feat/quiz-create  70dcbb4   문제은행 (소민섭)
+  ├ seedParsec        파싱 (박지성)
+  ├ feat/curriculum   학습 커리큘럼 (윤현석)
+  ├ feat/quiz-create  문제은행 (소민섭)
+  ├ feat/quiz-pro3    문제은행 pro3 전환 (소민섭, 08-07)
+  └ (직접 커밋)        업로드 화면 · 로그인 · 내 책장 (윤현석, 08-07)
 ```
 
 각자 브랜치는 그대로 두고 여기서 합친다. **`feat/problems`는 구형이라 안 넣었다.**
+
+🔴 **아직 안 붙은 것: `feat/course-to-curriculum`** (박지성, 08-07)
+코스→학습 연결 · 진단(항목 24) · 교재 활용률 재측정. **커리큘럼 파일 넷을 건드리고
+(`adapters/course_tree.py` 신규 · `bridge.py` · `router.py` · `store.py`), alembic
+`0009_diagnostic`이 우리 `0009_users`와 리비전 번호가 겹친다** — 붙일 때 한쪽을
+`0010`으로 내려야 한다. 경계(진단 소유·조각을 통째로 넘기기)를 먼저 이야기할 것.
 
 ---
 
@@ -31,7 +39,7 @@ DB       localhost:5432  (postgres/dev, DB명 metalearn_v3)
 확인:
 ```bash
 docker compose exec backend uv run alembic current          # 0009 (head)
-docker compose exec backend uv run --group dev pytest -q    # 268 passed
+docker compose exec backend uv run --group dev pytest -q    # 282 passed
 docker compose exec frontend pnpm exec tsc --noEmit         # 통과
 ```
 
@@ -58,7 +66,8 @@ Google        /create                    └─> 문제은행 ✅ API ──❌�
 ```
 파싱   목차 4 · 조각 15 · 문장 317 · 개념 134 · 근거 100% · 미배정 0
 학습   화면 43 · 원문없음 0 · 화면 생성 5.5초 · 채점 → 준비도 → 복습 큐
-문제   from-parsing 213초 → 저장 3 · 폐기 55 · 세션 → 채점 → 근거 원문 반환
+문제   from-parsing 888초 → 저장 158 · 폐기 200 (저장률 44%) · 세션 → 채점 → 근거 원문
+       ↑ pro3 전환 후. 전환 전엔 213초 · 저장 3(5%)였다 — QUIZ_TUNING §12.7
 ```
 
 ### ① 업로드 — 08-07에 이었다
@@ -146,7 +155,7 @@ dev 유저에 붙어 있고, 로그인하면 그와 다른 계정이 된다. 이
 
 ---
 
-## 3. 실제로 도는 API (35개)
+## 3. 실제로 도는 API (36개)
 
 ⚠️ `docs/API.md`는 **2026-07-03 문서**라 피벗 전 설계다. 실제로 도는 건 이 표다.
 
@@ -193,12 +202,16 @@ POST   .../prewarm?limit=N                                미리 생성 (데모 
 
 ### 문제은행
 ```
-POST   /api/courses/{cid}/quiz/from-parsing/{did}?budget=N   ★파싱 문서로 은행 생성
-POST   /api/courses/{cid}/quiz/generate                      파싱 JSON을 바디로 받는 구 경로
+POST   /api/courses/{cid}/quiz/from-parsing/{did}?budget=N   ★파싱 문서로 은행 생성 접수 (202)
+GET    /api/courses/{cid}/quiz/from-parsing/{did}/status     생성 상태 폴링 (idle|running|done|failed)
+POST   /api/courses/{cid}/quiz/generate                      파싱 JSON을 바디로 받는 구 경로 (동기)
 GET    /api/courses/{cid}/quiz                               문서·목차별 문항 수
 POST   /api/courses/{cid}/quiz/session                       범위 골라 문항 받기(정답 제외)
 POST   /api/quiz/attempts                                    채점 → 정답·해설·근거 원문
 ```
+★ from-parsing은 08-07에 **202 접수 + 폴링**으로 바뀌었다 — 실데이터 생성이
+888초라 동기로 붙잡으면 타임아웃 난다. 업로드→파싱 폴링과 같은 사용법.
+`saved`·`discarded`는 폴링 응답의 `done` 상태에서 온다. 진행 중 재접수는 409.
 
 ⚠️ **표기가 갈린다.** curriculum은 camelCase(`docId`·`sectionId`), quiz는
 snake_case(`toc_index`·`course_id`). 프론트가 둘을 같이 쓰면 걸린다. **정해야 한다.**
@@ -230,21 +243,20 @@ integration에서만 고쳤다. 그쪽에서 새로 빌드하거나 볼륨을 �
 `user_documents.user_id`에 이제 FK가 걸린다(`fk_user_documents_user`, 0009).
 `models.py`의 "users 테이블이 아직 없어 FK를 걸지 않는다" 주석은 지웠다.
 
-### 소민섭(문제은행) — 🔴 모델 결정이 필요하다
+### 소민섭(문제은행) — ✅ 모델 결정 끝났다 (08-07)
 
-`solar.py`를 합치며 quiz 호출이 `solar-pro2`(하드코딩)에서 `solar-pro3`로 넘어갔고
-**문항이 0개가 됐다.** 호출은 성공하고 응답도 온다 — 출력 형태가 다르다:
+넘겼던 pro2/pro3 판단을 **실측으로 풀었다.** `QUIZ_CHAT_MODEL = "solar-pro3"`.
 
 ```
-solar-pro2   ```json [ {...}, {...} ] ```   배열+코드펜스 → 파싱 4개
-solar-pro3   {...}{...}                     객체 이어붙임 → 파싱 0개
+통합 직후   pro3에서 문항 0개 — 파서가 배열만 읽는데 pro3는 객체를 이어붙인다
+지금        json_object 래퍼 계약 + 파서 재구성 (QUIZ_TUNING §12)
+            스모크 19회차   저장 21 / 폐기 21   ← pro2 기준(11) 초과
+            실데이터 22회차  저장 158 / 폐기 200 (44%)
 ```
 
-QUIZ_TUNING의 실측이 전부 pro2 기준이라 **`QUIZ_CHAT_MODEL="solar-pro2"`로 못박아
-뒀다**(`core/config.py`). pro3로 옮기려면 프롬프트·파서·품질 실측을 다시 해야 하니
-판단해 주세요.
+생성 API도 **202 접수 + 폴링**으로 바꿨다(888초라 동기로는 타임아웃). 3번 표 참고.
 
-그 외:
+⚠️ 아래 항목들은 그 전에 통합에서 고친 것들이라 기록으로 남긴다:
 - `ExaoneClient`가 `LLMClient` 추상 메서드 둘을 안 채워 **앱 전체가 안 떴다.**
   `generate_json`·`embed_batch`를 추상에서 내리고 기본 구현이 거절하게 바꿨다
   (심판 전용 모델에 임베딩 배치를 강제할 이유가 없다).
@@ -252,11 +264,9 @@ QUIZ_TUNING의 실측이 전부 pro2 기준이라 **`QUIZ_CHAT_MODEL="solar-pro2
   (`if chunk.sentences and …`라 빈 배열이면 검사를 건너뜀). 하드 실패로 바꿨다.
 - 파싱 tree → `ParsedDocument` 변환기를 `features/quiz/adapters/parsing_tree.py`에
   뒀다. QUIZ_INPUT.md 계약 그대로다.
-- 🔴 **저장 3 / 폐기 55.** 사유 대부분이 "원문에서 근거 문장을 찾지 못함"으로
-  **선별 단계**에서 걸린 것이다(개념 134 중 출제가능 90). 이번 연결이 만든 회귀는
-  아니지만(pro2 단독 실행과 동일) 품질은 봐주셔야 합니다.
-- `docs/WORKLOG.md`(문제은행)와 `docs/WORK_LOG.md`(학습)가 **한 글자 차이로 공존**한다.
-  이름을 바꾸든 합치든 정하는 게 좋겠다.
+- ~~저장 3 / 폐기 55~~ → **저장률 5% → 44%.** 위 pro3 재구성으로 해소됐다.
+- 🟡 `docs/WORKLOG.md`(문제은행)와 `docs/WORK_LOG.md`(학습)가 **한 글자 차이로 공존**한다.
+  이름을 바꾸든 합치든 정하는 게 좋겠다. (미정)
 
 ### 다 같이 정할 것
 
@@ -284,8 +294,10 @@ QUIZ_TUNING의 실측이 전부 pro2 기준이라 **`QUIZ_CHAT_MODEL="solar-pro2
 | `[dependency-groups]` ×2 | 서로 다른 줄에 각자 추가 | TOML 중복 테이블 → uv 사망 |
 | `ExaoneClient` | 코드가 안 겹쳤다 | import 시점 TypeError → **앱 전체 사망** |
 | `solar-pro2` → `pro3` | solar.py를 한쪽으로 골랐다 | quiz 문항 0개. 호출은 성공 |
+| 문서의 숫자 | 문장이 안 겹쳐 그대로 남는다 | `268 passed`·`저장 3`·`35개`가 전부 낡음 |
 
 ⇒ **병합 후엔 반드시 띄워서 한 바퀴 돌린다.** diff가 깨끗한 것과 도는 것은 다르다.
+⇒ 그리고 **문서의 실측 숫자를 다시 재서 적는다.** 코드가 합쳐져도 숫자는 안 합쳐진다.
 
 ---
 

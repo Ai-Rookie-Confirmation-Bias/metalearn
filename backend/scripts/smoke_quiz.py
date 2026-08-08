@@ -66,6 +66,14 @@ async def main(n_chunks: int, budget: int, verifier: str = "solar") -> None:
     for d in result.discarded:
         print(f"  ✗ {d}")
 
+    if result.discarded_items:
+        print(f"\n{'=' * 60}\n폐기 문항 내용 ({len(result.discarded_items)}건):")
+        for i, d in enumerate(result.discarded_items):
+            print(f"\n{'─' * 60}")
+            print(f"✗[{i + 1}] {d['type']} · {d['concept']}")
+            print(f"사유: {d['reason']}")
+            print(json.dumps(d["data"], ensure_ascii=False, indent=2))
+
     for i, r in enumerate(MemRepo.rows):
         print(f"\n{'─' * 60}")
         print(f"[{i + 1}] {r.type} · {r.concept_name} · 난이도 {r.difficulty} · 목차 {r.toc_index}")

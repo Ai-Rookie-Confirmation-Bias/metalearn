@@ -13,13 +13,20 @@ from app.features.quiz.schemas import ChunkWorkOrder, GeneratedItem, ParsedChunk
 
 
 def parse_generation_response(raw: str) -> list[GeneratedItem]:
-    """LLM 응답 → 문항 목록. 스키마에 안 맞는 문항은 개별 폐기 (전체 실패 아님)."""
-    data = _parsing.extract_json(raw)
-    if not isinstance(data, list):
+    """LLM 응답 → 문항 목록. 스키마에 안 맞는 문항은 개별 폐기 (전체 실패 아님).
+
+    `{"items":[...]}` 래퍼·단일 객체·이어붙임 전부 extract_list가 정규화한다."""
+    data = _parsing.extract_list(raw)
+    if data is None:
         return []
     items: list[GeneratedItem] = []
     for entry in data:
         try:
+            # pro3 편차: evidence를 최상위가 아니라 data 안에 넣는 경우가 있다
+            # (17회차 실측 — "근거 문장 번호 없음"으로 억울 폐기되던 패턴)
+            if "evidence" not in entry and isinstance(entry.get("data"), dict):
+                if "evidence" in entry["data"]:
+                    entry["evidence"] = entry["data"].pop("evidence")
             entry["evidence_sentence_ids"] = _sentence_ids(entry.pop("evidence", []))
             items.append(GeneratedItem.model_validate(entry))
         except (ValidationError, TypeError, KeyError, AttributeError):
@@ -44,6 +51,55 @@ def _sentence_ids(evidence) -> list[int]:
         elif isinstance(e, str) and (m := re.fullmatch(r"s?(\d+)", e.strip())):
             ids.append(int(m.group(1)))
     return ids
+
+
+def build_cloze_segments(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
+    """cloze 픽(문장 번호+정답 용어) → segments 조립. 불량 사유 반환, None = 성공.
+
+    pro3 네이티브 재구성 ① (QUIZ_TUNING §12): LLM은 "어느 문장에서 어떤 용어를
+    비울지"만 고르고, 지문 자르기·빈칸 뚫기·정답 노출 방지는 코드가 결정적으로
+    한다. pro3의 cloze 구조 불량(원문 통째+빈칸 덧붙임·정답 노출·기호 빈칸)을
+    생성 단계에서 원천 제거. 구형 segments 응답은 그대로 통과(기존 검사 경로).
+    """
+    d = item.data
+    if "segments" in d:
+        return None  # 이미 조립된 형태 — 기존 기계 검사가 판정
+
+    answer = str(d.get("answer", "")).strip()
+    if not answer:
+        return "cloze 정답 용어 없음"
+
+    sids = _sentence_ids([d.get("sentence")]) if d.get("sentence") is not None else []
+    sid = sids[0] if sids else (
+        item.evidence_sentence_ids[0] if item.evidence_sentence_ids else None
+    )
+    if sid is None or not (0 <= sid < len(chunk.sentences)):
+        return "cloze 빈칸 문장 번호 불량"
+
+    anchor = chunk.sentences[sid]
+    sentence = chunk.raw_text[anchor.start : anchor.end].strip()
+    count = sentence.count(answer)
+    if count == 0:
+        return f"cloze 정답 '{answer}'이 지정 문장에 글자 그대로 없음"
+    if count > 1:
+        return f"cloze 정답 '{answer}'이 문장에 {count}번 등장 (빈칸 위치 모호)"
+
+    before, _, after = sentence.partition(answer)
+    aliases = [str(a) for a in d.get("aliases", []) if str(a).strip()]
+    segments: list[dict] = []
+    if before.strip():
+        segments.append({"kind": "text", "text": before})
+    segments.append({"kind": "blank", "answer": answer, "aliases": aliases})
+    if after.strip():
+        segments.append({"kind": "text", "text": after})
+    if len(segments) < 2:
+        return "cloze 지문이 빈칸뿐 (문장 전체가 정답)"
+
+    item.data = {"segments": segments}
+    # 빈칸 문장은 근거에 포함시킨다 (근거 표시·검증이 이 문장을 봐야 함)
+    if sid not in item.evidence_sentence_ids:
+        item.evidence_sentence_ids = sorted({*item.evidence_sentence_ids, sid})
+    return None
 
 
 def evidence_ids_reason(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
