@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -49,9 +50,11 @@ class CourseOut(BaseModel):
 class PrereqOut(BaseModel):
     """이 코스를 시작하기 전에 알아야 하는 것 한 줄.
 
-    status가 셋인 이유 — 문턱(0.49)이 표본 21개로 잰 값이라 경계 양옆은
-    단정하지 않는다. 화면은 pass를 그냥 보여주고 gray는 "자료에 조금 나옴"으로
-    표시하며 rejected는 숨긴다(디버그로만 본다).
+    status가 셋인 이유 — 유사도는 "비슷한 이름의 개념이 있나"를 재지 "이걸
+    가르치나"를 못 잰다. 확실한 양 끝(0.75 이상 기각 / 0.50 미만 통과)만 임베딩이
+    가르고 가운데는 LLM에게 묻되, **LLM은 항목을 지우지 못한다**(gray로만 표시).
+    화면은 pass를 그냥 보여주고 gray는 "자료에 조금 나옴"으로 표시하며 rejected는
+    숨긴다(디버그로만 본다).
     """
 
     model_config = ConfigDict(from_attributes=True)
@@ -92,12 +95,22 @@ class BodyRefOut(BaseModel):
 
 
 class BodySegmentOut(BaseModel):
+    """원문 조각 하나. **자르지 않고 통째로 준다.**
+
+    어느 자료 것인지 밝힌다 — 단원 하나에 뼈대 조각과 본문 조각이 함께 들어오고,
+    화면이 "AI가 지어낸 게 아니라 이 책의 이 쪽"을 보이려면 출처가 있어야 한다.
+    """
+
     id: uuid.UUID
     seq: int
     heading: str | None = None
     content: str
     page_from: int | None = None
     page_to: int | None = None
+    document_id: uuid.UUID | None = None
+    filename: str | None = None
+    # skeleton | body — 목차 순서를 정한 자료인가, 설명을 대는 자료인가.
+    role: str = "skeleton"
 
 
 class CourseConceptOut(BaseModel):
@@ -126,6 +139,11 @@ class CourseTopicNode(BaseModel):
     plan: str
     # 복사 원본(doc_topics). 보강 단원은 없으므로 NULL.
     source_topic_id: uuid.UUID | None = None
+    # 이 단원이 뼈대 자료의 몇 쪽인가. 조각들의 범위를 그대로 합친 값이고
+    # 추정하지 않는다 — 화면이 "p.51-53"으로 원문을 짚어줄 때 쓴다.
+    # 보강 단원은 원본이 없으므로 둘 다 NULL이다.
+    page_from: int | None = None
+    page_to: int | None = None
     concepts: list[CourseConceptOut] = Field(default_factory=list)
     segments: list[BodySegmentOut] = Field(default_factory=list)
 
@@ -160,3 +178,105 @@ class GapOut(BaseModel):
     # 단원 수가 많을수록 "여러 군데서 필요한 기초" → 보강 단원 값어치가 크다.
     refs: int
     topics: int
+
+
+# ── 24 진단 ──────────────────────────────────────────────────────
+
+
+class PrereqItemOut(BaseModel):
+    """진단 화면이 물어볼 항목 하나."""
+
+    id: uuid.UUID
+    item: str
+    why: str | None = None
+    # pass | gray — rejected는 애초에 안 내려간다(자료가 이미 가르친다).
+    status: str
+    known: str | None = None
+
+
+class PrereqSubjectOut(BaseModel):
+    subject: str
+    # 하위 항목 사이 순서가 강제되면 보강 '단원', 아니면 한 '꼭지'.
+    ordered: bool
+    items: list[PrereqItemOut] = Field(default_factory=list)
+
+
+class DiagnosticSetupOut(BaseModel):
+    """진단 화면 ①~④에 필요한 것 전부. LLM을 안 부르므로 즉시 뜬다."""
+
+    course_id: uuid.UUID
+    # 12.5가 판정한 분야. 화면 ②가 이걸 확인받는다 — 자동 검증이 없는 값이라
+    # 여기가 유일한 검증 창구다.
+    field: str | None = None
+    documents: list[str] = Field(default_factory=list)
+    goal: str | None = None
+    deadline_weeks: int | None = None
+    style: str | None = None
+    diagnosed_at: datetime | None = None
+    subjects: list[PrereqSubjectOut] = Field(default_factory=list)
+
+
+class DiagnosticCardsOut(BaseModel):
+    """③ 같은 개념을 네 형식으로. 고른 것이 `style`이 된다.
+
+    ⚠️ 화면 문구는 "당신에게 맞는 학습법"이 아니라 **"어떤 설명이 읽기 편한가"**
+    여야 한다. 스타일 맞춤에 학습 효과 근거는 없다(Pashler 2008) — 이건 성취가
+    아니라 이탈을 막는 장치다.
+    """
+
+    concept: str | None = None
+    # metaphor | definition | table | why. 생성이 실패하면 빈 dict다.
+    cards: dict[str, str] = Field(default_factory=dict)
+
+
+class DiagnosticConfigIn(BaseModel):
+    # exam | work | interest
+    goal: str | None = None
+    deadline_weeks: int | None = None
+    # metaphor | definition | table | why
+    style: str | None = None
+
+
+class SubjectAnswersIn(BaseModel):
+    """④-1 과목 단위 답. `{과목명: known|heard|unknown}`."""
+
+    answers: dict[str, str]
+
+
+class SubjectAnswersOut(BaseModel):
+    """펼쳐서 더 물어야 할 과목 — "들어봤다"라고 한 것들.
+
+    아는 것과 모르는 것은 더 물어도 얻을 게 없다. 애매한 것만 갈라낸다.
+    """
+
+    expand: list[str] = Field(default_factory=list)
+    setup: DiagnosticSetupOut
+
+
+class PrereqAnswersIn(BaseModel):
+    """④-2 펼친 과목의 항목별 답. `{prereq_id: known|heard|unknown}`."""
+
+    answers: dict[uuid.UUID, str]
+
+
+class ProbeOut(BaseModel):
+    """⑤ 확인 문항 하나. **정답은 우리가 정했고 LLM은 오답만 만들었다.**"""
+
+    prereq_id: uuid.UUID
+    subject: str
+    item: str
+    stem: str
+    choices: list[str] = Field(default_factory=list)
+    answer_index: int
+
+
+class ProbeResultsIn(BaseModel):
+    # {prereq_id: 맞았나}
+    results: dict[uuid.UUID, bool]
+
+
+class ProbeGradeOut(BaseModel):
+    """틀리면 그 **과목 전체**를 heard로 낮춘다 — 표본으로 자기평가를 재는 것."""
+
+    demoted_subjects: list[str] = Field(default_factory=list)
+    demoted_items: int = 0

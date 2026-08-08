@@ -206,6 +206,17 @@ class CourseService:
         self.db.commit()
         return sorted(rows, key=lambda r: (r.subject, r.seq))
 
+    @staticmethod
+    def _roles(course: Course) -> tuple[uuid.UUID | None, list[uuid.UUID]]:
+        """뼈대 하나와 나머지 본문들. 뼈대가 지정 안 됐으면 첫 자료가 뼈대다."""
+        document_ids = [cd.document_id for cd in course.documents]
+        skeleton_id = next(
+            (cd.document_id for cd in course.documents
+             if cd.role == MaterialRole.SKELETON.value),
+            document_ids[0] if document_ids else None,
+        )
+        return skeleton_id, [d for d in document_ids if d != skeleton_id]
+
     async def tree(self, course_id: uuid.UUID, *, force_link: bool = False) -> CourseTree:
         """18 — **뼈대 목차 순서 + 본문 자료 설명.** 이 서비스가 하려는 것의 본체.
 
@@ -213,19 +224,27 @@ class CourseService:
         있어서 같은 두 책을 쓰는 다음 사람은 계산이 없다.
         """
         course = self.get(course_id)
-        document_ids = [cd.document_id for cd in course.documents]
-        skeleton_id = next(
-            (cd.document_id for cd in course.documents
-             if cd.role == MaterialRole.SKELETON.value),
-            document_ids[0] if document_ids else None,
-        )
-        body_ids = [d for d in document_ids if d != skeleton_id]
+        skeleton_id, body_ids = self._roles(course)
 
         linker = link.ConceptLinker(self.db)
         for other in body_ids:
             await linker.link_pair(skeleton_id, other, force=force_link)
         self.db.commit()
 
+        return CourseTreeBuilder(self.db).build(
+            course, skeleton_id=skeleton_id, body_ids=body_ids
+        )
+
+    def tree_stored(self, course_id: uuid.UUID) -> CourseTree:
+        """`tree()`와 같되 **연결을 새로 계산하지 않는다.**
+
+        이미 저장된 `concept_links`만 읽으므로 동기이고 LLM을 안 부른다.
+        동기 자리(학습 화면의 딥링크 폴백)에서 쓴다 — 거기서는 연결이 하나
+        덜 붙는 것보다 화면이 안 뜨는 게 훨씬 나쁘다. 아직 한 번도 연결한
+        적이 없으면 본문 없이 뼈대만 나오고, 다음 `tree()` 호출이 채운다.
+        """
+        course = self.get(course_id)
+        skeleton_id, body_ids = self._roles(course)
         return CourseTreeBuilder(self.db).build(
             course, skeleton_id=skeleton_id, body_ids=body_ids
         )

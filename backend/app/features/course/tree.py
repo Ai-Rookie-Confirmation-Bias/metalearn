@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from collections import defaultdict
+from collections import Counter, defaultdict
 
 from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
@@ -29,7 +29,13 @@ from app.features.course.schemas import (
     CourseTopicNode,
     CourseTree,
 )
-from app.features.parsing.models import Concept, ConceptLink, Document, DocSegment
+from app.features.parsing.models import (
+    Concept,
+    ConceptLink,
+    Document,
+    DocSegment,
+    MaterialRole,
+)
 from app.features.parsing.repository import ParsingRepository
 from app.features.parsing.service import _evidence_of
 
@@ -80,6 +86,9 @@ class CourseTreeBuilder:
         body = self._body_refs([c.id for c in concept_rows], body_ids)
         skeleton_doc = self.repo.get_document(skeleton_id)
         filename = skeleton_doc.filename if skeleton_doc else ""
+        body_segments = self._body_segments_by_topic(
+            concept_rows, body, body_ids, order=[t.source_topic_id for t in course.topics]
+        )
 
         def to_concept(row: Concept) -> CourseConceptOut:
             return CourseConceptOut(
@@ -106,7 +115,31 @@ class CourseTreeBuilder:
         # **course_topics를 순회한다.** 사용자가 고친 목차가 학습 순서다.
         # source_topic_id로 원본 단원을 찾아 그 단원의 개념을 붙인다.
         for topic in course.topics:
+            # 원본이 없는 단원(보강 단원 `origin=inserted`)은 뼈대 개념이 없다.
+            # `source`가 None일 때 사전을 그냥 조회하면 **목차 배정에 실패한
+            # 고아 개념**(topic_id IS NULL)이 딸려 온다 — 실측에서 AWS 코스의
+            # 단원 셋에 같은 고아 11개가 세 번 똑같이 붙었다.
             source = topic.source_topic_id
+            if source is None:
+                tree.topics.append(
+                    CourseTopicNode(
+                        id=topic.id,
+                        seq=topic.seq,
+                        title=topic.title,
+                        origin=topic.origin,
+                        plan=topic.plan,
+                        source_topic_id=None,
+                    )
+                )
+                continue
+
+            own = [
+                _to_segment(s, document_id=skeleton_id, filename=filename)
+                for s in segments_by_topic.get(source, [])
+            ]
+            # 쪽 범위는 **뼈대 기준**이다. 본문 자료의 쪽수를 섞으면 "지금 교재
+            # 몇 쪽" 표시가 두 책을 오간다.
+            lo, hi = _page_range(own)
             tree.topics.append(
                 CourseTopicNode(
                     id=topic.id,
@@ -115,10 +148,10 @@ class CourseTreeBuilder:
                     origin=topic.origin,
                     plan=topic.plan,
                     source_topic_id=source,
+                    page_from=lo,
+                    page_to=hi,
                     concepts=[to_concept(c) for c in concepts_by_topic.get(source, [])],
-                    segments=[
-                        _to_segment(s) for s in segments_by_topic.get(source, [])
-                    ],
+                    segments=own + body_segments.get(source, []),
                 )
             )
 
@@ -129,6 +162,100 @@ class CourseTreeBuilder:
             course.title, tree.total_concepts, tree.linked_concepts,
         )
         return tree
+
+    def _body_segments_by_topic(
+        self,
+        concept_rows: list[Concept],
+        body: dict[uuid.UUID, list[BodyRefOut]],
+        body_ids: list[uuid.UUID],
+        *,
+        order: list[uuid.UUID | None],
+    ) -> dict[uuid.UUID, list[BodySegmentOut]]:
+        """본문 자료의 조각을 **통째로** 단원에 싣는다.
+
+        왜 조각 단위인가 — 화면을 만드는 건 학습 층이다. 우리가 개념 언저리만
+        잘라 보내면 그쪽이 쓸 수 있는 재료가 줄어든다. 실측에서 개념 자리만
+        창으로 잘랐더니 교재 76,839자 중 25,627자(33%)만 넘어갔다. 자르기는
+        받는 쪽 `split_by_concepts`가 원래 하던 일이다.
+
+        배정은 두 단계다:
+
+          ① 개념 링크가 가리키는 조각 → 그 개념이 속한 단원 (표가 갈리면 다수결)
+          ② 아무 개념도 안 가리키는 조각 → **앞 조각의 단원**
+
+        ②의 근거는 책이 순서대로라는 것뿐이다. 실측(필기 뼈대 + 실기 본문)에서
+        배정이 거의 단조로웠다 — 조각 0~5→단원0·1, 6~8→단원2, 9~11→단원3,
+        13~18→단원4. 비어 있던 건 조각 12 하나였고 앞뒤가 단원3·4였다.
+        앞을 택한다: 책은 앞 내용의 연장으로 흐른다.
+        """
+        if not body_ids:
+            return {}
+
+        rank = {tid: i for i, tid in enumerate(order) if tid is not None}
+        topic_of_concept = {c.id: c.topic_id for c in concept_rows}
+
+        # ① 링크 다수결. 조각 하나가 여러 단원에서 불릴 수 있다.
+        votes: dict[uuid.UUID, Counter] = defaultdict(Counter)
+        for concept_id, refs in body.items():
+            topic_id = topic_of_concept.get(concept_id)
+            if topic_id is None:
+                continue
+            for ref in refs:
+                for seg in ref.segments:
+                    votes[seg.id][topic_id] += 1
+
+        def winner(segment_id: uuid.UUID) -> uuid.UUID | None:
+            counts = votes.get(segment_id)
+            if not counts:
+                return None
+            top = max(counts.values())
+            # 동수면 앞 단원. 뒤로 미루면 선수 개념이 나중에 나온다.
+            return min(
+                (t for t, n in counts.items() if n == top),
+                key=lambda t: rank.get(t, 10**6),
+            )
+
+        out: dict[uuid.UUID, list[BodySegmentOut]] = defaultdict(list)
+        for offset, document_id in enumerate(body_ids):
+            document = self.repo.get_document(document_id)
+            name = document.filename if document else ""
+            rows = list(
+                self.db.scalars(
+                    select(DocSegment)
+                    .where(DocSegment.document_id == document_id)
+                    .order_by(DocSegment.seq)
+                )
+            )
+            assigned = [winner(row.id) for row in rows]
+            # ② 빈 자리를 앞에서 끌어온다. 맨 앞이 비었으면 뒤에서 한 번 당긴다.
+            last: uuid.UUID | None = None
+            for i, topic_id in enumerate(assigned):
+                if topic_id is None:
+                    assigned[i] = last
+                else:
+                    last = topic_id
+            nxt: uuid.UUID | None = None
+            for i in range(len(assigned) - 1, -1, -1):
+                if assigned[i] is None:
+                    assigned[i] = nxt
+                else:
+                    nxt = assigned[i]
+
+            for row, topic_id in zip(rows, assigned):
+                if topic_id is None:
+                    continue  # 이 자료에 붙은 개념이 하나도 없다
+                out[topic_id].append(
+                    _to_segment(
+                        row,
+                        document_id=document_id,
+                        filename=name,
+                        role=MaterialRole.BODY.value,
+                        # 받는 쪽이 seq로 정렬한다. 뼈대(0~n) 뒤에 오도록 민다 —
+                        # 섞이면 뼈대가 정한 학습 순서가 흐트러진다.
+                        seq=_BODY_SEQ_BASE + offset * _BODY_SEQ_STRIDE + row.seq,
+                    )
+                )
+        return dict(out)
 
     def _body_refs(
         self, concept_ids: list[uuid.UUID], body_ids: list[uuid.UUID]
@@ -237,12 +364,36 @@ class CourseTreeBuilder:
         return out
 
 
-def _to_segment(row: DocSegment) -> BodySegmentOut:
+# 본문 조각의 seq를 미는 값. 받는 쪽이 `segments`를 seq로 정렬하므로
+# 뼈대(0~n)와 겹치면 안 된다. STRIDE는 본문 자료 하나당 조각 상한이다.
+_BODY_SEQ_BASE = 1000
+_BODY_SEQ_STRIDE = 1000
+
+
+def _page_range(segments: list[BodySegmentOut]) -> tuple[int | None, int | None]:
+    """조각들이 걸친 쪽 범위. 값이 하나도 없으면 (None, None)."""
+    lows = [s.page_from for s in segments if s.page_from is not None]
+    highs = [s.page_to for s in segments if s.page_to is not None]
+    return (min(lows) if lows else None, max(highs) if highs else None)
+
+
+def _to_segment(
+    row: DocSegment,
+    *,
+    document_id: uuid.UUID | None = None,
+    filename: str | None = None,
+    role: str = MaterialRole.SKELETON.value,
+    seq: int | None = None,
+) -> BodySegmentOut:
+    """조각 하나를 그대로. `seq`를 주면 그 값으로 덮는다(단원 안 정렬용)."""
     return BodySegmentOut(
         id=row.id,
-        seq=row.seq,
+        seq=row.seq if seq is None else seq,
         heading=row.heading,
         content=row.content,
         page_from=row.page_from,
         page_to=row.page_to,
+        document_id=document_id if document_id is not None else row.document_id,
+        filename=filename,
+        role=role,
     )

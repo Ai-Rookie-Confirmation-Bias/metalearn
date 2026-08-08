@@ -15,7 +15,14 @@ from app.core.database import get_db
 from app.core.deps import get_current_user_id
 
 from .blocks import ConceptBrief
-from .bridge import ingest_parsing_document, sync_ready_documents
+from .bridge import (
+    course_member_document_ids,
+    ingest_course,
+    ingest_course_stored,
+    ingest_parsing_document,
+    sync_courses,
+    sync_ready_documents,
+)
 from .mastery import DAY, WEIGHT, label
 from .planner import formative_ready, weak_for_section
 from .schemas import (
@@ -57,8 +64,10 @@ def _doc(doc_id: str, db: Session | None, progress: Progress) -> Document:
     보충이 **진도의 함수**라서 사람마다 다른 문서가 나온다 — 같은 책이라도
     많이 틀린 사람에게만 보충 화면이 끼워진다.
 
-    store에 없고 id가 UUID면 파싱 DB에서 한 번 당겨 본다 — 책장 sync 전에
-    딥링크로 들어오거나 서버가 재시작된 자리.
+    store에 없고 id가 UUID면 DB에서 한 번 당겨 본다 — 책장 sync 전에
+    딥링크로 들어오거나 서버가 재시작된 자리. **코스일 수도 자료일 수도 있어
+    둘 다 본다.** 코스는 저장된 연결만 읽는 동기 경로(`tree_stored`)를 쓴다 —
+    여기서 LLM을 기다릴 수는 없다.
     """
     if doc_id not in store.documents and db is not None:
         try:
@@ -69,7 +78,10 @@ def _doc(doc_id: str, db: Session | None, progress: Progress) -> Document:
             try:
                 ingest_parsing_document(db, uid)
             except LookupError:
-                pass
+                try:
+                    ingest_course_stored(db, uid)
+                except LookupError:
+                    pass
     doc = store.documents.get(doc_id)
     if doc is None:
         raise HTTPException(404, f"자료를 찾을 수 없습니다: {doc_id}")
@@ -105,24 +117,36 @@ def _sections_out(chapter: Chapter, progress: Progress) -> list[SectionOut]:
 
 
 @router.get("/documents", response_model=list[str])
-def list_documents(
+async def list_documents(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[str]:
-    """**내** 책장 — 학습 가능한 자료 id 목록.
+    """**내** 책장 — 학습 가능한 것 목록. 자료 하나 또는 **수업 하나**.
 
-    파일 픽스처 + 내가 올린 ready 문서(아직 store에 없으면 여기서 주입).
+    파일 픽스처 + 내가 올린 ready 문서 + 내 코스(아직 store에 없으면 여기서 주입).
     책장이 이 목록만 보므로, 이 한 줄이 파싱→학습 이음매다.
+
+    **코스에 묶인 자료는 뺀다.** PPT + 교재로 수업을 만들었으면 책장에는 그
+    수업 한 권만 있어야 한다 — 셋이 나란히 뜨면 어느 걸 눌러야 할지 알 수 없고,
+    자료를 눌러 들어가면 교재 설명이 안 붙은 반쪽을 보게 된다.
 
     픽스처는 누구에게나 보인다. DB 행이 없는 데모 자료라 소유를 붙일 자리가
     없고, 붙였다면 새 계정으로 처음 들어온 사람이 빈 화면만 본다.
 
     store를 그대로 늘어놓지 않는 이유: store는 서버가 지금까지 읽은 자료
     **전부**라 남이 올린 것도 들어 있다. 소유는 매번 DB에서 다시 센다.
+
+    ⚠️ 제외도 **내 코스 기준**이다(`course_member_document_ids(user_id=…)`).
+    자료는 공용이라, 남이 자기 수업에 넣었다는 이유로 내 책장에서 사라지면 안 된다.
     """
-    mine = sync_ready_documents(db, user_id=user_id)
-    owned = set(mine)
-    return [k for k in store.documents if k in store.fixture_ids or k in owned]
+    mine = set(sync_ready_documents(db, user_id=user_id))
+    mine |= set(await sync_courses(db, user_id=user_id))
+    members = course_member_document_ids(db, user_id=user_id)
+    return [
+        k
+        for k in store.documents
+        if (k in store.fixture_ids or k in mine) and k not in members
+    ]
 
 
 @router.post(
@@ -148,6 +172,30 @@ def ingest_from_parsing(
         chapters=len(doc.chapters),
         sections=sum(len(ch.sections) for ch in doc.chapters),
         source="parsing",
+    )
+
+
+@router.post("/documents/from-course/{course_id}", response_model=IngestOut)
+async def ingest_from_course(
+    course_id: uuid.UUID,
+    refresh: bool = False,
+    db: Session = Depends(get_db),
+) -> IngestOut:
+    """코스 하나를 학습 store에 올린다(또는 갱신).
+
+    `refresh=true`가 필요한 자리가 자료보다 잦다 — 목차를 고치거나 보강 단원을
+    끼우면 그때마다 다시 조립해야 한다.
+    """
+    try:
+        doc = await ingest_course(db, course_id, refresh=refresh)
+    except (LookupError, ValueError) as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return IngestOut(
+        doc_id=doc.doc_id,
+        title=doc.title,
+        chapters=len(doc.chapters),
+        sections=sum(len(ch.sections) for ch in doc.chapters),
+        source="course",
     )
 
 

@@ -9,16 +9,16 @@ integration
   ├ feat/curriculum   학습 커리큘럼 (윤현석)
   ├ feat/quiz-create  문제은행 (소민섭)
   ├ feat/quiz-pro3    문제은행 pro3 전환 (소민섭, 08-07)
+  ├ feat/course-to-curriculum  코스→학습 · 진단 24 (박지성, 08-07)
   └ (직접 커밋)        업로드 화면 · 로그인 · 내 책장 (윤현석, 08-07)
 ```
 
 각자 브랜치는 그대로 두고 여기서 합친다. **`feat/problems`는 구형이라 안 넣었다.**
 
-🔴 **아직 안 붙은 것: `feat/course-to-curriculum`** (박지성, 08-07)
-코스→학습 연결 · 진단(항목 24) · 교재 활용률 재측정. **커리큘럼 파일 넷을 건드리고
-(`adapters/course_tree.py` 신규 · `bridge.py` · `router.py` · `store.py`), alembic
-`0009_diagnostic`이 우리 `0009_users`와 리비전 번호가 겹친다** — 붙일 때 한쪽을
-`0010`으로 내려야 한다. 경계(진단 소유·조각을 통째로 넘기기)를 먼저 이야기할 것.
+✅ `feat/course-to-curriculum`(박지성)도 08-07에 붙였다 — 코스→학습 연결 · 진단(24) ·
+교재 활용률 재측정. 충돌 5건은 **"내 책장(사람별)"과 "코스 목록"이 같은 자리에서
+만나는** 것이었고, 둘 다 살렸다(`list_documents`가 내 자료 + 내 코스를 보고
+**내 코스에 묶인 자료만** 뺀다). alembic은 `0009_diagnostic` → `0010`으로 내렸다.
 
 ---
 
@@ -38,8 +38,8 @@ DB       localhost:5432  (postgres/dev, DB명 metalearn_v3)
 
 확인:
 ```bash
-docker compose exec backend uv run alembic current          # 0009 (head)
-docker compose exec backend uv run --group dev pytest -q    # 282 passed
+docker compose exec backend uv run alembic current          # 0010 (head)
+docker compose exec backend uv run --group dev pytest -q    # 294 passed
 docker compose exec frontend pnpm exec tsc --noEmit         # 통과
 ```
 
@@ -54,12 +54,54 @@ gitignore다(저작물). 클론하면 `sample_sdlc.tree.json`(합성 샘플) 하
 ## 2. 지금 어디까지 이어졌나
 
 ```
-로그인 ✅ ──> PDF 업로드 ──✅──> 파싱 ✅ ──> 학습 ✅  내 책장에 자동으로 뜬다
-Google        /create                    └─> 문제은행 ✅ API ──❌──> 문제집 화면
-(선택)                                                        부를 화면 없음(mock)
+로그인 ✅ ─> PDF 업로드 ─✅─> 파싱 ✅ ─┬─> 코스 ✅ ─> 진단 ✅ API ─> 학습 ✅
+Google       /create                 │                        내 책장에 수업으로
+(선택)                                └─> 문제은행 ✅ API ──❌──> 문제집 화면
+                                                          부를 화면 없음(mock)
 ```
 
 **백엔드는 한 바퀴가 돈다. 화면으로는 한 군데가 남았다.**
+
+### 08-07에 이은 것 — 코스가 학습 화면에 닿았다
+
+여태 학습 화면은 **자료 하나**만 봤다. 파일 3개를 올리면 책이 3권 떴고, 코스
+층(`course_topics`·`concept_links`)이 만든 값은 부르는 화면이 없었다.
+
+```
+전       GET /api/curriculum/documents  →  파싱 문서 id만
+지금     GET /api/curriculum/documents  →  파싱 문서 + **코스**(코스에 묶인 자료는 뺀다)
+```
+
+책장이 이 목록만 보므로 이 한 줄로 수업이 책 한 권이 된다. 프론트는 안 고쳤다 —
+`/curriculum/:docId`가 문자열 id를 받고 코스 id도 UUID 문자열이라 그대로 열린다.
+
+```
+학습 화면이 처음으로 볼 수 있게 된 것
+  · 자료 여러 개가 한 권으로 — 뼈대(PPT) 목차 순서에 본문(교재) 설명이 붙는다
+  · 사용자가 고친 목차 (course_topics — 제목 변경·순서·합치기·쪼개기)
+  · 보강 단원(origin=inserted)이 들어올 자리 — 24·27번이 채운다
+```
+
+⚠️ **목차는 화면에 도착하기 전에 확정돼 있다.** 보강 단원 삽입은 코스 층(진단
+시점)에서 끝나고 학습 중에 목차가 늘어나지 않는다. `grouping`의 "목차는 고정"
+원칙과 부딪히지 않는 이유가 이것이다.
+
+실측 (필기 + 실기 요약노트):
+
+```
+코스 트리   뼈대 58,681자(조각 18/18) · 교재 76,839자(조각 21/21)  ← 자르지 않는다
+학습 화면   목차 5 · 화면 132 · 원문 빈 화면 0
+```
+
+```
+뼈대 100%     화면 132개 중 원문이 빈 화면 0개
+교재 가용성   조각 21/21 · 76,839자 전부 API에 실린다
+교재 활용     🔴 41% — 붙어야 할 화면 73곳 중 30곳만 붙는다
+```
+
+**교재는 100%가 목표가 아니다.** 뼈대(PPT)가 학습 범위고 교재는 그 흐름을
+설명하는 재료라, 다 쓰일 필요는 없고 **필요할 때 꺼낼 수 있으면 된다.**
+문제는 마지막 줄이다 — 아래 §4 참고.
 
 ### 실측 (실제 PDF 한 권, 254KB)
 
@@ -155,7 +197,7 @@ dev 유저에 붙어 있고, 로그인하면 그와 다른 계정이 된다. 이
 
 ---
 
-## 3. 실제로 도는 API (36개)
+## 3. 실제로 도는 API (42경로 · 44오퍼레이션)
 
 ⚠️ `docs/API.md`는 **2026-07-03 문서**라 피벗 전 설계다. 실제로 도는 건 이 표다.
 
@@ -184,12 +226,20 @@ GET    /api/courses/{id}                       조회
 GET    /api/courses/{id}/tree                  코스 트리 (다자료 개념 연결 포함)
 GET    /api/courses/{id}/prereqs               선수 판정 (pass/gray/rejected)
 GET    /api/courses/{id}/gaps                  끊긴 고리
+GET    /api/courses/{id}/diagnostic            ★24 진단 화면 ①~④ (LLM 없음)
+GET    /api/courses/{id}/diagnostic/cards      ★③ 카드 4장 (LLM 1콜)
+PATCH  /api/courses/{id}/diagnostic            ★①③ 목표·기간·설명 형식
+POST   /api/courses/{id}/diagnostic/subjects   ★④-1 과목 단위 답 → 펼칠 과목
+POST   /api/courses/{id}/diagnostic/prereqs    ★④-2 펼친 과목의 항목별 답
+GET    /api/courses/{id}/diagnostic/probes     ★⑤ 확인 문항 (오답만 생성)
+POST   /api/courses/{id}/diagnostic/probes     ★⑤ 채점 → known 보정
 ```
 
 ### 학습 커리큘럼
 ```
-GET    /api/curriculum/documents                          내 자료 목록 (픽스처 + 내가 올린 ready)
+GET    /api/curriculum/documents                          **내** 자료 + 내 코스 (픽스처 포함·자동 주입)
 POST   /api/curriculum/documents/from-parsing/{doc_id}    명시 주입 (?refresh=true 재파싱 반영)
+POST   /api/curriculum/documents/from-course/{course_id}  ★코스 주입 (?refresh=true 목차 변경 반영)
 GET    /api/curriculum/documents/{doc_id}                 자료 개요
 GET    /api/curriculum/documents/{doc_id}/chapters/{i}    목차 하나
 GET    .../chapters/{i}/formative                         단원 평가
@@ -239,9 +289,60 @@ integration에서만 고쳤다. 그쪽에서 새로 빌드하거나 볼륨을 �
 라우터만 안 넘기고 있었다.** 새 API가 아니라 끊긴 인자 하나를 이은 것이다.
 설계 원칙 ①(문서는 공용, 소유는 user_documents로만)은 그대로다 — `documents`에는
 여전히 주인이 없고, 지문이 같으면 파싱은 1회다.
-
 `user_documents.user_id`에 이제 FK가 걸린다(`fk_user_documents_user`, 0009).
 `models.py`의 "users 테이블이 아직 없어 FK를 걸지 않는다" 주석은 지웠다.
+
+### 윤현석(학습) — 🔴 교재 설명이 붙어야 할 화면의 41%에만 붙는다
+
+**손댄 건 코스를 여는 문 셋뿐이다.** `adapters/parsing_tree.py`·`grouping.py` 등
+화면을 만드는 로직은 하나도 안 건드렸다.
+
+| 파일 | 무엇 |
+| --- | --- |
+| `adapters/course_tree.py` | **신규.** 코스 트리 → Document. 겉껍데기만 맞추고 나머지는 `document_from_tree` 재사용 |
+| `bridge.py` | `ingest_course`(async) · `ingest_course_stored`(동기) · `sync_courses` |
+| `store.py` | `ingest_course_tree` |
+| `router.py` | `/documents`가 코스도 준다(+ `async`) · `/documents/from-course/{id}` 신설 |
+
+코스 트리는 **조각을 자르지 않고 통째로** 준다. 단원 하나에 뼈대 조각과 본문
+조각이 함께 오고, 조각마다 `document_id`·`filename`·`role`(skeleton\|body)이 붙는다.
+`segments`는 seq로 정렬하면 뼈대가 먼저 오도록 본문 seq를 1000 이상으로 밀어 뒀다.
+
+**그런데 붙어야 할 자리의 절반에 안 붙는다.**
+
+교재가 100% 쓰일 필요는 없다 — 뼈대(PPT)가 학습 범위고 교재는 그 흐름을
+설명하는 재료다. 그래서 재는 기준은 "교재를 몇 % 썼나"가 아니라
+**"붙어야 할 자리에 붙었나"**다.
+
+```
+뼈대 개념 397개 중 교재 설명이 연결된 것    112개
+그 개념들이 들어간 화면                      73개
+그중 교재 원문이 실제로 실린 화면            30개  = 41%
+```
+
+원인은 `grouping._source_for`다.
+
+```python
+excerpts = split_by_concepts(source, list(keys))
+if not excerpts or any(not e.matched for e in excerpts):
+    return ""      # 화면 개념 셋 중 하나만 못 찾아도 원문을 통째로 비운다
+```
+
+개념명이 **제목으로** 나온 자리에서만 뽑는다. 필기 개념명은 `상태 패턴`인데
+교재엔 영문 표(`| State |`)로 있어서 안 걸린다. 요약노트처럼 제목 없이 표·목록으로
+흐르는 자료는 제목 기반 매칭이 109개 중 17개밖에 안 걸렸다(실측).
+
+한때 우리 쪽에서 개념명 언저리를 창으로 잘라 억지로 붙였으나 걷어냈다 —
+**화면을 만드는 건 우리 층이 아니고**, 자르면 그쪽이 쓸 재료가 준다.
+재료는 다 넘겼으니 쓰는 방법은 정해 주세요.
+
+`source`는 📎 원문 표시만이 아니라 **설명·문항을 만드는 재료**이기도 하다
+(`explanation.py`의 `<교재 원문 (참고)>`). 비면 개념 정의 한 줄로 설명을 쓰게 된다.
+
+그리고 하나 더: **`section_id`에 자료 id가 안 들어간다**(`hash(chunk_id|개념명들)`).
+코스와 그 뼈대 자료를 둘 다 열면 진도가 같은 키를 쓴다. 같은 내용이라 맞을 수도
+있는데, 코스가 목차 순서를 바꾸면 `chunk_id`가 달라져 진도가 갈린다. 지금은 코스에
+묶인 자료를 책장에서 빼서 둘을 동시에 못 열게 해 뒀다 — 회피지 해결이 아니다.
 
 ### 소민섭(문제은행) — ✅ 모델 결정 끝났다 (08-07)
 
@@ -268,17 +369,41 @@ integration에서만 고쳤다. 그쪽에서 새로 빌드하거나 볼륨을 �
 - 🟡 `docs/WORKLOG.md`(문제은행)와 `docs/WORK_LOG.md`(학습)가 **한 글자 차이로 공존**한다.
   이름을 바꾸든 합치든 정하는 게 좋겠다. (미정)
 
+### 프론트 — 🟡 진단 화면이 없다 (24번 API는 다 됐다)
+
+백엔드는 붙었고 화면이 없다. 화면 다섯, 순서대로:
+
+```
+① 왜 배우나     PATCH /diagnostic  {goal, deadline_weeks}
+② 분야 맞나     GET   /diagnostic 의 field 를 확인만 받는다
+③ 카드 4장      GET   /diagnostic/cards → 넷 중 하나 → PATCH {style}
+④ 선수 체크     POST  /diagnostic/subjects  (과목 단위)
+                → 돌아온 expand 과목만 항목 펼침 → POST /diagnostic/prereqs
+⑤ 확인 문항     GET   /diagnostic/probes → 채점은 POST 로
+```
+
+- **④가 두 단계다.** 항목을 전부 물으면 54개다. 과목으로 먼저 묻고 "들어봤다"인
+  것만 펼치면 실측 7 + 23 = 30번이 된다.
+- **⑤는 빈 목록일 수 있다.** 정답을 못 세운 항목은 문항을 안 낸다 — 그럼 이
+  화면을 건너뛴다. 개수도 고정이 아니다(1~4).
+- ⚠️ **③ 문구를 조심해야 한다.** "당신에게 맞는 학습법"이 아니라 **"어떤 설명이
+  읽기 편한가"**다. 러닝 스타일 맞춤에 학습 효과 근거는 없다(Pashler 2008).
+  이건 성취가 아니라 이탈을 막는 장치다.
+- ②는 12.5 분야 판정의 **유일한 검증 창구**다. 자동으로 검증할 방법이 없다.
+
 ### 다 같이 정할 것
 
 ```
 1. API 표기      camelCase(curriculum) vs snake_case(quiz)
 2. 교재 공유     fixtures/*.md 가 gitignore라 실물이 로컬에만 있다
-3. 다음 우선순위  문제집 실 API 연결 (업로드·로그인은 08-07에 끝) — 코스 목록 API가 선행이다
-4. 코스 단위     책장이 자료 단위로 돈다. 파일 3개를 올리면 책이 3권 뜬다.
-                 한 수업으로 묶으려면 POST /courses를 부를 자리와 목록 API가 필요하다
-5. 시연 계정     구글로 로그인하면 dev 유저와 다른 계정이다. 지금 자료·진도는 dev에
+3. 다음 우선순위  문제집 실 API 연결 (업로드·로그인·코스 연결은 08-07에 끝)
+4. 코스 만드는 화면  책장이 코스를 **보여주긴** 한다(08-07). 없는 건 **만드는 자리**다 —
+                 `POST /api/courses`를 부를 UI와 코스 목록 API가 아직 없다.
+                 위저드(/create)는 파일만 올리고 코스는 안 만든다
+5. 진단 화면     24번 API는 다 됐는데 부를 화면이 없다 (아래 프론트 절)
+6. 시연 계정     구글로 로그인하면 dev 유저와 다른 계정이다. 지금 자료·진도는 dev에
                  붙어 있으니, 로그인해서 찍을지 미로그인으로 찍을지 미리 정해야 한다
-6. 진도 저장소   data/progress/{user_id}.json 파일이다. 계정이 늘면 DB로 옮겨야 한다
+7. 진도 저장소   data/progress/{user_id}.json 파일이다. 계정이 늘면 DB로 옮겨야 한다
 ```
 
 ---

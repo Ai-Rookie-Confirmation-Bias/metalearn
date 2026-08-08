@@ -1,7 +1,12 @@
-"""파싱 DocumentTree → 커리큘럼 store.
+"""파싱 트리·코스 트리 → 커리큘럼 store.
 
-어댑터(`document_from_tree`)는 순수 변환만 한다. 여기는 **언제·무엇을** 올리는지.
-책장 목록을 열 때 ready 문서를 끌어오고, 명시 import도 같은 문을 지난다.
+어댑터는 순수 변환만 한다. 여기는 **언제·무엇을** 올리는지.
+책장 목록을 열 때 ready 문서와 코스를 끌어오고, 명시 import도 같은 문을 지난다.
+
+문이 둘이다. 재료가 다를 뿐 결과는 같은 `Document`다:
+
+    자료 하나   ingest_parsing_document   ParsingService.get_tree  → doc_topics
+    수업 하나   ingest_course             CourseService.tree       → course_topics
 """
 from __future__ import annotations
 
@@ -10,6 +15,8 @@ import uuid
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.features.course.models import Course, CourseDocument
+from app.features.course.service import CourseService
 from app.features.parsing.models import DocStatus
 from app.features.parsing.models import Document as ParsingDocument
 from app.features.parsing.models import UserDocument
@@ -80,4 +87,88 @@ def sync_ready_documents(
             print(f"[curriculum] 파싱 문서 주입 건너뜀 {key}: {e}")
         except Exception as e:  # noqa: BLE001 — 목록이 죽으면 안 된다
             print(f"[curriculum] 파싱 문서 주입 실패 {key}: {type(e).__name__}: {e}")
+    return ids
+
+
+async def ingest_course(
+    db: Session,
+    course_id: uuid.UUID,
+    *,
+    refresh: bool = False,
+) -> Document:
+    """코스 하나 → 학습 store.
+
+    `ingest_parsing_document`와 나란하다. 다른 건 재료뿐이고
+    (`CourseService.tree`는 뼈대 목차에 본문 자료 설명을 얹어 준다)
+    키도 같은 자리를 쓴다 — 코스 id 문자열.
+
+    async인 이유: 자료끼리 개념 연결(18단계)이 아직 없으면 여기서 계산한다.
+    문서쌍 단위로 저장되므로 두 번째부터는 DB 조회뿐이다.
+    """
+    key = str(course_id)
+    if not refresh and key in store.documents:
+        return store.documents[key]
+
+    tree = await CourseService(db).tree(course_id)
+    return store.ingest_course_tree(tree.model_dump(mode="json"), doc_id=key)
+
+
+def ingest_course_stored(db: Session, course_id: uuid.UUID) -> Document:
+    """`ingest_course`의 동기판 — **저장된 연결만** 읽는다.
+
+    동기 자리(딥링크 폴백)에서만 쓴다. 연결을 새로 계산하지 않으므로 본문이
+    아직 안 붙었을 수 있고, 그건 다음 `sync_courses`가 채운다.
+    """
+    key = str(course_id)
+    if key in store.documents:
+        return store.documents[key]
+    if db.get(Course, course_id) is None:
+        raise LookupError(f"코스를 찾을 수 없습니다: {course_id}")
+
+    tree = CourseService(db).tree_stored(course_id)
+    return store.ingest_course_tree(tree.model_dump(mode="json"), doc_id=key)
+
+
+def course_member_document_ids(
+    db: Session, *, user_id: uuid.UUID | None = None
+) -> set[str]:
+    """코스에 묶인 자료 id들.
+
+    책장에서 **뺀다.** 안 그러면 PPT 한 권 · 교재 한 권 · 그 둘을 묶은 수업
+    한 권이 나란히 떠서, 학습자가 어느 걸 눌러야 하는지 알 수 없다.
+
+    ⚠️ `user_id`를 주면 **그 사람의 코스에 묶인 것만** 뺀다. 자료는 공용이라
+    남이 자기 수업에 넣었다는 이유로 내 책장에서 사라지면 안 된다.
+    """
+    stmt = select(CourseDocument.document_id)
+    if user_id is not None:
+        stmt = stmt.join(Course, Course.id == CourseDocument.course_id).where(
+            Course.user_id == user_id
+        )
+    return {str(v) for v in db.scalars(stmt)}
+
+
+async def sync_courses(
+    db: Session, *, user_id: uuid.UUID | None = None
+) -> list[str]:
+    """코스를 store에 올리고 **그 id 목록**을 돌려준다.
+
+    `sync_ready_documents`와 같은 사정이고 같은 이유로 **사람별로 거른다** —
+    `courses.user_id`가 있으니 남의 수업이 내 책장에 뜨면 안 된다.
+    """
+    stmt = select(Course)
+    if user_id is not None:
+        stmt = stmt.where(Course.user_id == user_id)
+
+    ids: list[str] = []
+    for row in db.scalars(stmt).all():
+        key = str(row.id)
+        if key in store.documents:
+            ids.append(key)
+            continue
+        try:
+            await ingest_course(db, row.id)
+            ids.append(key)
+        except Exception as e:  # noqa: BLE001 — 목록이 죽으면 안 된다
+            print(f"[curriculum] 코스 주입 실패 {key}: {type(e).__name__}: {e}")
     return ids

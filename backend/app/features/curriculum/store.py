@@ -213,6 +213,18 @@ class Store:
         self.documents[doc.doc_id] = doc
         return doc
 
+    def ingest_course_tree(self, tree: dict, *, doc_id: str | None = None) -> Document:
+        """코스 트리(dict)를 학습 store에 올린다. 키는 코스 id.
+
+        문서와 같은 사전에 넣는다 — 화면 입장에서 "지금 보는 책 한 권"이라는
+        점이 같고, 그래야 목차·학습·평가·채점이 코스에도 그대로 따라온다.
+        """
+        from .adapters.course_tree import document_from_course_tree
+
+        doc = document_from_course_tree(tree, doc_id=doc_id)
+        self.documents[doc.doc_id] = doc
+        return doc
+
     def progress_of(self, user_id: str) -> Progress:
         """그 사람의 진도. 처음 보는 사용자면 스냅샷에서 읽어 온다.
 
