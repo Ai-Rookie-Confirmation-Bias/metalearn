@@ -63,8 +63,8 @@ Google       /create                 │            /diagnostic  내 책장에  
 
 **백엔드는 한 바퀴가 돈다. 화면으로 남은 건 문제집 하나다.**
 
-코스를 **만드는 자리**는 아직 없다 — 책장이 코스를 보여주긴 하는데 `POST /api/courses`를
-부르는 UI가 없다(§4). 지금은 curl로 만든다.
+코스 만드는 자리는 08-08에 붙였다 — `/create`가 파싱 ready 뒤에 `POST /api/courses`를
+부르고, 책장이 자료 N장을 수업 한 권으로 묶는다.
 
 ### 08-07에 이은 것 — 코스가 학습 화면에 닿았다
 
@@ -123,16 +123,22 @@ Google       /create                 │            /diagnostic  내 책장에  
 
 ```
 파일 고름 → 그 자리에서 업로드(202 접수증) → 목표 고르는 동안 서버가 파싱
-        → 책장에 "분석 중" 카드(2초 폴링, 단계 문구는 DocStatus 그대로)
-        → ready → 책 카드로 바뀐다
+        → 책장에 "수업 준비 중" 카드(자료 N개 폴링)
+        → 전부 ready → POST /api/courses → 수업 한 권으로 꽂힌다
 ```
 
-- 대기 목록(문서 id + 파일명)은 localStorage에 남는다. 파이프라인이 분 단위라
-  그 사이 새로고침이 실제로 일어난다. **진행 상태는 안 들고 있다** — 서버가 진실이다.
+- 대기 목록(문서 id + 파일명)과 **수업 의도**(documentIds·title·purpose)는
+  localStorage에 남는다. 파이프라인이 분 단위라 그 사이 새로고침이 실제로 일어난다.
+  **진행 상태는 안 들고 있다** — 서버가 진실이다.
+- **파싱이 끝나기 전에 코스를 만들지 않는다.** 역할 제안이 밀도에 기대고, 목차
+  복사는 `doc_topics`가 생긴 뒤에야 된다. ready 이전에 만들면 빈 수업이 남는다
+  (지연 복사 `ensure_topics`는 안전망일 뿐, 역할은 다시 안 고친다).
 - 같은 파일을 다시 올리면 지문이 같아 재파싱이 없다(실측: 같은 id·ready 즉시).
   **그래도 내 책장에는 꽂힌다** — 문서는 공용이고 소유는 따로 기록된다.
-- `role`은 안 보낸다. 서버의 역할은 뼈대/본문/참고인데 위저드가 묻는 건 메인/추가라
+- `roles`는 안 보낸다. 서버의 역할은 뼈대/본문/참고인데 위저드가 묻는 건 메인/추가라
   축이 다르다. 임의로 짝지으면 사용자가 고르지 않은 값이 저장된다.
+- 위저드 `purpose`는 진단 `goal`로만 매핑한다(`exam→exam`, `career→work`,
+  `culture|hobby→interest`). 코스 생성 직후 `PATCH /diagnostic`.
 - 링크·텍스트 자료는 받는 문이 없어 위저드에서 뺐다.
 
 curl로도 여전히 된다:
@@ -143,7 +149,7 @@ curl -X POST "http://localhost:8000/api/parsing/documents" -F "file=@교재.pdf"
 
 **② 문제집 화면이 mock이다.** `/quiz`가 보여주는 "데이터 통신 128문항" 등은 전부
 `pages/quiz/mock.ts`다. `submitAttempt`까지 mock에서 온다. 실 API는 아래 3번 참고.
-코스를 만들 화면도 없다(`POST /api/courses`만 있고 목록 API가 없다).
+코스 만드는 자리·목록 API는 08-08에 붙었다 — 문제집이 `course_id`를 받을 준비가 됐다.
 
 ---
 
@@ -226,6 +232,7 @@ POST   /api/parsing/debug/*                    단계별 실행기 (개발용, 6
 ### 코스
 ```
 POST   /api/courses                            생성 (주인은 토큰에서 — 바디에 user_id 없다)
+GET    /api/courses                            내가 만든 수업 목록
 GET    /api/courses/{id}                       조회
 GET    /api/courses/{id}/tree                  코스 트리 (다자료 개념 연결 포함)
 GET    /api/courses/{id}/prereqs               선수 판정 (pass/gray/rejected)
@@ -422,16 +429,12 @@ if not excerpts or any(not e.matched for e in excerpts):
 ```
 1. API 표기      camelCase(curriculum) vs snake_case(quiz)
 2. 교재 공유     fixtures/*.md 가 gitignore라 실물이 로컬에만 있다
-3. 다음 우선순위  ① 코스 만드는 화면 → ② 문제집 실 API (①이 course_id를 만든다)
-                 업로드·로그인·코스 연결 08-07 · 진단·분석 화면 08-08에 끝
-4. 코스 만드는 화면  🔴 남은 것 중 제일 앞. 책장이 코스를 **보여주긴** 한다(08-07).
-                 없는 건 **만드는 자리**다 — `POST /api/courses`를 부를 UI와
-                 코스 목록 API가 아직 없다. 위저드(/create)는 파일만 올리고
-                 코스는 안 만든다. 지금 코스는 curl로 만들고 있다
-5. 시연 계정     구글로 로그인하면 dev 유저와 다른 계정이다. 지금 자료·진도는 dev에
+3. 다음 우선순위  문제집 실 API 연결 (course_id는 08-08에 화면에서 생긴다)
+                 업로드·로그인·코스 연결 08-07 · 진단·분석·코스 생성 화면 08-08에 끝
+4. 시연 계정     구글로 로그인하면 dev 유저와 다른 계정이다. 지금 자료·진도는 dev에
                  붙어 있으니, 로그인해서 찍을지 미로그인으로 찍을지 미리 정해야 한다
-6. 진도 저장소   data/progress/{user_id}.json 파일이다. 계정이 늘면 DB로 옮겨야 한다
-7. alembic 번호  0009가 **두 번** 겹쳤다(quiz·diagnostic). 순번을 손으로 붙이는 한
+5. 진도 저장소   data/progress/{user_id}.json 파일이다. 계정이 늘면 DB로 옮겨야 한다
+6. alembic 번호  0009가 **두 번** 겹쳤다(quiz·diagnostic). 순번을 손으로 붙이는 한
                  브랜치마다 같은 번호가 계속 난다 — `alembic revision`이 만드는
                  해시를 쓰는 게 낫다
 ```

@@ -384,7 +384,7 @@ mcq      {question, options[], answer, explanation, concept, sectionId}
 | **선수 데이터** | 파싱 선수 이름의 절반 넘게가 개념 목록에 없다(필기 122/339, 실기 211/404). 보충 화면 기능의 상한 |
 | ~~**업로드 화면**~~ | 08-07에 채웠다. `/create`가 `POST /api/parsing/documents`를 부르고 책장이 "분석 중"으로 폴링한다 |
 | ~~**메타인지 분석**~~ | 08-08에 채웠다(`GET /api/curriculum/analysis` + `/analysis`). 다만 실측 `byKind`는 아직 `{retrieval: 4}` 하나 — **화면은 생겼는데 4출처는 아직 안 찼다** |
-| **코스 만드는 자리** | 🔴 `POST /api/courses`를 부를 UI가 없다. 코스는 curl로 만든다 — 남은 것 중 제일 앞 |
+| ~~**코스 만드는 자리**~~ | 08-08에 채웠다. `/create` → ready 뒤 `POST /api/courses` → 책장에 수업 한 권. `GET /api/courses` 목록도 있다 |
 
 ### 2026-08-07 이후 상태
 
