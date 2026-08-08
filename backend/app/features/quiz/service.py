@@ -5,6 +5,7 @@
 서빙: DB 조회만 — LLM 호출 없음.
 """
 import logging
+import re
 import uuid
 
 from sqlalchemy.orm import Session
@@ -33,6 +34,24 @@ from app.features.quiz.schemas import (
 from app.features.quiz.selection import select_chunk
 
 logger = logging.getLogger(__name__)
+
+
+def _content_key(item_type: str, data: dict) -> tuple[str, str]:
+    """문항 내용 동일성 키 — 리필 시 기존 은행과의 중복 대조용.
+
+    발문(유형별 질문 텍스트)이 공백 제거 후 같으면 같은 문항으로 본다.
+    선지·정답까지 보지 않는 이유: 같은 발문에 선지만 다른 문항은 풀이자에게
+    사실상 같은 문제라 중복으로 치는 쪽이 안전하다.
+    """
+    if item_type == "cloze":
+        text = "".join(
+            str(s.get("text", ""))
+            for s in data.get("segments", [])
+            if isinstance(s, dict)
+        )
+    else:
+        text = data.get("question") or data.get("statement") or data.get("prompt") or ""
+    return item_type, re.sub(r"\s+", "", str(text))
 
 
 class QuizGenerationResult:
@@ -71,7 +90,11 @@ class QuizService:
         config: QuizGenConfig | None = None,
         exam_frequency: dict[str, int] | None = None,
         stem_patterns: list[str] | None = None,
+        append: bool = False,
     ) -> QuizGenerationResult:
+        """append=False(기본)는 이 문서의 은행을 통째로 교체, append=True는
+        리필 — 기존 은행을 유지한 채 새 문항만 추가한다 (발문 중복은 폐기).
+        """
         config = config or QuizGenConfig()
 
         report = validate_document(doc, config)
@@ -110,8 +133,32 @@ class QuizService:
                     )
                 )
 
-        self.repo.replace_document_items(course_id, document_id, rows)
-        result.saved = len(rows)
+        # 발문 중복 제거 — 리필(append)은 기존 은행까지, 교체는 이번 배치 안에서.
+        # 같은 개념 풀에서 생성하므로 중복이 나오는 게 정상 경로다 (교체 모드도
+        # 배치 내 중복이 실제로 났었음: 08-07 최초 생성분에서 3쌍 실측).
+        seen: set[tuple[str, str]] = (
+            {
+                _content_key(r.type, r.data)
+                for r in self.repo.list_document_items(course_id, document_id)
+            }
+            if append
+            else set()
+        )
+        unique_rows: list[QuizItem] = []
+        for row in rows:
+            key = _content_key(row.type, row.data)
+            if key in seen:
+                against = "기존 은행과 발문 중복 (리필 대조)" if append else "같은 배치 내 발문 중복"
+                result.discarded.append(f"{row.concept_name}/{row.type}: {against}")
+                continue
+            seen.add(key)
+            unique_rows.append(row)
+
+        if append:
+            self.repo.append_document_items(unique_rows)
+        else:
+            self.repo.replace_document_items(course_id, document_id, unique_rows)
+        result.saved = len(unique_rows)
         return result
 
     async def _generate_and_verify(
@@ -218,9 +265,16 @@ class QuizService:
         ]
 
     def start_session(
-        self, course_id: uuid.UUID, document_id: uuid.UUID, toc_indexes: list[int], count: int
+        self,
+        course_id: uuid.UUID,
+        document_id: uuid.UUID,
+        toc_indexes: list[int],
+        count: int,
+        exclude_ids: list[uuid.UUID] | None = None,
     ) -> SessionResponse:
-        items = self.repo.sample_items(course_id, document_id, toc_indexes, count)
+        items, recycled = self.repo.sample_items(
+            course_id, document_id, toc_indexes, count, exclude_ids
+        )
         return SessionResponse(
             items=[
                 SessionItem(
@@ -230,7 +284,8 @@ class QuizService:
                     data=serving.strip_answers(i.type, i.data),
                 )
                 for i in items
-            ]
+            ],
+            recycled=recycled,
         )
 
     def submit_attempt(

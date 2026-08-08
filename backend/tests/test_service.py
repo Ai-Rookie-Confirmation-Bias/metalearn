@@ -55,8 +55,24 @@ class FakeRepo:
     def replace_document_items(self, course_id, document_id, items) -> None:
         self.rows = items
 
-    def sample_items(self, course_id, document_id, toc_indexes, count):
-        return [r for r in self.rows if r.toc_index in toc_indexes][:count]
+    def append_document_items(self, items) -> None:
+        self.rows.extend(items)
+
+    def list_document_items(self, course_id, document_id):
+        return list(self.rows)
+
+    def sample_items(self, course_id, document_id, toc_indexes, count, exclude_ids=None):
+        # 실제 repo 계약의 축소판 — 안 푼 것 먼저, 모자라면 exclude 순서(오래된
+        # 순)대로 복습 채움. 반환도 동일하게 (items, recycled).
+        exclude = exclude_ids or []
+        pool = [r for r in self.rows if r.toc_index in toc_indexes]
+        fresh = [r for r in pool if r.id not in exclude][:count]
+        shortfall = count - len(fresh)
+        if shortfall <= 0 or not exclude:
+            return fresh, 0
+        by_id = {r.id: r for r in pool}
+        recycled = [by_id[i] for i in exclude if i in by_id][:shortfall]
+        return fresh + recycled, len(recycled)
 
     def get_item(self, item_id):
         return next((r for r in self.rows if r.id == item_id), None)
@@ -202,6 +218,7 @@ async def test_session_and_attempt_flow(service, parsed_doc):
 
     session = service.start_session(course_id, document_id, [0], count=5)
     assert 1 <= len(session.items) <= 5
+    assert session.recycled == 0  # 푼 기록 없이 시작 — 전부 새 문항
     for item in session.items:
         assert "answer" not in item.data  # trueFalse 정답 미노출
 
@@ -210,3 +227,83 @@ async def test_session_and_attempt_flow(service, parsed_doc):
     assert resp.correct is True  # FakeLLM은 answer=true로 생성
     assert resp.evidence["text"]
     assert resp.answer["answer"] is True
+
+
+async def test_session_prefers_unsolved_then_recycles(service, parsed_doc):
+    """안 푼 문항 우선 — 모자라면 푼 지 오래된 순으로 복습이 뒤에 붙는다."""
+    course_id, document_id = uuid.uuid4(), uuid.uuid4()
+    await service.generate_bank(course_id, document_id, parsed_doc)
+    for row in service.repo.rows:  # ORM 밖이라 PK 수동 부여
+        row.id = uuid.uuid4()
+    pool = [r for r in service.repo.rows if r.toc_index == 0]
+    assert len(pool) >= 2
+
+    # 첫 문항만 푼 상태 → 안 푼 것들이 먼저, 푼 것은 나오지 않는다(수량 충분)
+    solved = [pool[0].id]
+    session = service.start_session(
+        course_id, document_id, [0], count=len(pool) - 1, exclude_ids=solved
+    )
+    assert session.recycled == 0
+    assert str(pool[0].id) not in [i.id for i in session.items]
+
+    # 전부 푼 상태에서 더 달라고 하면 → 빈손 대신 오래된 순 복습으로 채워진다
+    solved = [r.id for r in pool]
+    session = service.start_session(
+        course_id, document_id, [0], count=len(pool), exclude_ids=solved
+    )
+    assert session.recycled == len(session.items) == len(pool)
+    assert [uuid.UUID(i.id) for i in session.items] == solved
+
+
+async def test_generate_bank_append_keeps_bank_and_dedupes(service, parsed_doc):
+    """리필(append) — 기존 은행 유지, 발문이 같은 문항은 폐기."""
+    course_id, document_id = uuid.uuid4(), uuid.uuid4()
+    await service.generate_bank(course_id, document_id, parsed_doc)
+    first = list(service.repo.rows)
+    assert first
+
+    # FakeLLM은 같은 입력에 같은 발문을 만든다 → 리필 전부 중복 폐기가 정답
+    result = await service.generate_bank(
+        course_id, document_id, parsed_doc, append=True
+    )
+    assert result.saved == 0
+    assert service.repo.rows == first  # 교체 아님 — 기존 은행 그대로
+    assert any("발문 중복" in d for d in result.discarded)
+
+
+async def test_generate_bank_replace_dedupes_within_batch(service, parsed_doc):
+    """교체 모드도 같은 배치 안의 발문 중복은 하나만 저장한다 (08-07 실측 결함)."""
+
+    class EchoTwiceLLM(FakeLLM):
+        async def generate(self, prompt: str, **kwargs: object) -> str:
+            raw = await super().generate(prompt, **kwargs)
+            if "출제 검수자" in prompt or "너는 수험생이다" in prompt:
+                return raw
+            # 생성 응답의 문항 배열을 통째로 두 번 — 배치 내 완전 중복 상황
+            inner = raw[1:-1]
+            return f"[{inner},{inner}]" if inner else raw
+
+    service.llm = EchoTwiceLLM()
+    result = await service.generate_bank(uuid.uuid4(), uuid.uuid4(), parsed_doc)
+    assert result.saved > 0
+    keys = [(r.type, r.data.get("statement")) for r in service.repo.rows]
+    assert len(keys) == len(set(keys))  # 저장분엔 중복 없음
+    assert any("같은 배치 내 발문 중복" in d for d in result.discarded)
+
+
+def test_content_key_normalizes_whitespace_and_cloze():
+    from app.features.quiz.service import _content_key
+
+    # 공백만 다른 발문은 같은 문항 취급
+    assert _content_key("mcq", {"question": "OSI 7계층은?"}) == _content_key(
+        "mcq", {"question": "OSI  7계층은?"}
+    )
+    # cloze는 text 조각을 이어 붙여 비교 (빈칸 자리는 무시)
+    assert _content_key(
+        "cloze",
+        {"segments": [{"kind": "text", "text": "최하위 계층은 "}, {"kind": "blank"}]},
+    ) == _content_key("cloze", {"segments": [{"kind": "text", "text": "최하위계층은"}]})
+    # 유형이 다르면 발문이 같아도 다른 문항
+    assert _content_key("mcq", {"question": "q"}) != _content_key(
+        "trueFalse", {"statement": "q"}
+    )
