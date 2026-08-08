@@ -21,7 +21,10 @@ type CourseListItem = {
   documents: { document_id: string; role: string; seq: number }[];
 };
 
-type GenStatus = { status: "idle" | "running" | "done" | "failed" };
+type GenStatus = {
+  status: "idle" | "running" | "done" | "failed";
+  saved: number; // done일 때 이번 실행이 추가·저장한 문항 수 (0 = 빈손)
+};
 
 // GET /courses + 코스별 quiz 요약 → 과목 선택 화면의 CourseBank 목록.
 // 문제은행이 있거나(ready) 지금 생성 중인(generating) 코스만 보여준다 —
@@ -42,33 +45,73 @@ export async function fetchCourseBanks(): Promise<CourseBank[]> {
         last_activity_at: null,
         has_exam_style: false,
       };
-      if (summary) return { ...base, status: "ready", summary };
 
-      // 은행이 없다 — 배치가 도는 중이면 "생성 중" 카드로 보여준다
-      const docId = c.documents[0]?.document_id;
+      // 생성 배치 상태 — 은행이 없으면 "생성 중" 카드의 근거, 은행이 있으면
+      // 리필(새 문제 추가)이 도는 중이라는 표시(refilling)의 근거가 된다.
+      const docId = summary?.document_id ?? c.documents[0]?.document_id;
       if (!docId) return null;
       const { data: gen } = await apiClient.get<GenStatus>(
         `/api/courses/${c.id}/quiz/from-parsing/${docId}/status`,
       );
-      if (gen.status === "running") return { ...base, status: "generating", summary: null };
+      const running = gen.status === "running";
+
+      if (summary) return { ...base, status: "ready", summary, refilling: running };
+      if (running) return { ...base, status: "generating", summary: null };
       return null;
     }),
   );
   return banks.filter((b): b is CourseBank => b !== null);
 }
 
-// POST /courses/:id/quiz/session — 범위 내 무작위 샘플, 정답 제거되어 도착
+// 세션 응답 — 안 푼 문항 우선 샘플. recycled = 안 푼 게 모자라 복습으로
+// 다시 나온 문항 수 (items의 뒤쪽 recycled개가 복습분).
+export type SessionData = { items: SessionItem[]; recycled: number };
+
+// POST /courses/:id/quiz/session — 범위 내 무작위 샘플, 정답 제거되어 도착.
+// excludeIds(푼 지 오래된 순)를 보내면 안 푼 문항을 먼저 주고, 모자라면
+// 오래 전에 푼 것부터 복습으로 채워 준다.
 export async function fetchSession(
   courseId: string,
   documentId: string,
   tocIndexes: number[],
   count: number,
-): Promise<SessionItem[]> {
-  const { data } = await apiClient.post<{ items: SessionItem[] }>(
+  excludeIds: string[] = [],
+): Promise<SessionData> {
+  const { data } = await apiClient.post<SessionData>(
     `/api/courses/${courseId}/quiz/session`,
-    { document_id: documentId, toc_indexes: tocIndexes, count },
+    {
+      document_id: documentId,
+      toc_indexes: tocIndexes,
+      count,
+      exclude_ids: excludeIds,
+    },
   );
-  return data.items;
+  return data;
+}
+
+// GET …/from-parsing/:docId/status — 생성 작업 결과 조회.
+// 리필 완료 순간 saved를 읽어 "N개 추가됐어요 / 못 만들었어요"를 가르는 데 쓴다.
+export async function fetchGenStatus(
+  courseId: string,
+  documentId: string,
+): Promise<GenStatus> {
+  const { data } = await apiClient.get<GenStatus>(
+    `/api/courses/${courseId}/quiz/from-parsing/${documentId}/status`,
+  );
+  return data;
+}
+
+// POST …/from-parsing/:docId?mode=append — 리필 접수 (202).
+// 생성은 분 단위 작업이라 완료를 기다리지 않는다 — 끝나면 은행 문항 수에
+// 자동 반영되고, 기존 문항은 유지된 채 새 문항만 추가된다.
+// 이미 생성 중이면 서버가 409를 준다 (호출부에서 조용히 무시해도 되는 상태).
+export async function requestRefill(
+  courseId: string,
+  documentId: string,
+): Promise<void> {
+  await apiClient.post(
+    `/api/courses/${courseId}/quiz/from-parsing/${documentId}?mode=append`,
+  );
 }
 
 // POST /quiz/attempts — 서버 채점. 정답·해설·근거 원문이 이때 처음 내려온다

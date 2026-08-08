@@ -36,6 +36,9 @@ export type CourseBank = {
   category: string;
   status: "ready" | "generating";
   summary: QuizBankSummary | null; // generating이면 null
+  // 은행은 있는데 리필(새 문제 추가) 배치가 도는 중 — 카드·범위 화면에
+  // "새 문제 만드는 중" 표시용. generating과 달리 풀이는 계속 가능하다.
+  refilling?: boolean;
   // 마지막 학습 시각 (책장과 같은 MAX(attempts.created_at) 계산값) — 추천 배너용
   last_activity_at: string | null;
   // 기출(kind=exam) 문서를 올린 과목만 true → "기출 스타일" 버튼 노출

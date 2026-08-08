@@ -15,16 +15,25 @@ import type { QuizBankSummary, QuizStyle } from "./mock";
 const COUNT_PRESETS = [10, 20, 30] as const;
 
 // 화면 1: 범위 선택 — 확정안 §6-1. 목차 체크박스 + 문항 수, ⚡ 격리 안내 고정 문구.
+// solvedByToc: 이 브라우저의 풀이 기록(localStorage) 목차별 집계 — "안 푼 N"
+// 표시용. 풀이 기록이 있는 목차만 표기가 달라진다.
 export function ScopeSelect({
   title,
   style,
   summary,
+  solvedByToc = {},
+  refilling = false,
+  refillOutcome = null,
   onStart,
   onBack,
 }: {
   title: string;
   style: QuizStyle;
   summary: QuizBankSummary;
+  solvedByToc?: Record<number, number>;
+  refilling?: boolean; // 리필 배치 진행 중 — 풀이는 그대로 가능, 안내만
+  // 직전 리필 결과 — 추가된 문항 수(0=빈손) 또는 "failed". 진행 중이 우선.
+  refillOutcome?: number | "failed" | null;
   onStart: (tocIndexes: number[], count: number) => void;
   onBack: () => void;
 }) {
@@ -77,6 +86,25 @@ export function ScopeSelect({
           </span>
         </div>
 
+        {/* 리필 진행 안내 — 완료되면 폴링이 총 문항 수를 갱신한다.
+            완료 후엔 같은 자리에서 결과(추가됨/빈손/실패)로 이어진다. */}
+        {refilling ? (
+          <div className="mb-6 flex items-center gap-2 rounded-lg bg-accent/[0.06] px-4 py-2.5 text-[0.85rem] font-semibold text-accent">
+            <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+            새 문제를 만들고 있어요 — 완료되면 문항 수에 더해져요. 지금도 풀 수 있어요.
+          </div>
+        ) : typeof refillOutcome === "number" && refillOutcome > 0 ? (
+          <div className="mb-6 rounded-lg bg-[#10b981]/[0.08] px-4 py-2.5 text-[0.85rem] font-semibold text-[#047857]">
+            ✓ 새 문제 {refillOutcome}개가 추가됐어요 — 범위를 골라 풀어보세요.
+          </div>
+        ) : refillOutcome !== null ? (
+          <div className="mb-6 rounded-lg bg-bg-secondary px-4 py-2.5 text-[0.85rem] text-text-secondary">
+            {refillOutcome === "failed"
+              ? "문제 생성에 실패했어요 — 잠시 후 다시 시도해 주세요."
+              : "이 자료에서 문제로 만들 만한 설명을 더 찾지 못했어요 — 다시 시도해도 결과가 비슷할 수 있어요."}
+          </div>
+        ) : null}
+
         <div className="mb-2 text-[0.85rem] font-bold text-text-tertiary">범위</div>
         <div className="mb-6 flex flex-col gap-2">
           {summary.tocs.map((toc) => {
@@ -114,9 +142,28 @@ export function ScopeSelect({
                     </span>
                   )}
                 </span>
-                <span className="shrink-0 text-[0.85rem] text-text-tertiary">
-                  {toc.item_count}문항
-                </span>
+                {/* 풀이 기록이 있으면 "안 푼 N"을 함께 — 어디를 풀지 고르는
+                    화면이라 남은 양이 곧 판단 재료다. 재파싱으로 문항이 줄어
+                    기록이 더 많아질 수 있으니 0 밑으로는 안 내려간다. */}
+                {(() => {
+                  const fresh = Math.max(
+                    0,
+                    toc.item_count - (solvedByToc[toc.toc_index] ?? 0),
+                  );
+                  const hasSolved = (solvedByToc[toc.toc_index] ?? 0) > 0;
+                  return (
+                    <span className="shrink-0 text-[0.85rem] text-text-tertiary">
+                      {hasSolved && fresh > 0 && (
+                        <b className="font-semibold text-accent">안 푼 {fresh}</b>
+                      )}
+                      {hasSolved && fresh === 0 && (
+                        <b className="font-semibold text-[#047857]">모두 풀어봄</b>
+                      )}
+                      {hasSolved && " · "}
+                      {toc.item_count}문항
+                    </span>
+                  );
+                })()}
               </button>
             );
           })}
