@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.features.course.models import Course, CourseDocument
 from app.features.course.service import CourseService
+from app.features.course.supply import GENERATED
 from app.features.parsing.models import DocStatus
 from app.features.parsing.models import Document as ParsingDocument
 from app.features.parsing.service import ParsingService
@@ -60,7 +61,12 @@ def sync_ready_documents(db: Session) -> list[str]:
     이미 올린 것은 건너뛴다(재파싱 반영은 `from-parsing?refresh=true`).
     """
     rows = db.scalars(
-        select(ParsingDocument).where(ParsingDocument.status == DocStatus.READY.value)
+        select(ParsingDocument).where(
+            ParsingDocument.status == DocStatus.READY.value,
+            # 26이 만든 보강 자료는 뺀다. 그건 코스 목차에 끼워 쓰는 것이지
+            # 책장에서 골라 읽는 책이 아니다 — 원문이 없고 명세만 들었다.
+            ParsingDocument.source_format != GENERATED,
+        )
     ).all()
     added: list[str] = []
     for row in rows:

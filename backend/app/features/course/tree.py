@@ -112,13 +112,16 @@ class CourseTreeBuilder:
                 body=body.get(row.id, []),
             )
 
+        # 26이 만든 보강 자료의 개념. 뼈대 밖 문서라 load_tree가 안 가져온다.
+        supplied = self._supplied(course, skip=set(concepts_by_topic))
+
         # **course_topics를 순회한다.** 사용자가 고친 목차가 학습 순서다.
         # source_topic_id로 원본 단원을 찾아 그 단원의 개념을 붙인다.
         for topic in course.topics:
-            # 원본이 없는 단원(보강 단원 `origin=inserted`)은 뼈대 개념이 없다.
-            # `source`가 None일 때 사전을 그냥 조회하면 **목차 배정에 실패한
-            # 고아 개념**(topic_id IS NULL)이 딸려 온다 — 실측에서 AWS 코스의
-            # 단원 셋에 같은 고아 11개가 세 번 똑같이 붙었다.
+            # 원본이 없는 단원은 뼈대 개념이 없다. `source`가 None일 때 사전을
+            # 그냥 조회하면 **목차 배정에 실패한 고아 개념**(topic_id IS NULL)이
+            # 딸려 온다 — 실측에서 AWS 코스의 단원 셋에 같은 고아 11개가 세 번
+            # 똑같이 붙었다.
             source = topic.source_topic_id
             if source is None:
                 tree.topics.append(
@@ -129,6 +132,22 @@ class CourseTreeBuilder:
                         origin=topic.origin,
                         plan=topic.plan,
                         source_topic_id=None,
+                    )
+                )
+                continue
+
+            if source in supplied:
+                # 보강 단원(26이 만든 것). 조각이 없고 명세뿐이다 — 학습층이
+                # 거기서 설명을 생성한다. 쪽수도 원문도 없는 게 정상이다.
+                tree.topics.append(
+                    CourseTopicNode(
+                        id=topic.id,
+                        seq=topic.seq,
+                        title=topic.title,
+                        origin=topic.origin,
+                        plan=topic.plan,
+                        source_topic_id=source,
+                        concepts=supplied[source],
                     )
                 )
                 continue
@@ -162,6 +181,50 @@ class CourseTreeBuilder:
             course.title, tree.total_concepts, tree.linked_concepts,
         )
         return tree
+
+    def _supplied(
+        self, course: Course, *, skip: set[uuid.UUID | None]
+    ) -> dict[uuid.UUID, list[CourseConceptOut]]:
+        """26이 만든 보강 단원의 개념. `{doc_topic_id: [개념...]}`.
+
+        `load_tree(skeleton_id)`는 뼈대 문서 하나만 읽으므로 보강 자료의 개념은
+        안 들어온다. 그대로 두면 끼운 단원이 **빈 껍데기로 나간다** — 목차에는
+        보이는데 열면 아무것도 없다.
+
+        `skip`으로 뼈대 단원을 걸러 낸다. 사용자가 뼈대 안의 단원을 복제해
+        `origin=inserted`로 만들 수도 있어서, `origin`이 아니라 **원본이 어느
+        문서 것인가**로 갈라야 한다.
+        """
+        sources = [
+            t.source_topic_id
+            for t in course.topics
+            if t.source_topic_id is not None and t.source_topic_id not in skip
+        ]
+        if not sources:
+            return {}
+
+        rows = self.db.execute(
+            select(Concept, Document.filename)
+            .join(Document, Document.id == Concept.document_id)
+            .where(Concept.topic_id.in_(sources))
+            .order_by(Concept.topic_id, Concept.name)
+        ).all()
+
+        out: dict[uuid.UUID, list[CourseConceptOut]] = defaultdict(list)
+        for concept, filename in rows:
+            out[concept.topic_id].append(
+                CourseConceptOut(
+                    id=concept.id,
+                    name=concept.name,
+                    definition=concept.definition,
+                    source=concept.source,
+                    global_key=concept.global_key,
+                    document_id=concept.document_id,
+                    filename=filename,
+                    # 조각이 없다. 원문도 근거도 없는 게 이 단원의 정의다.
+                )
+            )
+        return dict(out)
 
     def _body_segments_by_topic(
         self,

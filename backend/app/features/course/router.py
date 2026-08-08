@@ -13,6 +13,8 @@
   POST   /courses/{id}/diagnostic/prereqs  ④-2 펼친 과목의 항목별 답
   GET    /courses/{id}/diagnostic/probes  ⑤ 확인 문항
   POST   /courses/{id}/diagnostic/probes  ⑤ 채점
+
+  POST   /courses/{id}/supply             26·27 보강 자료 마련 + 목차에 끼우기
 """
 from __future__ import annotations
 
@@ -39,8 +41,10 @@ from app.features.course.schemas import (
     ProbeResultsIn,
     SubjectAnswersIn,
     SubjectAnswersOut,
+    SupplyOut,
 )
 from app.features.course.service import CourseService
+from app.features.course.supply import SupplyService
 
 router = APIRouter()
 
@@ -242,8 +246,26 @@ def diagnostic_grade(
     body: ProbeResultsIn,
     db: Session = Depends(get_db),
 ) -> ProbeGradeOut:
-    """⑤ 채점. 틀리면 그 **과목 전체**를 heard로 낮춘다."""
+    """⑤ 채점. 한 답이 과목 하나를 정한다."""
     course = _course(course_id, db)
     result = DiagnosticService(db).grade(course, results=body.results)
     db.commit()
     return ProbeGradeOut(**result)
+
+
+@router.post("/{course_id}/supply", response_model=SupplyOut)
+async def supply(
+    course_id: uuid.UUID,
+    refresh: bool = Query(False, description="이미 끼운 단원의 plan을 다시 맞춘다"),
+    db: Session = Depends(get_db),
+) -> SupplyOut:
+    """26·27 — 진단이 "모른다"고 한 과목의 자료를 마련하고 목차 앞에 끼운다.
+
+    **여러 번 불러도 안전하다.** 자료는 (분야, 과목) 지문으로 한 번만 만들고,
+    이미 끼운 단원은 `plan`만 다시 맞춘다 — 진단을 다시 해도 사용자가 고친
+    목차 순서가 안 날아간다.
+    """
+    course = _course(course_id, db)
+    result = await SupplyService(db).run(course, refresh=refresh)
+    db.commit()
+    return SupplyOut(**result)

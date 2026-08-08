@@ -279,6 +279,20 @@ class ProbeResultsIn(BaseModel):
     results: dict[uuid.UUID, bool]
 
 
+class SupplyOut(BaseModel):
+    """26·27 결과. 자료를 몇 개 마련했고 목차에 몇 개 끼웠나."""
+
+    # 선수 과목 수 (기각된 것 제외).
+    subjects: int = 0
+    # 명세를 새로 쓴 과목 / 이미 있어서 그대로 쓴 과목.
+    # 같은 (분야, 과목)이면 남이 만든 것을 그대로 받으므로 두 번째부터는 reused다.
+    made: int = 0
+    reused: int = 0
+    # 목차에 새로 끼운 단원 / plan만 다시 맞춘 단원.
+    inserted: int = 0
+    updated: int = 0
+
+
 class ProbeGradeOut(BaseModel):
     """채점 결과. `subjects_left`가 0이면 진단이 끝났다.
 
