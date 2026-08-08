@@ -18,6 +18,7 @@
 """
 from __future__ import annotations
 
+import logging
 import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -46,6 +47,7 @@ from app.features.course.schemas import (
 from app.features.course.service import CourseService
 from app.features.course.supply import SupplyService
 
+_log = logging.getLogger("uvicorn.error")
 router = APIRouter()
 
 
@@ -268,4 +270,16 @@ async def supply(
     course = _course(course_id, db)
     result = await SupplyService(db).run(course, refresh=refresh)
     db.commit()
+
+    # **목차가 바뀌었으면 학습 store도 다시 조립한다.**
+    # 안 하면 보강 단원을 끼워 놓고도 학습 화면엔 안 나온다 — 실측에서 4단원을
+    # 넣었는데 화면은 3단원 그대로였다. 클라이언트가 잊을 수 있는 자리라
+    # 서버가 책임진다. (지연 import — bridge가 이 패키지를 쓴다)
+    if result["inserted"] or result["updated"]:
+        from app.features.curriculum.bridge import ingest_course
+
+        try:
+            await ingest_course(db, course_id, refresh=True)
+        except Exception as exc:  # noqa: BLE001 — 조달 자체는 성공했다
+            _log.warning("보강 뒤 학습 store 갱신 실패 %s: %s", course_id, exc)
     return SupplyOut(**result)
