@@ -1,6 +1,7 @@
 """코스 라우터.
 
   POST   /courses                        자료 묶어 수업 만들기 (역할 제안 + 목차 복사)
+  GET    /courses                        내가 만든 수업 목록
   GET    /courses/{id}                   자료·역할·목차
   GET    /courses/{id}/tree              뼈대 목차 + 본문 자료 설명
   GET    /courses/{id}/prereqs           선수 판정
@@ -64,6 +65,17 @@ def create_course(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
     return CourseOut.model_validate(course)
+
+
+@router.get("", response_model=list[CourseOut])
+def list_courses(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[CourseOut]:
+    """내가 만든 수업. 책장은 curriculum 목록을 쓰지만 문제집·관리는 여기다."""
+    return [
+        CourseOut.model_validate(c) for c in CourseService(db).list_for(user_id)
+    ]
 
 
 @router.get("/{course_id}", response_model=CourseOut)

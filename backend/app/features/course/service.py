@@ -171,7 +171,39 @@ class CourseService:
             )
         return len(topics)
 
+    def ensure_topics(self, course: Course) -> int:
+        """목차가 비어 있고 뼈대에 목차가 생겼으면 지금 복사한다.
+
+        위저드·curl이 파싱 끝나기 전에 코스를 만들면 `copy_topics`가 0을 남긴다.
+        파싱이 끝난 뒤 처음 tree/sync할 때 여기서 채운다 — 안 채우면 빈 수업이
+        책장에 영원히 남는다.
+        """
+        if course.topics:
+            return 0
+        skeleton_id, _ = self._roles(course)
+        if skeleton_id is None:
+            return 0
+        skeleton = self.db.get(Document, skeleton_id)
+        if skeleton is None:
+            return 0
+        n = self.copy_topics(course, skeleton)
+        if n:
+            self.db.flush()
+            self.db.refresh(course)
+            _log.info("코스 목차 지연 복사: %r — %d개", course.title, n)
+        return n
+
     # ── 조회 ──────────────────────────────────────────────────────
+
+    def list_for(self, user_id: uuid.UUID) -> list[Course]:
+        """이 사람이 만든 수업. 새것이 위로."""
+        return list(
+            self.db.scalars(
+                select(Course)
+                .where(Course.user_id == user_id)
+                .order_by(Course.created_at.desc())
+            )
+        )
 
     def get(self, course_id: uuid.UUID) -> Course:
         course = self.db.get(Course, course_id)
@@ -224,6 +256,7 @@ class CourseService:
         있어서 같은 두 책을 쓰는 다음 사람은 계산이 없다.
         """
         course = self.get(course_id)
+        self.ensure_topics(course)
         skeleton_id, body_ids = self._roles(course)
 
         linker = link.ConceptLinker(self.db)
@@ -244,6 +277,8 @@ class CourseService:
         적이 없으면 본문 없이 뼈대만 나오고, 다음 `tree()` 호출이 채운다.
         """
         course = self.get(course_id)
+        if self.ensure_topics(course):
+            self.db.commit()
         skeleton_id, body_ids = self._roles(course)
         return CourseTreeBuilder(self.db).build(
             course, skeleton_id=skeleton_id, body_ids=body_ids

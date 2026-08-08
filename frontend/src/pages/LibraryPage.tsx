@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQueries, useQueryClient } from "@tanstack/react-query";
 import {
@@ -14,11 +14,18 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 
+import { createCourse } from "@/features/course/api";
+import {
+  purposeToGoal,
+  usePendingCourse,
+  type PendingCourse,
+} from "@/features/course-create/pendingCourse";
 import { fetchDocument, type DocumentOut } from "@/features/curriculum/api/curriculum";
 import {
   curriculumKeys,
   useDocuments,
 } from "@/features/curriculum/queries/useCurriculum";
+import { saveConfig } from "@/features/diagnostic/api";
 import {
   PARSE_LABEL,
   parseProgress,
@@ -242,12 +249,113 @@ function PendingCard({
   );
 }
 
+// 위저드가 남긴 수업 의도 — 자료 N개를 한 권으로 묶는 중.
+function PendingCourseCard({
+  course,
+  docs,
+  error,
+  cover,
+  onDismiss,
+}: {
+  course: PendingCourse;
+  docs: (ParsingDocumentOut | undefined)[];
+  error: string | null;
+  cover: Cover;
+  onDismiss: () => void;
+}) {
+  const failed = docs.some((d) => d?.status === "failed");
+  const readyCount = docs.filter((d) => d?.status === "ready").length;
+  const total = course.documentIds.length;
+  const progress = total
+    ? Math.round(
+        (docs.reduce((sum, d) => sum + (d ? parseProgress(d.status) : 0), 0) / total) * 100,
+      )
+    : 0;
+  const broken = failed || Boolean(error);
+  const names = course.documentIds
+    .map((id) => course.filenames[id])
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm">
+      <div
+        className={
+          broken
+            ? "relative flex h-[140px] items-center justify-center bg-gradient-to-br from-[#7f1d1d] to-[#b91c1c] text-white"
+            : `relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`
+        }
+      >
+        {broken ? (
+          <WarningCircleIcon weight="fill" className="text-[3.5rem] opacity-90" />
+        ) : (
+          <span className="h-9 w-9 animate-spin rounded-full border-[3px] border-white/40 border-t-white" />
+        )}
+        <span className="absolute right-4 top-4 rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur-sm">
+          자료 {readyCount}/{total}
+        </span>
+      </div>
+
+      <div className="flex flex-1 flex-col p-6">
+        <h4 className="mb-1 truncate text-[1.125rem] font-bold leading-snug text-text-primary">
+          {course.title}
+        </h4>
+        <p
+          className={`mb-2 flex-1 text-[0.9rem] ${broken ? "text-red-600" : "text-text-secondary"}`}
+        >
+          {error
+            ? error
+            : failed
+              ? "자료 분석에 실패한 파일이 있어요."
+              : readyCount === total
+                ? "수업을 묶는 중…"
+                : "자료를 분석한 뒤 수업 한 권으로 묶어요."}
+        </p>
+        <p className="mb-6 truncate text-[0.75rem] text-text-tertiary">{names}</p>
+
+        {!broken && (
+          <div className="mb-4">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-bg-secondary">
+              <div
+                className="h-full rounded-full bg-accent transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {broken ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="mt-auto inline-flex w-full items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:bg-bg-secondary"
+          >
+            치우기
+          </button>
+        ) : (
+          <div className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
+            수업 준비 중…
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function LibraryPage() {
   const navigate = useNavigate();
   const qc = useQueryClient();
   const pending = usePendingUploads((s) => s.pending);
   const dropPending = usePendingUploads((s) => s.remove);
+  const pendingCourse = usePendingCourse((s) => s.pending);
+  const clearPendingCourse = usePendingCourse((s) => s.clear);
   const { data: docIds, isLoading, isError } = useDocuments();
+  const [assembleError, setAssembleError] = useState<string | null>(null);
+  const assembling = useRef(false);
+
+  const courseDocIds = new Set(pendingCourse?.documentIds ?? []);
+  // 수업으로 묶을 자료는 개별 대기 카드로 안 띄운다 — 한 장의 "수업 준비 중"으로.
+  const lonePending = pending.filter((p) => !courseDocIds.has(p.docId));
 
   const docs = useQueries({
     queries: (docIds ?? []).map((id) => ({
@@ -257,16 +365,32 @@ export function LibraryPage() {
   });
 
   const parsing = useParsingDocuments(pending.map((p) => p.docId));
+  const parsingById = new Map(
+    parsing
+      .map((q) => q.data)
+      .filter((d): d is ParsingDocumentOut => Boolean(d))
+      .map((d) => [d.id, d]),
+  );
+  // effect 의존성용 — Map은 매 렌더 새 객체라 키가 바뀌는 문자열로 본다.
+  const courseStatusKey = (pendingCourse?.documentIds ?? [])
+    .map((id) => `${id}:${parsingById.get(id)?.status ?? "?"}`)
+    .join("|");
 
+  // 수업으로 묶기 직전인 자료는 책 카드로 안 띄운다 — 코스가 생기면 멤버로 빠진다.
   const ready = docs
     .map((q) => q.data)
-    .filter((d): d is DocumentOut => Boolean(d));
+    .filter((d): d is DocumentOut => Boolean(d) && !courseDocIds.has(d!.docId));
 
   // 파싱이 끝나도 커리큘럼 목록은 다시 물어봐야 안다 — 그 목록 API가 호출될
   // 때 ready 문서를 학습 store로 끌어오기 때문이다(파싱→학습 이음매).
+  // 다만 곧 코스로 묶일 자료는 목록을 당겨도 개별 카드가 되므로, 코스 조립이
+  // 끝난 뒤에만 무효화한다(아래 assemble effect).
   const readyKey = parsing
     .map((q) => q.data)
-    .filter((d): d is ParsingDocumentOut => d?.status === "ready")
+    .filter(
+      (d): d is ParsingDocumentOut =>
+        d?.status === "ready" && !courseDocIds.has(d.id),
+    )
     .map((d) => d.id)
     .join(",");
   useEffect(() => {
@@ -275,13 +399,47 @@ export function LibraryPage() {
   }, [readyKey, qc]);
 
   // 책장이 그 자료를 알아본 뒤에야 대기 목록에서 뺀다. 먼저 빼면 카드가
-  // 한 번 사라졌다가 다시 나타난다.
+  // 한 번 사라졌다가 다시 나타난다. 코스 멤버 후보는 조립이 뺄 때까지 둔다.
   useEffect(() => {
     if (!docIds) return;
-    for (const p of pending) {
+    for (const p of lonePending) {
       if (docIds.includes(p.docId)) dropPending(p.docId);
     }
-  }, [docIds, pending, dropPending]);
+  }, [docIds, lonePending, dropPending]);
+
+  // 전부 ready면 POST /courses. 역할은 서버가 정하고, purpose는 진단 goal로만 넘긴다.
+  useEffect(() => {
+    if (!pendingCourse || assembling.current || assembleError) return;
+    const statuses = pendingCourse.documentIds.map((id) => parsingById.get(id));
+    if (statuses.some((d) => !d)) return;
+    if (statuses.some((d) => d!.status === "failed")) return;
+    if (!statuses.every((d) => d!.status === "ready")) return;
+
+    assembling.current = true;
+    const { documentIds, title, purpose } = pendingCourse;
+    void (async () => {
+      try {
+        const course = await createCourse({ document_ids: documentIds, title });
+        try {
+          await saveConfig(course.id, { goal: purposeToGoal(purpose) });
+        } catch {
+          // 목표는 진단 화면에서 다시 고를 수 있다. 코스 자체가 만들어진 게 본전.
+        }
+        for (const id of documentIds) dropPending(id);
+        clearPendingCourse();
+        setAssembleError(null);
+        await qc.invalidateQueries({ queryKey: curriculumKeys.documents });
+      } catch (e) {
+        const detail = (e as { response?: { data?: { detail?: string } } })?.response
+          ?.data?.detail;
+        setAssembleError(detail ?? (e as Error)?.message ?? "수업을 만들지 못했어요.");
+      } finally {
+        assembling.current = false;
+      }
+    })();
+    // parsingById는 courseStatusKey로 대표한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCourse, courseStatusKey, assembleError, dropPending, clearPendingCourse, qc]);
 
   // 이어서 = 한 번이라도 본 자료 중 준비도가 가장 높은 것(아직 미완).
   const continueDoc = ready
@@ -289,11 +447,17 @@ export function LibraryPage() {
     .sort((a, b) => b.readiness - a.readiness)[0];
 
   const coverById = assignCovers([
-    ...pending.map((p) => p.docId),
+    ...(pendingCourse ? [pendingCourse.title] : []),
+    ...lonePending.map((p) => p.docId),
     ...ready.map((d) => d.docId),
   ]);
 
-  const empty = !isLoading && !isError && ready.length === 0 && pending.length === 0;
+  const empty =
+    !isLoading &&
+    !isError &&
+    ready.length === 0 &&
+    lonePending.length === 0 &&
+    !pendingCourse;
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-12 py-12">
@@ -355,16 +519,33 @@ export function LibraryPage() {
                 <p className="text-[0.9rem] text-text-secondary">새 자료를 책장에 꽂아보세요.</p>
               </button>
 
-              {pending.map((p, i) => (
-                <PendingCard
-                  key={p.docId}
-                  filename={p.filename}
-                  doc={parsing[i]?.data}
-                  unreachable={Boolean(parsing[i]?.isError)}
-                  cover={coverById.get(p.docId) ?? COVERS[0]}
-                  onDismiss={() => dropPending(p.docId)}
+              {pendingCourse && (
+                <PendingCourseCard
+                  course={pendingCourse}
+                  docs={pendingCourse.documentIds.map((id) => parsingById.get(id))}
+                  error={assembleError}
+                  cover={coverById.get(pendingCourse.title) ?? COVERS[0]}
+                  onDismiss={() => {
+                    for (const id of pendingCourse.documentIds) dropPending(id);
+                    clearPendingCourse();
+                    setAssembleError(null);
+                  }}
                 />
-              ))}
+              )}
+
+              {lonePending.map((p) => {
+                const q = parsing.find((row) => row.data?.id === p.docId);
+                return (
+                  <PendingCard
+                    key={p.docId}
+                    filename={p.filename}
+                    doc={parsingById.get(p.docId) ?? q?.data}
+                    unreachable={Boolean(q?.isError)}
+                    cover={coverById.get(p.docId) ?? COVERS[0]}
+                    onDismiss={() => dropPending(p.docId)}
+                  />
+                );
+              })}
 
               {ready.map((doc) => (
                 <BookCard

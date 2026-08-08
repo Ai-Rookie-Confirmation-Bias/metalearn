@@ -15,11 +15,3 @@ export type Material = {
   docId?: string; // 업로드 성공 시 서버가 준 파싱 문서 UUID
   error?: string; // 실패 사유. 있으면 이 행은 제출에 못 들어간다
 };
-
-// POST /courses 요청 바디 모양 (백엔드 붙으면 이대로 전송).
-// ⚠️ 아직 안 부른다 — 코스 목록 API가 없어 책장이 코스가 아니라 자료 단위다.
-export type CreateCoursePayload = {
-  documentIds: string[]; // 업로드 후 서버가 준 documentId들
-  primaryIds: string[]; // 그중 메인
-  purpose: Purpose;
-};
