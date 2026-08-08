@@ -17,6 +17,7 @@ import { CurriculumPage } from "@/pages/CurriculumPage";
 import { ChapterPage } from "@/pages/ChapterPage";
 import { FormativePage } from "@/pages/FormativePage";
 import { ReviewPage } from "@/pages/ReviewPage";
+import { DiagnosticPage } from "@/pages/DiagnosticPage";
 import { SectionPage } from "@/pages/SectionPage";
 import { QuizPage } from "@/pages/QuizPage";
 
@@ -68,6 +69,10 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <CurriculumPage /> },
       { path: "chapters/:index", element: <ChapterPage /> },
+      // 진단 — 학습 **전에** 한 번. 목차 밖이라 자료 아래 바로 둔다.
+      // 코스에만 있다(선수 개념이 코스 층에서 나온다). 자료 하나면 404를
+      // 받고 화면이 "학습으로 가기"만 보여준다.
+      { path: "diagnostic", element: <DiagnosticPage /> },
       // 🔁 망각곡선이 불러온 화면들. 목차 밖이라 자료 아래 바로 둔다
       { path: "review", element: <ReviewPage /> },
       { path: "chapters/:index/formative", element: <FormativePage /> },
