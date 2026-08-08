@@ -39,13 +39,22 @@ def build_judge_prompt(items: list[CandidateItem], neutral_example: bool = False
 
 {chr(10).join(blocks)}
 
-채점은 사람이 아니라 문자열 완전일치로 이뤄진다. 아래를 하나라도 어기면 불합격이다.
+채점은 사람이 아니라 코드가 한다. 채점 방식은 유형별로 다르다 — 잣대를 다른 유형에
+적용하지 마라:
+- 객관식(mcq)은 선지 **번호**로, OX(trueFalse)는 **참/거짓**으로 채점된다.
+  정답 문구가 원문 표현과 같은지는 채점과 무관하다.
+- 단답(shortAnswer)·빈칸(cloze)만 표기 대조로 채점된다. 공백·대소문자는 무시되고
+  인정 답안 목록이 있으므로 표기 차이는 관대하다. 다만 답이 문장형이거나 같은 뜻의
+  표현이 무한하면 목록으로 감당이 안 되니 불합격이다.
 
-- Q1. 정답이 근거 원문으로 뒷받침되는가?
+아래를 하나라도 어기면 불합격이다.
+
+- Q1. 정답이 근거 원문으로 뒷받침되는가? (원문에 같은 문자열이 그대로 있어야 한다는
+      뜻이 아니다 — 원문 뜻으로 도출되면 합격)
 - Q2. (객관식) 오답 선지 중 원문에서 사실상 참이 되는 것이 있는가? 있으면 불합격 (정답이 2개가 됨)
 - Q3. (객관식) 선지가 정확히 4개인가? 아니면 불합격
-- Q4. 정답을 그대로 받아쓸 수 있는가? 정답이 한 문장만큼 길거나, 같은 뜻을 여러 표현으로
-      쓸 수 있어 완전일치가 사실상 불가능하면 불합격
+- Q4. (단답·빈칸) 정답을 그대로 받아쓸 수 있는가? 정답이 한 문장만큼 길거나, 같은 뜻을
+      여러 표현으로 쓸 수 있어 표기 대조가 사실상 불가능하면 불합격
 - Q5. (빈칸) 빈칸이 3개 이상이거나, 빈칸들이 순서가 바뀌어도 맞는 나열이면 불합격
       (채점이 빈칸 순서를 따지므로 정답이 유일하지 않게 된다)
 - Q6. (빈칸) 빈칸을 정답으로 채운 문장이 자연스러운 한국어 문장인가? 비문이면 불합격
@@ -55,17 +64,25 @@ def build_judge_prompt(items: list[CandidateItem], neutral_example: bool = False
 - Q10. (빈칸) 빈칸이 번호·기호처럼 의미 없는 자리가 아닌가? 그렇다면 불합격
 - Q11. 문항 표현에 모순·모호함이 없는가?
 
+다음은 **불합격 사유가 아니다** (실제 검수에서 반복된 오판):
+- 객관식·OX에서 정답 "문구"가 원문 표현과 다른 것 — 번호·참/거짓으로 채점되므로 무관하다
+- 정답 단어가 원문에 토씨 그대로 등장하지 않는 것 — 원문 뜻으로 뒷받침되면 합격이다
+
 [출력] JSON 객체 하나만 출력하라. 문항 {len(items)}개 **전부**에 대한 판정을 verdicts
 배열에 담아라 (배열 길이 = {len(items)}). reason은 **결론만 한 문장(60자 이내)** —
 판정 과정·Q번호 검토·중간 추론을 쓰면 응답이 잘려 전체가 무효 처리된다. 합격이면 빈 문자열.
 {example}"""
 
 
-def build_solve_prompt(items: list[CandidateItem]) -> str:
+def build_solve_prompt(items: list[CandidateItem], neutral_example: bool = False) -> str:
     """풀이 왕복 검증 — 정답을 가린 문항을 근거만 보고 실제로 풀게 한다.
 
     "정답이 유일한가?"를 묻지 않고 실험한다: 풀이자가 키 정답에 도달하지
     못하거나 복수 정답이라 판단하면 그 문항은 모호하다는 실험적 증거.
+
+    neutral_example=True면 형식 설명·출력 예시에서 구체적 답 값을 뺀다 —
+    K-EXAONE이 예시 값("[2]", "델파이 기법")을 답으로 그대로 복사하는 실측
+    문제 대응 (심판 neutral_example과 같은 처방, 배심원단 2차 풀이용).
     """
     blocks = [
         f"[문항 {i}] ({it.type})\n"
@@ -74,13 +91,26 @@ def build_solve_prompt(items: list[CandidateItem]) -> str:
         for i, it in enumerate(items)
     ]
 
+    if neutral_example:
+        mcq_line = (
+            "- mcq: 정답이라고 볼 수 있는 선지 번호(0부터)를 전부 담은 배열. 확실히 하나면\n"
+            "  번호 하나만 담고, 둘 이상이 정답으로 보이면 모두 나열하라 (억지로 하나를 고르지 마라)"
+        )
+        example = '{"answers":[{"index":0,"answer":<문항 0의 실제 답>},{"index":1,"answer":<문항 1의 실제 답>}]}'
+        example += "\nanswer 값은 반드시 각 문항을 직접 푼 실제 답이어야 한다. 예시·형식 설명의 문구를 복사하지 마라."
+    else:
+        mcq_line = (
+            "- mcq: 정답이라고 볼 수 있는 선지 번호(0부터)를 전부 담은 배열. 확실히 하나면 [2]처럼 하나만,\n"
+            "  둘 이상이 정답으로 보이면 모두 나열하라 (억지로 하나를 고르지 마라)"
+        )
+        example = '{"answers":[{"index":0,"answer":[2]},{"index":1,"answer":"델파이 기법"}]}'
+
     return f"""너는 수험생이다. 각 문항을 근거 원문만 보고 풀어라.
 
 {chr(10).join(blocks)}
 
 [답 형식 — 유형별]
-- mcq: 정답이라고 볼 수 있는 선지 번호(0부터)를 전부 담은 배열. 확실히 하나면 [2]처럼 하나만,
-  둘 이상이 정답으로 보이면 모두 나열하라 (억지로 하나를 고르지 마라)
+{mcq_line}
 - cloze: 빈칸 순서대로 답 문자열 배열
 - shortAnswer: 답 문자열 하나
 - trueFalse: true 또는 false
@@ -88,7 +118,7 @@ def build_solve_prompt(items: list[CandidateItem]) -> str:
 [출력] JSON 객체 하나만 출력하라. 다른 텍스트 금지. **문항 {len(items)}개 전부**의 답을
 answers 배열에 담아라 — 배열 길이가 정확히 {len(items)}이어야 하며, 일부만 답하면
 답하지 않은 문항이 전부 폐기된다. index는 0부터 {len(items) - 1}까지 하나씩:
-{{"answers":[{{"index":0,"answer":[2]}},{{"index":1,"answer":"델파이 기법"}}]}}"""
+{example}"""
 
 
 def build_revision_prompt(items: list[CandidateItem], reasons: list[str]) -> str:

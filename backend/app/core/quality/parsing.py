@@ -97,6 +97,35 @@ def extract_list(raw: str) -> list | None:
     return data if isinstance(data, list) else None
 
 
+def _entry_indices(data: list, n_items: int) -> list[int | None]:
+    """응답 항목들을 문항 index에 배정한다.
+
+    index 위치 추정(pos)은 **응답 전체에 index가 하나도 없을 때만** 쓴다
+    (K-EXAONE이 index를 통째로 빼먹는 실측 형태). 일부만 index가 있는 응답은
+    깨진 배치라 위치 추정이 답을 옆 문항에 붙인다 — 151문항 재검증 감사에서
+    간트차트↔FEP 답이 뒤바뀐 원인. 그런 항목은 판독 불가(None)로 둔다.
+    같은 index가 두 번 오면 첫 값만 믿는다 (나중 값이 덮어쓰지 않게).
+    """
+    has_any_index = any(
+        isinstance(e, dict) and "index" in e for e in data if isinstance(e, dict)
+    )
+    assigned: list[int | None] = []
+    seen: set[int] = set()
+    for pos, entry in enumerate(data):
+        i: int | None = None
+        if isinstance(entry, dict):
+            try:
+                i = int(entry["index"]) if "index" in entry else (None if has_any_index else pos)
+            except (TypeError, ValueError):
+                i = None
+        if i is not None and (i in seen or not 0 <= i < n_items):
+            i = None
+        if i is not None:
+            seen.add(i)
+        assigned.append(i)
+    return assigned
+
+
 def parse_verdicts(raw: str, n_items: int) -> list[tuple[bool, str] | None]:
     """심판 응답 → 문항별 (합격, 사유) 또는 None(판독 불가).
 
@@ -107,13 +136,12 @@ def parse_verdicts(raw: str, n_items: int) -> list[tuple[bool, str] | None]:
     verdicts: list[tuple[bool, str] | None] = [None] * n_items
     if not isinstance(data, list):
         return verdicts
-    for pos, entry in enumerate(data):
+    for i, entry in zip(_entry_indices(data, n_items), data):
+        if i is None:
+            continue
         try:
-            # 모델이 index를 빼먹는 경우(K-EXAONE 실측) 위치로 대응
-            i = int(entry.get("index", pos))
-            if 0 <= i < n_items:
-                verdicts[i] = (bool(entry["pass"]), str(entry.get("reason", "")))
-        except (KeyError, TypeError, ValueError, AttributeError):
+            verdicts[i] = (bool(entry["pass"]), str(entry.get("reason", "")))
+        except (KeyError, TypeError, ValueError):
             continue
     return verdicts
 
@@ -124,13 +152,10 @@ def parse_solutions(raw: str, n_items: int) -> list:
     answers: list = [None] * n_items
     if not isinstance(data, list):
         return answers
-    for pos, entry in enumerate(data):
-        try:
-            i = int(entry.get("index", pos))
-            if 0 <= i < n_items:
-                answers[i] = entry.get("answer")
-        except (KeyError, TypeError, ValueError, AttributeError):
+    for i, entry in zip(_entry_indices(data, n_items), data):
+        if i is None:
             continue
+        answers[i] = entry.get("answer")
     return answers
 
 

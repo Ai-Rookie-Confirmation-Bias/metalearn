@@ -281,6 +281,27 @@ def test_mechanical_check_cloze_phrase_blank_limits():
     assert mechanical_check("cloze", cloze("시제품"), ev) is None  # 낱말 빈칸은 통과
 
 
+def test_mechanical_check_cloze_arithmetic_result_blank():
+    """빈칸이 산식 결과 자리('64 - 2 = __')면 폐기 — 지문이 답을 계산으로 노출."""
+    from app.core.quality.checks import mechanical_check
+
+    ev = "전체 호스트는 64개, 제외하면 64 - 2 = 62 개"
+    arith = {"segments": [
+        {"kind": "text", "text": "제외하면 64 - 2 = "},
+        {"kind": "blank", "answer": "62", "aliases": []},
+        {"kind": "text", "text": " 개"},
+    ]}
+    assert "계산 결과 자리" in mechanical_check("cloze", arith, ev)
+
+    normal = {"segments": [
+        {"kind": "text", "text": "호스트 수 계산에서 제외하는 두 주소는 네트워크 주소와 "},
+        {"kind": "blank", "answer": "브로드캐스트 주소", "aliases": []},
+        {"kind": "text", "text": "이다."},
+    ]}
+    ev2 = "네트워크 주소와 브로드캐스트 주소를 제외한다"
+    assert mechanical_check("cloze", normal, ev2) is None
+
+
 def test_check_solution_short_answer_colon_prefix():
     """단답에 '용어 : 정의'로 답하는 pro3 편차 — 콜론 앞 용어로 채점."""
     from app.core.quality.checks import check_solution

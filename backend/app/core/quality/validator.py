@@ -98,24 +98,43 @@ async def _judge_stage(
     survivors = [i for i, v in enumerate(verdicts) if v.ok]
     for start in range(0, len(survivors), config.batch_size):
         idx_batch = survivors[start : start + config.batch_size]
-        batch = [verdicts[i].item for i in idx_batch]
-        # json_mode: Solar(pro3)가 배열을 객체 이어붙임으로 답하는 문제를
-        # response_format=json_object로 원천 차단. EXAONE 클라이언트는 kwargs를
-        # 무시하므로(model 포함) 배심원 콜에는 영향 없다.
-        raw = await llm.generate(
-            build_judge_prompt(batch, neutral_example=jury),
-            model=settings.QUIZ_CHAT_MODEL,
-            json_mode=True,
+        results = await _call_judge(
+            [verdicts[i].item for i in idx_batch], llm, jury
         )
-        results = parsing.parse_verdicts(raw, len(batch))
+        # 판독 불가만 모아 1회 재질의 — 형식 난조(깨진 JSON)는 문항 결함이
+        # 아니므로, 곧장 탈락/기권시키지 않고 다시 물어본다 (재검증 감사 실측:
+        # 판독 불가의 상당수가 재질의 한 번에 정상 응답).
+        unread = [pos for pos, r in enumerate(results) if r is None]
+        if unread:
+            retry = await _call_judge(
+                [verdicts[idx_batch[pos]].item for pos in unread], llm, jury
+            )
+            for pos, r in zip(unread, retry):
+                results[pos] = r
         for i, res in zip(idx_batch, results):
             if res is None:
                 if not jury:  # 단독/1차 심판은 보수적 — 못 읽으면 불합격
-                    _fail(verdicts, i, "judge", "심판 응답 파싱 실패")
+                    _fail(verdicts, i, "judge", "심판 응답 파싱 실패 (재질의 포함)")
                 continue  # 배심원 기권 — 1차 판정 유지
             ok, reason = res
+            if jury and not ok and not reason.strip():
+                continue  # 배심의 무사유 불합격 = 판독 불가에 준함 → 기권 (감사 실측 2건)
             if not ok:
                 _fail(verdicts, i, "judge", f"[배심] {reason}" if jury else reason)
+
+
+async def _call_judge(
+    batch: list[CandidateItem], llm: LLMClient, jury: bool
+) -> list[tuple[bool, str] | None]:
+    # json_mode: Solar(pro3)가 배열을 객체 이어붙임으로 답하는 문제를
+    # response_format=json_object로 원천 차단. EXAONE 클라이언트는 kwargs를
+    # 무시하므로(model 포함) 배심원 콜에는 영향 없다.
+    raw = await llm.generate(
+        build_judge_prompt(batch, neutral_example=jury),
+        model=settings.QUIZ_CHAT_MODEL,
+        json_mode=True,
+    )
+    return parsing.parse_verdicts(raw, len(batch))
 
 
 async def _solve_stage(
@@ -127,17 +146,16 @@ async def _solve_stage(
     ]
     for start in range(0, len(survivors), config.batch_size):
         idx_batch = survivors[start : start + config.batch_size]
-        batch = [verdicts[i].item for i in idx_batch]
-        raw = await llm.generate(
-            build_solve_prompt(batch), model=settings.QUIZ_CHAT_MODEL, json_mode=True
-        )
-        answers = parsing.parse_solutions(raw, len(batch))
-        if any(a is None for a in answers):
-            # "풀이자 응답 없음"의 원인 추적용 — 어떤 형태로 답했는지 남긴다
-            logger.warning(
-                "풀이자 응답 일부 판독 불가 (%d/%d) — raw 앞 300자: %r",
-                sum(a is None for a in answers), len(batch), raw[:300],
+        answers = await _call_solve([verdicts[i].item for i in idx_batch], llm, jury)
+        # 판독 불가만 모아 1회 재질의 — 깨진 배치 응답의 형식 난조를 문항
+        # 결함으로 처리하지 않는다 (심판 재질의와 같은 원칙)
+        unread = [pos for pos, a in enumerate(answers) if a is None]
+        if unread:
+            retry = await _call_solve(
+                [verdicts[idx_batch[pos]].item for pos in unread], llm, jury
             )
+            for pos, a in zip(unread, retry):
+                answers[pos] = a
         for i, answer in zip(idx_batch, answers):
             if answer is None and jury:
                 continue  # 배심원 기권
@@ -145,6 +163,22 @@ async def _solve_stage(
             reason = check_solution(it.type, it.data, answer)
             if reason:
                 _fail(verdicts, i, "solve", f"[배심] {reason}" if jury else reason)
+
+
+async def _call_solve(batch: list[CandidateItem], llm: LLMClient, jury: bool) -> list:
+    raw = await llm.generate(
+        build_solve_prompt(batch, neutral_example=jury),
+        model=settings.QUIZ_CHAT_MODEL,
+        json_mode=True,
+    )
+    answers = parsing.parse_solutions(raw, len(batch))
+    if any(a is None for a in answers):
+        # "풀이자 응답 없음"의 원인 추적용 — 어떤 형태로 답했는지 남긴다
+        logger.warning(
+            "풀이자 응답 일부 판독 불가 (%d/%d) — raw 앞 300자: %r",
+            sum(a is None for a in answers), len(batch), raw[:300],
+        )
+    return answers
 
 
 async def _revise_and_rescreen(
