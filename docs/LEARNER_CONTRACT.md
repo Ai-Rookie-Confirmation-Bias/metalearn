@@ -385,6 +385,7 @@ mcq      {question, options[], answer, explanation, concept, sectionId}
 | ~~**업로드 화면**~~ | 08-07에 채웠다. `/create`가 `POST /api/parsing/documents`를 부르고 책장이 "분석 중"으로 폴링한다 |
 | ~~**메타인지 분석**~~ | 08-08에 채웠다(`GET /api/curriculum/analysis` + `/analysis`). 다만 실측 `byKind`는 아직 `{retrieval: 4}` 하나 — **화면은 생겼는데 4출처는 아직 안 찼다** |
 | ~~**코스 만드는 자리**~~ | 08-08에 채웠다. `/create` → ready 뒤 `POST /api/courses` → 책장에 수업 한 권. `GET /api/courses` 목록도 있다 |
+| ~~**문제집 화면**~~ | 08-08~09에 실 API로 이었다(`/quiz`). 학습 누적과 분리(확정안 §7-③). 생성은 15분이라 시연 전에 건다 |
 
 ### 2026-08-07 이후 상태
 

@@ -5,7 +5,7 @@
 - **★ integration 브랜치를 처음 켜는 사람** → **[INTEGRATION.md](INTEGRATION.md)**
   — 무엇이 합쳐졌나 · 5분 안에 띄우기 · 실제로 도는 API · 각자 할 일
 - **★ 데모를 준비하는 사람** → **[DEMO.md](DEMO.md)**
-  — 미리 만들 것 / 실연할 것, 흐름 9장면, 시연 전 정리할 것
+  — **3분 대본** · 사전 준비 체크리스트 · 위험/대비
 - **문제 생성을 이어서** → [QUIZ.md](QUIZ.md)(설계) → [QUIZ_TUNING.md](QUIZ_TUNING.md) 맨 위 "지금 유효한 결론" → [WORKLOG.md](WORKLOG.md)
 - **학습 커리큘럼을 이어서** → [LEARNER_CONTRACT.md](LEARNER_CONTRACT.md)(계약) → [WORK_LOG.md](WORK_LOG.md)(일지)
 - **파싱을 이어서** → [STATUS.md](STATUS.md)(항목별 현황이 기준) → [PARSING_v3.md](PARSING_v3.md)
@@ -28,7 +28,8 @@
 
 | 파일 | 역할 | 성격 |
 | --- | --- | --- |
-| [INTEGRATION.md](INTEGRATION.md) | 세 브랜치가 합쳐진 상태 — 실행법, 실제 API 31개, 어디까지 이어졌나, 각자 할 일, 병합에서 터진 것 | 안내서 (합칠 때마다 갱신) |
+| [INTEGRATION.md](INTEGRATION.md) | 세 브랜치가 합쳐진 상태 — 실행법, 실제 API, 어디까지 이어졌나, 각자 할 일 | 안내서 (합칠 때마다 갱신) |
+| [DEMO.md](DEMO.md) | 3분 데모 대본 — 네 장면 · 사전 준비 · 위험 | 시연 대본 |
 
 ### 파싱 기능 (seedParsec)
 

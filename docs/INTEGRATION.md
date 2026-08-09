@@ -1,24 +1,22 @@
 # integration 브랜치 — 팀 안내서
 
 > 세 브랜치를 합쳐 **파싱 → 학습 → 문제은행이 한 줄로 이어지는** 브랜치.
-> 2026-08-07 기준. 정리: 윤현석.
+> 2026-08-09 기준. 정리: 윤현석.
 
 ```
 integration
-  ├ seedParsec        파싱 (박지성)
-  ├ feat/curriculum   학습 커리큘럼 (윤현석)
-  ├ feat/quiz-create  문제은행 (소민섭)
-  ├ feat/quiz-pro3    문제은행 pro3 전환 (소민섭, 08-07)
-  ├ feat/course-to-curriculum  코스→학습 · 진단 24 (박지성, 08-07)
-  └ (직접 커밋)        업로드 화면 · 로그인 · 내 책장 (윤현석, 08-07)
+  ├ seedParsec                 파싱 (박지성)
+  ├ feat/curriculum            학습 커리큘럼 (윤현석)
+  ├ feat/quiz-create           문제은행 (소민섭)
+  ├ feat/quiz-pro3             문제은행 pro3 · 화면 실 API (소민섭, 08-07~09)
+  ├ feat/course-to-curriculum  코스→학습 · 진단 24·26·27 (박지성, 08-07~09)
+  └ (직접 커밋)                 업로드·로그인·책장·진단/분석 화면·데모 배선 (윤현석)
 ```
 
 각자 브랜치는 그대로 두고 여기서 합친다. **`feat/problems`는 구형이라 안 넣었다.**
 
-✅ `feat/course-to-curriculum`(박지성)도 08-07에 붙였다 — 코스→학습 연결 · 진단(24) ·
-교재 활용률 재측정. 충돌 5건은 **"내 책장(사람별)"과 "코스 목록"이 같은 자리에서
-만나는** 것이었고, 둘 다 살렸다(`list_documents`가 내 자료 + 내 코스를 보고
-**내 코스에 묶인 자료만** 뺀다). alembic은 `0009_diagnostic` → `0010`으로 내렸다.
+✅ 08-07~09에 화면까지 한 바퀴가 닫혔다 — 업로드 → 코스 → 진단(보강 삽입) →
+학습 → 분석 → 문제집. alembic head는 `0010`. 데모 시나리오는 [DEMO.md](DEMO.md).
 
 ---
 
@@ -39,7 +37,7 @@ DB       localhost:5432  (postgres/dev, DB명 metalearn_v3)
 확인:
 ```bash
 docker compose exec backend uv run alembic current          # 0010 (head)
-docker compose exec backend uv run --group dev pytest -q    # 330 passed
+docker compose exec backend uv run --group dev pytest -q    # 330 passed (08-09 실측)
 docker compose exec frontend pnpm exec tsc --noEmit         # 통과
 ```
 
@@ -54,17 +52,18 @@ gitignore다(저작물). 클론하면 `sample_sdlc.tree.json`(합성 샘플) 하
 ## 2. 지금 어디까지 이어졌나
 
 ```
-로그인 ✅ ─> PDF 업로드 ─✅─> 파싱 ✅ ─┬─> 코스 ✅ ─> 진단 ✅ ─> 학습 ✅ ─> 분석 ✅
-Google       /create                 │            /diagnostic  내 책장에    /analysis
-(선택)                                │                        수업으로
-                                     └─> 문제은행 ✅ API ──❌──> 문제집 화면
-                                                          부를 화면 없음(mock)
+로그인 ✅ ─> PDF 업로드 ✅ ─> 파싱 ✅ ─┬─> 코스 ✅ ─> 진단 ✅ ─> 학습 ✅ ─> 분석 ✅
+Google       /create                 │   /diagnostic      보강단원·그림     /analysis
+(선택)                                │   → 보강 삽입(26·27)
+                                     └─> 문제은행 ✅ ──✅──> 문제집 화면 (/quiz)
 ```
 
-**백엔드는 한 바퀴가 돈다. 화면으로 남은 건 문제집 하나다.**
+**화면으로 한 바퀴가 돈다.** 남은 건 데모 품질(보강 과다·시연 계정·진도 DB)이지
+끊긴 이음매가 아니다. 3분 시연 대본은 [DEMO.md](DEMO.md).
 
-코스 만드는 자리는 08-08에 붙였다 — `/create`가 파싱 ready 뒤에 `POST /api/courses`를
-부르고, 책장이 자료 N장을 수업 한 권으로 묶는다.
+코스 만드는 자리(08-08): `/create`가 파싱 ready 뒤에 `POST /api/courses`를 부르고,
+끝나면 **진단 페이지로 데려간다** — 진단이 목차를 바꾸므로 학습 전에 하는 게 맞다.
+같은 자리에서 문제은행 생성(`from-parsing`)도 접수한다.
 
 ### 08-07에 이은 것 — 코스가 학습 화면에 닿았다
 
@@ -147,12 +146,12 @@ curl -X POST "http://localhost:8000/api/parsing/documents" -F "file=@교재.pdf"
 # → 202 {"id": "...", "status": "pending"}  이후 GET /api/parsing/documents/{id} 로 폴링
 ```
 
-**② 문제집 화면 — 08-08에 실 API로 이었다.** `/quiz`가 이제 `GET /api/courses` +
+**② 문제집 화면 — 08-08~09에 실 API로 이었다.** `/quiz`가 `GET /api/courses` +
 코스별 quiz 요약으로 과목 카드를 그리고, 세션·채점도 실 서버를 부른다
 (`pages/quiz/api.ts`). mock은 타입 정의 + 기출 스타일 시연용으로만 남았다.
 문제은행이 없는 코스는 목록에서 빠지고, 생성 중(gen_status=running)이면
-"생성 중" 카드로 뜬다. 코스 만드는 자리·목록 API도 08-08에 붙었다 —
-문제집이 `course_id`를 받을 준비가 됐다.
+"생성 중" 카드로 뜬다. 안 푼 문항 우선·리필(`mode=append`)·풀이 기록 UI까지
+붙어 있다. **문항 생성은 888초(실측)라 시연 전에 걸어 둔다** — [DEMO.md](DEMO.md).
 
 ---
 
@@ -210,7 +209,7 @@ dev 유저에 붙어 있고, 로그인하면 그와 다른 계정이 된다. 이
 
 ---
 
-## 3. 실제로 도는 API (44경로 · 47오퍼레이션)
+## 3. 실제로 도는 API (45경로 · 48오퍼레이션 · 08-09 실측)
 
 ⚠️ `docs/API.md`는 **2026-07-03 문서**라 피벗 전 설계다. 실제로 도는 건 이 표다.
 
@@ -240,6 +239,7 @@ GET    /api/courses/{id}                       조회
 GET    /api/courses/{id}/tree                  코스 트리 (다자료 개념 연결 포함)
 GET    /api/courses/{id}/prereqs               선수 판정 (pass/gray/rejected)
 GET    /api/courses/{id}/gaps                  끊긴 고리
+POST   /api/courses/{id}/supply                ★26·27 조달+삽입 (진단 후 보강 단원)
 GET    /api/courses/{id}/diagnostic            ★24 진단 화면 ①~④ (LLM 없음)
 GET    /api/courses/{id}/diagnostic/cards      ★③ 카드 4장 (LLM 1콜)
 PATCH  /api/courses/{id}/diagnostic            ★①③ 목표·기간·설명 형식
@@ -432,14 +432,16 @@ if not excerpts or any(not e.matched for e in excerpts):
 ```
 1. API 표기      camelCase(curriculum) vs snake_case(quiz)
 2. 교재 공유     fixtures/*.md 가 gitignore라 실물이 로컬에만 있다
-3. 다음 우선순위  문제집 실 API 연결 (course_id는 08-08에 화면에서 생긴다)
-                 업로드·로그인·코스 연결 08-07 · 진단·분석·코스 생성 화면 08-08에 끝
+3. 다음 우선순위  데모 품질 — 보강 단원 과다·시연 계정·3분 대본 리허설
+                 (이음매는 08-09에 닫혔다. DEMO.md 참고)
 4. 시연 계정     구글로 로그인하면 dev 유저와 다른 계정이다. 지금 자료·진도는 dev에
-                 붙어 있으니, 로그인해서 찍을지 미로그인으로 찍을지 미리 정해야 한다
+                 붙어 있으니, **시연은 미로그인(dev)으로** 하는 쪽이 안전하다
 5. 진도 저장소   data/progress/{user_id}.json 파일이다. 계정이 늘면 DB로 옮겨야 한다
 6. alembic 번호  0009가 **두 번** 겹쳤다(quiz·diagnostic). 순번을 손으로 붙이는 한
                  브랜치마다 같은 번호가 계속 난다 — `alembic revision`이 만드는
                  해시를 쓰는 게 낫다
+7. 보강 단원     "안다"고 한 과목까지 끼워져 교재가 뒤로 밀린다(DEMO §위험).
+                 시연 전에 목차 길이를 눈으로 확인할 것
 ```
 
 ---
@@ -467,7 +469,7 @@ if not excerpts or any(not e.matched for e in excerpts):
 | 문서 | 무엇 | 담당 |
 | --- | --- | --- |
 | **INTEGRATION.md** | 지금 이 문서. 합쳐진 상태·실행·API·각자 할 일 | 공용 |
-| [DEMO.md](DEMO.md) | 데모 시나리오 — 무엇을 미리 만들고 무엇을 실연할지, 흐름 9장면, 시연 전 정리할 것 | 공용 |
+| [DEMO.md](DEMO.md) | **3분 데모 대본** — 사전 준비 · 네 장면 · 위험/대비 | 공용 |
 | [STATUS.md](STATUS.md) | **파싱이 뭘 주는지는 여기가 기준** — 항목별 완료/미완 | 박지성 |
 | [PARSING_v3.md](PARSING_v3.md) · [PARSING_PLAN.md](PARSING_PLAN.md) | 파싱 설계 · 단계 계획 | 박지성 |
 | [LEARNER_CONTRACT.md](LEARNER_CONTRACT.md) | 학습 계층 스키마·API·회의 안건 | 윤현석 |
