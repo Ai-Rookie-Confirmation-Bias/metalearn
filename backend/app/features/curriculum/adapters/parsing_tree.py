@@ -378,4 +378,13 @@ def document_from_tree(tree: dict[str, Any], *, doc_id: str | None = None) -> Do
             )
         )
 
-    return Document(doc_id=doc_id, title=title, chapters=tuple(chapters))
+    return Document(
+        doc_id=doc_id,
+        title=title,
+        chapters=tuple(chapters),
+        # 코스 트리만 준다. 자료 하나짜리는 진단이 없어 빈 값이고, 그러면
+        # 지금까지처럼 fixture 성향과 숙련도 기반 분량으로 돈다.
+        style=str(tree.get("style") or ""),
+        goal=str(tree.get("goal") or ""),
+        deadline_weeks=tree.get("deadline_weeks"),
+    )

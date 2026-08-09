@@ -26,6 +26,7 @@ from .bridge import (
 )
 from .mastery import DAY, WEIGHT, label
 from .planner import formative_ready, weak_for_section
+from .profile import style_block
 from .schemas import (
     AnalysisDoc,
     AnalysisOut,
@@ -90,6 +91,17 @@ def _doc(doc_id: str, db: Session | None, progress: Progress) -> Document:
     if doc is None:
         raise HTTPException(404, f"자료를 찾을 수 없습니다: {doc_id}")
     return with_supplements(doc, progress)
+
+
+def _style_for(doc: Document) -> str:
+    """이 자료의 설명 방식 지시. **진단이 고른 것이 우선이다.**
+
+    진단 ③은 사용자가 카드 넷을 보고 **직접 고른** 값이고, `store.profile`은
+    관찰로 추정한 값이다. 추정보다 선택이 앞선다.
+
+    진단이 없는 자료(파싱 문서 하나)는 빈 값이라 예전처럼 fixture 성향으로 돈다.
+    """
+    return style_block(doc.style) or store.profile_block()
 
 
 def _sections_out(chapter: Chapter, progress: Progress) -> list[SectionOut]:
@@ -490,7 +502,7 @@ async def get_lesson(
 
     lesson = await build_lesson(
         section,
-        store.profile_block(),
+        _style_for(doc),
         weak,
         foreign_keys=foreign,
         mode=plan.mode,
@@ -549,7 +561,7 @@ async def prewarm(
     progress = _me(user_id)
     doc = _doc(doc_id, db, progress)
     return await prewarm_document(
-        doc, progress, limit=limit, profile_block=store.profile_block()
+        doc, progress, limit=limit, profile_block=_style_for(doc)
     )
 
 

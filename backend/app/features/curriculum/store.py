@@ -165,7 +165,10 @@ def summarize(doc: Document, progress: Progress) -> tuple[CourseMastery, list[Ch
         if prev.weak_concepts:
             carry[nxt.chapter] = prev.weak_concepts[:CARRY_LIMIT]
 
-    return course_summary(summaries), plan_course(summaries, carry)
+    # 진단이 고른 목표를 같이 넘긴다 — 아직 안 배운 목차의 분량이 여기서 갈린다.
+    return course_summary(summaries), plan_course(
+        summaries, carry, doc.goal, doc.deadline_weeks
+    )
 
 
 class Store:

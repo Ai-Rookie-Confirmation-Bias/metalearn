@@ -188,6 +188,18 @@ class CourseTree(BaseModel):
     linked_concepts: int = 0
     total_concepts: int = 0
 
+    # ── 24 진단이 정한 것 ────────────────────────────────────────
+    # **학습층이 이걸 읽어야 진단이 화면을 바꾼다.** 전에는 DB에 저장만 되고
+    # 아무도 안 읽어서, 진단에서 무엇을 고르든 설명과 분량이 똑같았다
+    # (바뀌는 건 보강 단원뿐이었다).
+    #
+    # exam | work | interest — 분량을 정하는 데 쓴다
+    goal: str | None = None
+    # 몇 주 남았나. 짧으면 더 줄인다. NULL이면 기한 없음
+    deadline_weeks: int | None = None
+    # metaphor | definition | table | why — 설명 형식
+    style: str | None = None
+
 
 class GapOut(BaseModel):
     """끊긴 고리 하나 — 책이 필요하다고 하는데 설명이 없는 개념."""

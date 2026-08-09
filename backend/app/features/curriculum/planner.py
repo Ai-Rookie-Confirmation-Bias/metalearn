@@ -108,14 +108,48 @@ class ChapterPlan:
         return self.mode != NORMAL
 
 
+# 시험이 이 주 수 안쪽이면 "급하다"로 본다. 2주는 한 과목을 처음부터 훑기엔
+# 짧고, 그 이상이면 줄여서 얻는 것보다 빠뜨려서 잃는 게 크다.
+URGENT_WEEKS = 2
+
+
+def goal_mode(goal: str, deadline_weeks: int | None) -> tuple[str, str] | None:
+    """24 진단의 목표가 정하는 **기본 분량.** 없으면 None.
+
+    ⚠️ **측정이 있으면 측정이 이긴다.** 이건 아직 안 배운 목차의 출발점만
+       정한다(`plan_chapter` 참고). 이해도 30%인데 "관심으로 배운다"고 설명을
+       줄이면 못 따라가고, 90%인데 "시험이라"고 늘리면 시간을 버린다.
+       선언보다 측정이 그 사람에 대해 더 많이 안다.
+
+    ⚠️ 그래서 이유 문구도 다르게 쓴다 — 측정 기반은 "이해도 30%로 낮아",
+       여기는 "시험이 2주 남아"다. 학습자가 왜 그런지 구분할 수 있어야 한다.
+    """
+    g = (goal or "").strip().lower()
+    if g == "exam":
+        if deadline_weeks is not None and deadline_weeks <= URGENT_WEEKS:
+            return COMPRESSED, f"시험이 {deadline_weeks}주 남아 핵심만 보여드립니다."
+        return None  # 기한이 넉넉한 시험은 표준. 범위를 빠뜨리면 안 된다
+    if g == "work":
+        return DEEP, "실무에 쓰시려는 자료라 왜 그런지까지 함께 씁니다."
+    if g == "interest":
+        return COMPRESSED, "부담 없이 훑는 자료라 핵심만 보여드립니다."
+    return None
+
+
 def plan_chapter(
-    order: int, summary: ChapterMastery, weak_from_previous: tuple[str, ...] = ()
+    order: int,
+    summary: ChapterMastery,
+    weak_from_previous: tuple[str, ...] = (),
+    goal: str = "",
+    deadline_weeks: int | None = None,
 ) -> ChapterPlan:
     """목차 하나의 배분을 정한다.
 
     weak_from_previous: **앞 목차 형성평가에서 약했던 개념.** 새 단원을 만들지
     않고 이 목차 설명에 녹인다 — 따로 떼어 배운 개념보다 지금 배우는 것과
     엮어서 설명한 개념이 더 잘 붙기 때문이다.
+
+    goal/deadline_weeks: 24 진단이 고른 목표. **측정이 없을 때만** 쓴다.
     """
     total = summary.sections_total
     weak = tuple(dict.fromkeys(summary.weak_concepts + weak_from_previous))
@@ -127,7 +161,20 @@ def plan_chapter(
     # 거짓말이다. 절에는 `MIN_WEIGHT` 가드를 걸어놓고 목차엔 안 걸었던 것 —
     # **측정이 부족하면 판정하지 않는다**는 원칙은 층이 달라도 같다.
     if summary.sections_touched == 0 or not summary.judged:
-        mode, planned, reason = NORMAL, total, ""
+        # 측정이 없으니 **진단이 고른 목표**가 출발점을 정한다. 전에는 무조건
+        # 표준이라, 진단에서 "시험 2주"를 골라도 아무것도 안 바뀌었다.
+        goaled = goal_mode(goal, deadline_weeks)
+        if goaled:
+            mode, reason = goaled
+            planned = (
+                max(total, round(total * DEEPEN_RATIO))
+                if mode == DEEP
+                else max(1, round(total * COMPRESS_RATIO))
+            )
+        else:
+            mode, planned, reason = NORMAL, total, ""
+
+        # 앞 단원 결손은 목표보다 앞선다 — 이건 **이 사람에 대한 측정**이다.
         if weak_from_previous:
             mode = DEEP
             planned = max(total, round(total * DEEPEN_RATIO))
@@ -164,16 +211,21 @@ def plan_chapter(
 
 
 def plan_course(
-    summaries: list[ChapterMastery], carry_over: dict[str, tuple[str, ...]] | None = None
+    summaries: list[ChapterMastery],
+    carry_over: dict[str, tuple[str, ...]] | None = None,
+    goal: str = "",
+    deadline_weeks: int | None = None,
 ) -> list[ChapterPlan]:
     """과목 전체 배분. **입력 순서(=교재 목차 순서)를 그대로 유지한다.**
 
     carry_over: 목차명 → 그 목차 설명에 녹일 약점 개념. 앞 목차의 형성평가
     결과를 호출측이 여기에 담아 넘긴다.
+
+    goal/deadline_weeks: 24 진단이 고른 목표. 아직 안 배운 목차의 출발점만 정한다.
     """
     carry = carry_over or {}
     return [
-        plan_chapter(i, s, carry.get(s.chapter, ()))
+        plan_chapter(i, s, carry.get(s.chapter, ()), goal, deadline_weeks)
         for i, s in enumerate(summaries)
     ]
 

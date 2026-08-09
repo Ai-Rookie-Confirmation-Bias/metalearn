@@ -42,6 +42,10 @@ def document_from_course_tree(
             # 확장자가 없으므로 `document_from_tree`의 스템 자르기가 그냥 통과한다.
             "document": {"id": course_id, "filename": tree.get("title") or course_id},
             "topics": tree.get("topics") or [],
+            # 24 진단이 정한 것 — 설명 형식과 분량이 여기서 갈린다.
+            "style": tree.get("style"),
+            "goal": tree.get("goal"),
+            "deadline_weeks": tree.get("deadline_weeks"),
         },
         doc_id=doc_id or course_id,
     )

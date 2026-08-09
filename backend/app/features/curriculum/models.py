@@ -41,11 +41,25 @@ class Chapter:
 
 @dataclass(frozen=True)
 class Document:
-    """업로드한 자료 하나."""
+    """업로드한 자료 하나(또는 수업 하나)."""
 
     doc_id: str
     title: str
     chapters: tuple[Chapter, ...]
+
+    # ── 24 진단이 정한 것 ────────────────────────────────────────
+    # 자료 하나짜리(파싱 문서)는 진단이 없어서 전부 비어 있다. 수업(코스)만
+    # 채워져 온다.
+    #
+    # ⚠️ **이게 없으면 진단이 화면을 못 바꾼다.** 저장은 되는데 읽는 데가 없어서
+    #    무엇을 고르든 설명과 분량이 같았다 — 바뀌는 건 보강 단원뿐이었다.
+    #
+    # metaphor | definition | table | why — 설명 형식
+    style: str = ""
+    # exam | work | interest — 분량의 방향
+    goal: str = ""
+    # 몇 주 남았나. 짧을수록 더 줄인다
+    deadline_weeks: int | None = None
 
     def chapter(self, index: int) -> Chapter | None:
         return next((c for c in self.chapters if c.index == index), None)

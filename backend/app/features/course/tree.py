@@ -60,6 +60,10 @@ class CourseTreeBuilder:
             title=course.title,
             skeleton_document_id=skeleton_id,
             body_document_ids=body_ids,
+            # 진단이 정한 것 — 학습층이 설명 형식·분량에 쓴다.
+            goal=course.goal,
+            deadline_weeks=course.deadline_weeks,
+            style=course.style,
         )
         if skeleton_id is None:
             return tree
