@@ -26,6 +26,7 @@ import {
   useDocuments,
 } from "@/features/curriculum/queries/useCurriculum";
 import { saveConfig } from "@/features/diagnostic/api";
+import { requestGeneration } from "@/pages/quiz/api";
 import {
   PARSE_LABEL,
   parseProgress,
@@ -453,10 +454,25 @@ export function LibraryPage() {
         } catch {
           // 목표는 진단 화면에서 다시 고를 수 있다. 코스 자체가 만들어진 게 본전.
         }
+
+        // 문제은행 생성을 **여기서** 접수한다. 실데이터 888초짜리라 진단을
+        // 하는 동안 서버가 만들게 두는 게 가장 빠르다. 이 문을 아무도 안 불러서
+        // 문제집이 계속 비어 있었다.
+        // 실패해도 넘어간다 — 문제집은 학습과 별개고, 문제집 화면에서 다시
+        // 접수할 수 있다(리필).
+        for (const id of documentIds) {
+          void requestGeneration(course.id, id).catch(() => {});
+        }
+
         for (const id of documentIds) dropPending(id);
         clearPendingCourse();
         setAssembleError(null);
         await qc.invalidateQueries({ queryKey: curriculumKeys.documents });
+
+        // ★ 진단으로 데려간다. 진단은 **커리큘럼을 정하는 단계**지 선택지가
+        //   아니다 — 건너뛰면 보강 단원 없이 배우게 된다(실측: 목차 4 → 14).
+        //   방금 올린 사람만 여기 온다(`pendingCourse`가 있어야 이 블록이 돈다).
+        navigate(`/diagnostic/${encodeURIComponent(course.id)}`);
       } catch (e) {
         const detail = (e as { response?: { data?: { detail?: string } } })?.response
           ?.data?.detail;

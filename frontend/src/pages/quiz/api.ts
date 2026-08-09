@@ -101,6 +101,25 @@ export async function fetchGenStatus(
   return data;
 }
 
+/** POST …/from-parsing/:docId — **최초 생성** 접수 (202).
+ *
+ * 리필(`mode=append`)과 달리 그 문서의 기존 문항을 전부 교체한다. 수업이
+ * 만들어진 직후 한 번 부른다 — 이 문을 아무도 안 불러서 문제집이 영원히
+ * 비어 있었다("아직 문제은행이 있는 과목이 없어요").
+ *
+ * 실데이터 888초짜리라 **완료를 기다리지 않는다.** 진단을 하는 동안 서버가
+ * 만든다. 이미 생성 중이면 409인데, 그건 이 호출이 두 번 간 것뿐이라
+ * 화면에서 알릴 게 없다.
+ */
+export async function requestGeneration(
+  courseId: string,
+  documentId: string,
+): Promise<void> {
+  await apiClient.post(
+    `/api/courses/${courseId}/quiz/from-parsing/${documentId}`,
+  );
+}
+
 // POST …/from-parsing/:docId?mode=append — 리필 접수 (202).
 // 생성은 분 단위 작업이라 완료를 기다리지 않는다 — 끝나면 은행 문항 수에
 // 자동 반영되고, 기존 문항은 유지된 채 새 문항만 추가된다.
