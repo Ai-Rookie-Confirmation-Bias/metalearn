@@ -314,11 +314,15 @@ export function CreateCoursePage() {
 
   const back = () => (step === 0 ? navigate("/library") : setStep((s) => s - 1));
   const next = () => {
-    if (!canNext || !purpose) return;
+    if (!canNext) return;
     if (step < 2) {
       setStep((s) => s + 1);
       return;
     }
+    // 여기서만 purpose가 필요하다. 입구에서 막으면 STEP 1·2가 안 넘어간다 —
+    // purpose는 STEP 3에서야 고르는 값이라 그전엔 늘 null이다.
+    // canNext가 이미 막지만 타입을 좁히려면 한 번 더 봐야 한다.
+    if (!purpose) return;
     // 파일은 이미 서버에 있다. 코스는 **파싱이 끝난 뒤** 만든다 — 역할·목차가
     // ready 이후에야 채워지므로. 여기서는 의도를 남기고 책장이 폴링한다.
     //

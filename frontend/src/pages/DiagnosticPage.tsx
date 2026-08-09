@@ -273,7 +273,12 @@ export function DiagnosticPage() {
       ? goal !== null
       : step === 3 && expand === null
         ? subjects.length > 0 && subjects.every((s) => subjectAns[s.subject])
-        : true;
+        : step === 4
+          ? // **전부 골라야 넘어간다.** 안 고른 문항은 채점에 안 실리고, 그러면
+            // 그 과목이 그대로 남아 다음 라운드에 **같은 문항이 또 나온다.**
+            (probes?.length ?? 0) > 0 &&
+            probes!.every((_, i) => picked[String(i)] !== undefined)
+          : true;
 
   if (error && !setup) {
     return (
