@@ -115,6 +115,7 @@ def _sections_out(chapter: Chapter, progress: Progress) -> list[SectionOut]:
                 # 우리가 끼운 보충 화면인가. 화면이 구분해 보여줘야 학습자가
                 # 교재에 원래 있던 내용이라고 오해하지 않는다.
                 inserted=s.inserted,
+                figure_count=len(s.figures),
             )
         )
     return out
