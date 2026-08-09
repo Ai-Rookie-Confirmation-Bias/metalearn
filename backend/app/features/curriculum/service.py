@@ -63,6 +63,7 @@ def _key(
     profile_block: str,
     weak: tuple[str, ...],
     mode: str = "normal",
+    measured: bool = True,
 ) -> str:
     """캐시 키.
 
@@ -71,8 +72,12 @@ def _key(
     반대로 약점이 그대로면 같은 글이 나와야 한다 — 열 때마다 바뀌어도 안 된다.
 
     mode도 넣는다 — 분량이 바뀌었는데 캐시가 옛 설명을 주면 배지와 본문이 어긋난다.
+
+    measured도 넣는다. 같은 `compressed`라도 재서 나온 것이냐 진단 목표로 나온
+    것이냐에 따라 **성향을 덮는지가 갈린다**(`planner.mode_block`). 안 넣으면
+    목표로 압축된 화면이 측정으로 압축된 캐시를 받아 비유가 사라진다.
     """
-    return f"{section.section_id}|{hash(profile_block)}|{hash(weak)}|{mode}"
+    return f"{section.section_id}|{hash(profile_block)}|{hash(weak)}|{mode}|{int(measured)}"
 
 
 _review_cache: dict[str, tuple[Block, ...]] = {}
@@ -148,6 +153,7 @@ async def build_lesson(
     *,
     foreign_keys: tuple[str, ...] = (),
     mode: str = "normal",
+    measured: bool = True,
     refresh: bool = False,
 ) -> Lesson:
     """절의 학습 콘텐츠를 만든다(캐시됨).
@@ -166,7 +172,7 @@ async def build_lesson(
     """
     from .planner import mode_block as mode_prompt
 
-    key = _key(section, profile_block, weak_concepts, mode)
+    key = _key(section, profile_block, weak_concepts, mode, measured)
     if not refresh and key in _cache:
         return _cache[key]
 
@@ -176,7 +182,7 @@ async def build_lesson(
             return _cache[key]
 
         briefs = [ConceptBrief(c.key, c.definition) for c in section.concepts]
-        mb = mode_prompt(mode)
+        mb = mode_prompt(mode, measured=measured)
 
         exp = await explain_agent.generate(
             section.title,
@@ -185,6 +191,8 @@ async def build_lesson(
             section.source,
             weak_concepts,
             mb,
+            # 재지 않고 목표만으로 압축한 자리에서는 형식이 분량을 이긴다.
+            style_last=not measured,
         )
         if not exp.ok:
             return Lesson(blocks=(), covered=0, missing=(), retrieval_gap=())
@@ -240,7 +248,10 @@ async def prewarm_document(
         for s in ch.sections:
             if s.inserted:
                 continue
-            targets.append((ch, s, plan.mode))
+            # measured도 같이 나른다 — **캐시 키의 일부다.** 빠뜨리면 워밍은
+            # `measured=True` 키에 들어가고 실제 열람은 `False` 키로 찾아
+            # 전부 캐시 미스가 된다(데워 놓고 5~7초를 다시 기다린다).
+            targets.append((ch, s, plan.mode, plan.measured))
             if len(targets) >= limit:
                 break
         if len(targets) >= limit:
@@ -248,7 +259,7 @@ async def prewarm_document(
 
     ok = 0
     failed: list[str] = []
-    for ch, section, mode in targets:
+    for ch, section, mode, measured in targets:
         weak = weak_for_section(section, progress.recent_wrong, all_keys)
         foreign = tuple(k for k in all_keys if k not in section.concept_keys)
         lesson = await build_lesson(
@@ -257,6 +268,7 @@ async def prewarm_document(
             weak,
             foreign_keys=foreign,
             mode=mode,
+            measured=measured,
         )
         if lesson.ok:
             ok += 1

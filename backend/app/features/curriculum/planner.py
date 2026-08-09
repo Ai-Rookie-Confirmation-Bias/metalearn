@@ -55,25 +55,29 @@ COMPRESS_RATIO = 0.5
 DEEPEN_RATIO = 1.5
 
 
-def mode_block(mode: str) -> str:
+def mode_block(mode: str, *, measured: bool = True) -> str:
     """설명 프롬프트에 붙일 **분량 지시**.
 
     `plan.mode`가 화면에만 뜨고 설명은 안 바뀌면 "커리큘럼이 바뀌었다"가 거짓이다.
     배분 규칙이 정한 모드를 **생성 지시로 바꿔** 같은 규칙이 글에도 닿게 한다.
 
-    ## 성향과 부딪히면 분량이 이긴다
+    ## 성향과 부딪히면 — 재서 압축했을 때만 분량이 이긴다
 
     성향 블록이 "비유를 정의보다 먼저 놓아라"라고 하는데 `compressed`는
     "비유를 넣지 마라"라고 한다. 실측에서는 분량이 이겼는데(비유 0/3),
     **이긴 이유가 프롬프트에서 뒤에 왔기 때문**이었다. 우연에 기대면 안 된다.
 
-    분량을 위에 두는 근거: `compressed`는 **이 단원을 이미 안다는 증거가 있을
-    때만** 걸린다(`ratio >= SOLID` + `judged`). 아는 사람에게 비유는 소음이다.
-    성향은 "어떻게 설명받고 싶은가"지 "얼마나 받고 싶은가"가 아니다.
+    분량을 위에 두는 근거는 **`compressed`가 이 단원을 이미 안다는 증거 위에서만
+    걸린다**는 것이었다(`ratio >= SOLID` + `judged`). 아는 사람에게 비유는 소음이다.
 
-    ⚠️ 성향을 화면에 표시하게 되면(온보딩이 붙으면) 여기가 거짓말이 된다 —
-       "비유를 먼저 놓았습니다"라고 띄워 놓고 압축 단원에선 비유가 없다.
-       그때는 표시 쪽에서 `compressed`를 걸러야 한다.
+    `measured=False`면 그 근거가 없다. 진단 목표("시험이 2주 남았다")로 걸린
+    압축은 **아직 아무것도 재지 않은 목차**에 붙는다 — 모르는 사람에게서 비유를
+    뺄 이유가 없고, 형식은 학습자가 카드에서 **직접 고른 값**이다. 선택이
+    추정을 이긴다는 원칙이 여기에도 걸린다. 그래서 분량만 줄이고 형식은 건드리지
+    않는다.
+
+    실측: 이 구분을 넣기 전 A(`exam`·2주·**비유로**)의 설명에 비유가 하나도
+    없었다. 진단에서 고른 것과 화면에 나온 것이 어긋난 자리다.
     """
     if mode == DEEP:
         return (
@@ -81,12 +85,22 @@ def mode_block(mode: str) -> str:
             "- 개념마다 **한 문단 이상** 써라. 왜 필요한지·어디서 쓰이는지까지.\n"
             "- 비유나 예를 아끼지 마라."
         )
-    if mode == COMPRESSED:
+    if mode == COMPRESSED and measured:
         return (
             "[이 단원의 분량 — 핵심만]\n"
             "- **결론과 핵심만** 짧게. 배경·유래·반례는 생략하라.\n"
             "- 비유는 넣지 마라(JSON null). 이미 아는 사람에게 비유는 소음이다.\n"
             "- ★ 위 설명 방식과 부딪히면 **이 분량 지시를 따른다.**"
+        )
+    if mode == COMPRESSED:
+        # 여기서 **형식을 건드리지 않는다.** 무엇을 끝까지 남길지는 형식이
+        # 정한다(`profile._KEEP_WHEN_COMPRESSED`). 전에는 이 자리에 "analogy를
+        # 채워라"를 박아 뒀는데, 형식과 무관하게 걸려서 표·이유 성향에까지
+        # 엉뚱한 비유가 붙었다(실측 2/4 오염).
+        return (
+            "[이 단원의 분량 — 핵심만]\n"
+            "- **본문(text)은 결론과 핵심만** 짧게. 배경·유래·반례는 생략하라.\n"
+            "- ★ 줄이는 것은 **분량뿐이다.** 위 설명 방식은 그대로 지켜라."
         )
     return ""
 
@@ -102,6 +116,9 @@ class ChapterPlan:
     sections_planned: int  # 실제로 볼 절 수
     weak_concepts: tuple[str, ...]  # 다음 설명에 녹일 대상
     reason: str  # 화면의 ⚡ 표시에 그대로 쓴다
+    # 이 mode가 **이 사람을 재서** 나온 것인가, 진단에서 선언한 목표로 나온 것인가.
+    # 압축이 성향을 덮어도 되는지가 여기서 갈린다(`mode_block` 참고).
+    measured: bool = True
 
     @property
     def changed(self) -> bool:
@@ -164,6 +181,7 @@ def plan_chapter(
         # 측정이 없으니 **진단이 고른 목표**가 출발점을 정한다. 전에는 무조건
         # 표준이라, 진단에서 "시험 2주"를 골라도 아무것도 안 바뀌었다.
         goaled = goal_mode(goal, deadline_weeks)
+        measured = not goaled  # 목표로 정한 분량은 이 사람을 잰 것이 아니다
         if goaled:
             mode, reason = goaled
             planned = (
@@ -182,7 +200,10 @@ def plan_chapter(
                 f"앞 단원에서 '{weak_from_previous[0]}'이(가) 약했습니다. "
                 "따로 배우지 않고 이 단원 설명에 함께 녹입니다."
             )
-        return ChapterPlan(summary.chapter, order, mode, total, planned, weak, reason)
+            measured = True
+        return ChapterPlan(
+            summary.chapter, order, mode, total, planned, weak, reason, measured
+        )
 
     if summary.ratio < SHAKY:
         return ChapterPlan(

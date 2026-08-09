@@ -73,6 +73,7 @@ def build_prompt(
     source_text: str = "",
     weak_concepts: tuple[str, ...] = (),
     mode_block: str = "",
+    style_last: bool = False,
 ) -> str:
     listing = "\n".join(f"- **{c.key}** — {c.definition}" for c in concepts)
 
@@ -88,6 +89,16 @@ def build_prompt(
     #    자리가 실제로 있다(성향 "비유를 먼저" vs compressed "비유 금지").
     #    바꾸면 압축 단원에 비유가 다시 들어온다. 근거는 `planner.mode_block`.
     mode_part = f"\n{mode_block}\n" if mode_block else ""
+
+    # `style_last`면 뒤집는다. **재지 않고 목표만으로 압축한 자리**가 그렇다 —
+    # 거기서는 형식이 학습자가 직접 고른 값이라 분량에 밀리면 안 된다.
+    #
+    # ⚠️ **이것만으로는 아무것도 안 바뀌었다.** 비유가 안 나오던 문제를 이걸로
+    #    고치려다 실패했고(실측: 뒤집기 전후 둘 다 비유 0개), 결국 성향 지시
+    #    자체를 세게 쓰고서야(`profile._ENFORCE`) 들어왔다. 순서는 우선순위를
+    #    맞추는 장치일 뿐 **모델을 움직이는 힘은 아니다.** 여기에 기대지 마라.
+    if style_last:
+        profile_part, mode_part = mode_part or "\n", profile_part
 
     # 이 학습자가 최근 틀린 개념 중 이 절과 이어지는 것. 없으면 아무 말도 안 한다.
     weak_part = ""
@@ -134,6 +145,7 @@ async def generate(
     source_text: str = "",
     weak_concepts: tuple[str, ...] = (),
     mode_block: str = "",
+    style_last: bool = False,
 ) -> ExplanationResult:
     prompt = build_prompt(
         section_title,
@@ -142,6 +154,7 @@ async def generate(
         source_text,
         weak_concepts,
         mode_block,
+        style_last,
     )
     try:
         raw = await solar_client.generate(

@@ -506,6 +506,7 @@ async def get_lesson(
         weak,
         foreign_keys=foreign,
         mode=plan.mode,
+        measured=plan.measured,
         refresh=refresh,
     )
     m = progress.of(section_id)

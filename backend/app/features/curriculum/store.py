@@ -41,6 +41,18 @@ FIXTURE_DIR = Path(
     os.getenv("CURRICULUM_FIXTURES", Path(__file__).resolve().parents[3] / "tests/fixtures")
 )
 
+# ⚠️ **끄는 스위치는 이름이 따로다.** `CURRICULUM_FIXTURES`는 위에서 이미
+#    *디렉터리 경로*라는 뜻으로 쓰고 있다. 여기에 `off`를 넣어 스위치로도
+#    쓰려다 `FIXTURE_DIR = Path("off")`가 되어 픽스처를 읽는 테스트 15개가
+#    한꺼번에 죽었다 — 한 변수에 두 뜻을 담으면 둘 중 하나는 조용히 진다.
+FIXTURES_OFF = os.getenv("CURRICULUM_FIXTURES_OFF", "").strip().lower() in (
+    "1",
+    "on",
+    "true",
+    "yes",
+    "off",  # `=off`라고 쓰는 사람이 반드시 있다. 뜻은 "픽스처를 끈다"로 같다
+)
+
 RECENT_WRONG = 8
 
 
@@ -191,7 +203,20 @@ class Store:
         self.profile = fixture_profile()
 
     def load_fixtures(self) -> list[str]:
-        """tree.json을 먼저 읽고, 같은 stem의 md는 건너뛴다."""
+        """tree.json을 먼저 읽고, 같은 stem의 md는 건너뛴다.
+
+        `CURRICULUM_FIXTURES_OFF=1` 이면 하나도 안 읽는다 — **시연용 스위치다.**
+        픽스처는 DB 행이 없어 누구 책장에나 뜨는데, 촬영할 때는 그게 잡음이
+        된다(실측: 시연 수업 셋에 픽스처 셋이 섞여 일곱 권).
+
+        ⚠️ 파일을 옮기는 걸로 대신하지 마라. `sample_sdlc.tree.json`은
+           `test_quiz_bridge.py`가 읽는다 — 옮기면 테스트가 깨진다.
+        """
+        if FIXTURES_OFF:
+            self.fixture_ids = set()
+            print("[curriculum] 픽스처 로드 꺼짐 (CURRICULUM_FIXTURES_OFF)")
+            return []
+
         loaded_stems: set[str] = set()
         for path in sorted(FIXTURE_DIR.glob("*.tree.json")):
             doc = build_document_from_tree(path)

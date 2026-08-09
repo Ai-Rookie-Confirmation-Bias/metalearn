@@ -182,16 +182,54 @@ STYLE_DIRECTIVE: dict[str, str] = {
 }
 
 
+# 형식마다 **반드시 지켜야 하는 것**을 한 줄 더 못박는다.
+#
+# ⚠️ 위 `STYLE_DIRECTIVE`만으로는 안 지켜진다. 실측(같은 화면·2026-08-10):
+#
+#       압축 있음   metaphor 비유○  definition ○  table 표✗  why 이유✗
+#       압축 없음   metaphor 비유✗  definition ○  table 표✗  why 이유✗
+#
+#    압축이 형식을 눌러서인 줄 알고 한참 팠는데 **압축을 빼도 똑같았다.**
+#    분량과 싸운 게 아니라 원래 지시가 약했던 것이다. "표로 정리하라" 같은
+#    서술형 요청은 모델이 흘려듣고, **출력할 JSON 키를 이름으로 부르며
+#    "★ 반드시"를 붙여야** 따랐다.
+#
+# ⚠️ **분량 지시(`planner.mode_block`)에 넣지 마라.** 전에 거기에 "analogy를
+#    채워라"를 박았더니 형식과 무관하게 걸려서 `table`·`why`에까지 엉뚱한
+#    비유가 붙었다(2/4 오염). 무엇을 지킬지는 형식이 정할 일이다.
+_ENFORCE: dict[str, str] = {
+    "metaphor": (
+        "- ★ `analogy`를 null로 두지 마라. 한두 문장이어도 좋으니 **반드시 채워라.**"
+    ),
+    "table": (
+        "- ★ 비교되는 개념이 둘 이상이면 **본문(text) 안에 마크다운 표를 반드시 "
+        "넣어라** — 머리행 `| 항목 | 설명 |` 다음 줄에 `|---|---|`. 줄글로 늘어놓지 마라."
+    ),
+    "why": (
+        "- ★ 개념마다 **'왜 그런가'를 한 문장 이상 반드시 써라.** 정의만 적고 "
+        "넘어가지 마라 — 결론만 남으면 이 학습자에게는 아무것도 안 남는다."
+    ),
+    # definition은 없다 — 원래 지시만으로 지켜진다(실측 4/4).
+}
+
+
 def style_block(style: str) -> str:
     """진단에서 고른 형식 → 프롬프트 블록. 모르는 값이면 빈 문자열.
+
+    형식 지시 한 줄 + **그 형식에서 반드시 지킬 것** 한 줄(`_ENFORCE`).
 
     ⚠️ 화면 문구는 "당신에게 맞는 학습법"이 아니라 **"어떤 설명이 읽기 편한가"**
        였다. 러닝 스타일 맞춤에 학습 효과 근거는 없다(Pashler 2008) — 이건
        성취가 아니라 이탈을 막는 장치다. 여기 주석에도 남겨 둔다, 나중에
        이 값으로 효과를 주장하지 않도록.
     """
-    line = STYLE_DIRECTIVE.get((style or "").strip().lower())
-    return f"[이 학습자에게 맞춘 설명 방식]\n{line}" if line else ""
+    key = (style or "").strip().lower()
+    line = STYLE_DIRECTIVE.get(key)
+    if not line:
+        return ""
+    keep = _ENFORCE.get(key, "")
+    body = f"{line}\n{keep}" if keep else line
+    return f"[이 학습자에게 맞춘 설명 방식]\n{body}"
 
 
 def fixture_profile(name: str | None = None) -> Profile:

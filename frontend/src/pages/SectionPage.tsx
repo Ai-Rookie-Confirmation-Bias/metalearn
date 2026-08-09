@@ -11,6 +11,7 @@ import { Link, useParams } from "react-router-dom";
 
 import type { BlockOut } from "@/features/curriculum/api/curriculum";
 import { Cloze } from "@/features/curriculum/components/Cloze";
+import { Explanation } from "@/features/curriculum/components/Explanation";
 import { Figures } from "@/features/curriculum/components/Figures";
 import { Mcq } from "@/features/curriculum/components/Mcq";
 import { Reason, StatusBadge } from "@/features/curriculum/components/bits";
@@ -175,11 +176,7 @@ export function SectionPage() {
         </div>
       )}
 
-      {explanation && (
-        <article className="mb-5 leading-loose whitespace-pre-line text-text-primary">
-          {String(explanation.content.text ?? "")}
-        </article>
-      )}
+      {explanation && <Explanation text={String(explanation.content.text ?? "")} />}
 
       {/* 교재 그림. 설명 바로 뒤에 둔다 — 글을 읽고 그림을 보는 순서가
           교재를 읽는 순서와 같다. */}

@@ -51,7 +51,13 @@ def q(doc_id: str) -> str:
     return urllib.parse.quote(doc_id, safe="")
 
 
-def seed(doc_id: str, n_sections: int, wrong_rate: float, seed_n: int) -> None:
+def seed(
+    doc_id: str,
+    n_sections: int,
+    wrong_rate: float,
+    seed_n: int,
+    from_chapter: int = 0,
+) -> None:
     rng = random.Random(seed_n)
     t0 = time.time()
 
@@ -60,11 +66,16 @@ def seed(doc_id: str, n_sections: int, wrong_rate: float, seed_n: int) -> None:
 
     # ── 미리 만들어 둔다. 없으면 화면마다 5~7초를 그대로 기다린다 ──────
     print(f"\n[0] prewarm {n_sections}개 …", flush=True)
-    try:
-        w = call("POST", f"/documents/{q(doc_id)}/prewarm?limit={n_sections}", {})
-        print(f"    {w}")
-    except urllib.error.HTTPError as e:
-        print(f"    건너뜀 ({e.code})")
+    if from_chapter:
+        # prewarm은 **앞 화면부터** 데운다. 뒤 목차를 시드할 때는 데울 자리가
+        # 어긋나서 시간만 쓴다 — 그냥 화면마다 5~7초를 기다린다.
+        print(f"    건너뜀 (목차 {from_chapter}부터라 데울 자리가 다르다)")
+    else:
+        try:
+            w = call("POST", f"/documents/{q(doc_id)}/prewarm?limit={n_sections}", {})
+            print(f"    {w}")
+        except urllib.error.HTTPError as e:
+            print(f"    건너뜀 ({e.code})")
 
     # ── 인출 — 앞 화면부터 순서대로 ─────────────────────────────────
     print(f"\n[1] 학습(인출) — 앞 {n_sections}개 화면", flush=True)
@@ -73,6 +84,8 @@ def seed(doc_id: str, n_sections: int, wrong_rate: float, seed_n: int) -> None:
     for ch in doc["chapters"]:
         if done >= n_sections:
             break
+        if ch["index"] < from_chapter:
+            continue
         chapter = call("GET", f"/documents/{q(doc_id)}/chapters/{ch['index']}")
         for sec in chapter["sections"]:
             if done >= n_sections:
@@ -149,11 +162,13 @@ def seed(doc_id: str, n_sections: int, wrong_rate: float, seed_n: int) -> None:
     print(f"시도 {a['attemptsTotal']}건 · 출처 {a['byKind']}")
     if a["weakConcepts"]:
         print(f"약점 {', '.join(n for n, _ in a['weakConcepts'][:6])}")
-    missing = [k for k in ("diagnostic", "retrieval", "review", "formative") if not a["byKind"].get(k)]
+    # 진단은 빼고 센다. `by_kind["diagnostic"]`은 **구조적으로 늘 0이다** —
+    # 진단(24)은 문항을 풀려 점수를 쌓는 게 아니라 "안다/모른다"를 남기고 그
+    # 결과로 목차를 바꾼다. 여기서 빈 구멍으로 세면 시드가 실패한 것처럼 읽힌다.
+    missing = [k for k in ("retrieval", "review", "formative") if not a["byKind"].get(k)]
     if missing:
         print(f"⚠️ 아직 빈 출처: {', '.join(missing)}")
-        if "diagnostic" in missing:
-            print("   진단은 코스에서 /diagnostic/{courseId} 를 거쳐야 쌓인다.")
+    print(f"진단이 끼운 보강 단원 {a.get('insertedChapters', 0)}개 (진단은 점수가 아니라 목차로 남는다)")
     print(f"{time.time() - t0:.0f}초")
 
 
@@ -164,6 +179,10 @@ def main() -> int:
     ap.add_argument("--sections", type=int, default=20, help="학습할 화면 수 (기본 20)")
     ap.add_argument("--wrong", type=float, default=0.25, help="오답 비율 (기본 0.25)")
     ap.add_argument("--seed", type=int, default=7, help="난수 시드 — 같은 값이면 같은 결과")
+    # 앞 목차를 **일부러 안 건드리기 위한** 것이다. 진단이 정한 분량(compressed·
+    # deep)은 아직 안 배운 목차에만 걸리는데, 시드가 앞부터 채우면 첫 목차가
+    # 측정 기반으로 넘어가 A/B 차이가 첫 화면에서 안 보인다(실측: 목차 0만 normal).
+    ap.add_argument("--from-chapter", type=int, default=0, help="이 목차부터 학습 (기본 0)")
     args = ap.parse_args()
 
     if args.list or not args.doc:
@@ -173,7 +192,7 @@ def main() -> int:
             print("\n--doc <id> 로 지정해라.")
         return 0
 
-    seed(args.doc, args.sections, args.wrong, args.seed)
+    seed(args.doc, args.sections, args.wrong, args.seed, args.from_chapter)
     return 0
 
 

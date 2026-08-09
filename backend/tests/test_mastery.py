@@ -319,6 +319,39 @@ def test_mode_block은_deep과_compressed만_지시를_낸다():
     assert mode_block(NORMAL) == ""
 
 
+def test_진단_목표가_안_배운_목차의_출발점을_정한다():
+    empty = chapter_summary("1장", [SectionMastery(section_id=f"s{i}") for i in range(6)])
+
+    urgent = plan_chapter(0, empty, goal="exam", deadline_weeks=2)
+    assert urgent.mode == COMPRESSED
+    assert "2주" in urgent.reason
+
+    work = plan_chapter(0, empty, goal="work")
+    assert work.mode == DEEP
+
+    # 기한이 넉넉한 시험은 표준이다 — 범위를 빠뜨리는 쪽이 더 위험하다.
+    assert plan_chapter(0, empty, goal="exam", deadline_weeks=12).mode == NORMAL
+    assert plan_chapter(0, empty).mode == NORMAL
+
+
+def test_목표로_정한_분량은_measured가_아니다():
+    """★ 이 플래그 하나로 설명 형식이 남거나 사라진다(`mode_block`).
+
+    선언은 "무엇을 하려는가"고 측정은 "지금 어떤가"다. 둘을 같은 값으로
+    취급하면, 아무것도 재지 않은 목차에서 "이미 아는 사람에게 비유는 소음"
+    이라는 근거로 학습자가 **직접 고른** 형식을 덮게 된다.
+    """
+    empty = chapter_summary("1장", [SectionMastery(section_id=f"s{i}") for i in range(6)])
+    assert plan_chapter(0, empty, goal="exam", deadline_weeks=2).measured is False
+
+    # 재서 나온 압축은 measured다 — 여기서는 성향을 덮어도 된다.
+    solid = chapter_summary("1장", [_run(f"s{i}", [True, True, True]) for i in range(8)])
+    measured_plan = plan_chapter(0, solid, goal="exam", deadline_weeks=2)
+    assert measured_plan.mode == COMPRESSED
+    assert measured_plan.measured is True
+    assert "이해도" in measured_plan.reason  # 목표가 아니라 측정이 말한다
+
+
 def test_잘하면_압축하되_없애지_않는다():
     # "이미 아니까 건너뛰세요"는 개인화가 아니라 방치다.
     states = [_run(f"s{i}", [True, True, True]) for i in range(8)]

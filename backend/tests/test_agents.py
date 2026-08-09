@@ -161,6 +161,57 @@ def test_압축_지시가_충돌을_스스로_밝힌다():
     assert "비유는 넣지 마라" in mode_block(COMPRESSED)
 
 
+def test_형식마다_반드시_지킬_것을_못박는다():
+    """★ 서술형 지시만으로는 형식이 화면에 안 나온다.
+
+    실측(같은 화면·2026-08-10) — `_ENFORCE`가 없을 때:
+
+        압축 있음   metaphor 비유○  definition ○  table 표✗  why 이유✗
+        압축 없음   metaphor 비유✗  definition ○  table 표✗  why 이유✗
+
+    압축이 형식을 눌러서인 줄 알았는데 **압축을 빼도 같았다.** 원래 지시가
+    약했던 것이다. 출력할 JSON 키를 이름으로 부르고 "★ 반드시"를 붙여야 따랐다.
+    """
+    from app.features.curriculum.profile import style_block
+
+    assert "반드시 채워라" in style_block("metaphor")
+    assert "analogy" in style_block("metaphor")
+    assert "반드시 넣어라" in style_block("table")
+    assert "|---|---|" in style_block("table")  # 표 모양을 직접 보여준다
+    assert "반드시 써라" in style_block("why")
+
+    # definition만 예외 — 원래 지시로 지켜진다(실측 4/4).
+    assert "★" not in style_block("definition")
+
+    # 모르는 값은 빈 문자열. 진단 안 한 자료가 여기로 온다.
+    assert style_block("") == "" and style_block("없는형식") == ""
+
+
+def test_분량_지시는_형식을_건드리지_않는다():
+    """무엇을 끝까지 남길지는 **형식이** 정한다.
+
+    전에는 압축 지시에 "analogy를 채워라"를 박아 뒀는데, 형식과 무관하게
+    걸려서 `table`·`why`에까지 엉뚱한 비유가 붙었다(실측 2/4 오염).
+    """
+    for m in (mode_block(COMPRESSED), mode_block(COMPRESSED, measured=False)):
+        assert "analogy" not in m
+        assert "비유" not in m or "비유는 넣지 마라" in m
+
+
+def test_목표로_압축했을_땐_형식을_안_덮는다():
+    """★ 재서 압축한 것과 선언으로 압축한 것은 다르다.
+
+    실측 사고: A 수업이 진단에서 형식 "비유로"를 골랐는데 설명에 비유가
+    하나도 없었다. `exam`·2주로 걸린 `compressed`가 "비유는 넣지 마라"까지
+    같이 들고 왔기 때문. 그 지시의 근거는 "이미 아는 사람에게 비유는 소음"인데
+    **목표로 걸린 압축은 아무것도 재지 않은 목차에 붙는다** — 근거가 없다.
+    """
+    goaled = mode_block(COMPRESSED, measured=False)
+    assert "핵심만" in goaled  # 분량은 여전히 줄인다
+    assert "비유는 넣지 마라" not in goaled
+    assert "설명 방식은 그대로 지켜라" in goaled
+
+
 def test_보충_예시가_스스로_필터를_통과한다():
     # ★ 예시가 곧 출력이다(일곱 번째). 예시가 '그런 상황에서 쓰는 것이 ____ 다.'였는데
     # 모델이 그대로 베껴 세 개념 전부 같은 문장을 냈고, 앞 문장을 가리키는 문장이라
