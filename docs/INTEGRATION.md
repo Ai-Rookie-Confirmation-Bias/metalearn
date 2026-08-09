@@ -39,7 +39,7 @@ DB       localhost:5432  (postgres/dev, DB명 metalearn_v3)
 확인:
 ```bash
 docker compose exec backend uv run alembic current          # 0010 (head)
-docker compose exec backend uv run --group dev pytest -q    # 294 passed
+docker compose exec backend uv run --group dev pytest -q    # 330 passed
 docker compose exec frontend pnpm exec tsc --noEmit         # 통과
 ```
 
@@ -210,7 +210,7 @@ dev 유저에 붙어 있고, 로그인하면 그와 다른 계정이 된다. 이
 
 ---
 
-## 3. 실제로 도는 API (42경로 · 44오퍼레이션)
+## 3. 실제로 도는 API (44경로 · 47오퍼레이션)
 
 ⚠️ `docs/API.md`는 **2026-07-03 문서**라 피벗 전 설계다. 실제로 도는 건 이 표다.
 
