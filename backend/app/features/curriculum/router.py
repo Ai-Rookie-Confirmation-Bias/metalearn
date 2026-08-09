@@ -35,6 +35,7 @@ from .schemas import (
     ChapterBrief,
     ChapterOut,
     DocumentOut,
+    FigureOut,
     FormativeOut,
     IngestOut,
     LessonOut,
@@ -507,6 +508,17 @@ async def get_lesson(
             for b in lesson.blocks
         ],
         source=section.source,
+        # 교재에 실려 있던 그림. 바이트는 파싱이 서빙하고 우리는 주소만 준다.
+        figures=[
+            FigureOut(
+                figure_id=f.figure_id,
+                page=f.page,
+                caption=f.caption,
+                needs_vision=f.needs_vision,
+                url=f"/api/parsing/figures/{f.figure_id}",
+            )
+            for f in section.figures
+        ],
         covered=lesson.covered,
         missing=list(lesson.missing),
         retrieval_gap=list(lesson.retrieval_gap),

@@ -141,8 +141,23 @@ class BlockOut(_Camel):
     concept_keys: list[str]
 
 
+class FigureOut(_Camel):
+    """화면에 딸린 그림 하나.
+
+    `url`은 파싱이 서빙한다 — 이미지 바이트를 우리 응답에 실으면 자료 하나에
+    1.6MB짜리도 있어서 레슨 응답부터 느려진다.
+    """
+
+    figure_id: str
+    page: int
+    caption: str = ""
+    # 파싱이 "텍스트만으로 불완전"이라 본 그림. 화면이 더 크게 보여줄 근거.
+    needs_vision: bool = False
+    url: str = ""
+
+
 class LessonOut(_Camel):
-    """[화면 3] 절 하나 — 설명·비유·인출 + 📎 원문."""
+    """[화면 3] 절 하나 — 설명·비유·인출 + 📎 원문 + 그림."""
 
     section_id: str
     doc_id: str
@@ -158,6 +173,9 @@ class LessonOut(_Camel):
     # 📎 교재 원문 그대로. 요약이 아니다 — 요약을 넣으면 또 다른 AI 생성물이 되어
     # "AI가 지어낸 해설이 아니라 교재의 그 문장"이라는 근거가 무너진다.
     source: str = ""
+    # 이 화면 원문 구간에 있던 그림. 원문과 같은 이유로 담는다 — 교재에 실제로
+    # 있던 그림이라는 게 설명의 근거다. 바이트는 안 싣고 id만 준다.
+    figures: list[FigureOut] = []
     # ⚡ 최근 틀린 개념 중 **이 설명이 실제로 엮은 것**. 요청한 것이 아니라
     # 본문에 들어간 것만 담는다 — 이유만 뜨고 본문이 그대로면 거짓말이 된다.
     tied_in: list[str] = []

@@ -53,6 +53,28 @@ class Concept:
 
 
 @dataclass(frozen=True)
+class Figure:
+    """원문에 실려 있던 그림 하나.
+
+    **이미지 바이트는 안 들고 다닌다.** 파싱 DB에 있고 화면이 id로 받아 간다
+    (`GET /api/parsing/documents/{doc}/figures/{id}`) — 자료 하나에 1.6MB짜리도
+    있어서 트리·레슨 응답에 실으면 그것부터 느려진다.
+
+    `offset`은 **조각 원문 기준** 문자 위치다. 어느 화면에 속하는지 가르는 데
+    쓰고, 화면 안에서는 순서만 지킨다 — 설명은 우리가 새로 쓴 글이라 원문
+    글자 위치에 정확히 끼울 자리가 없다.
+    """
+
+    figure_id: str
+    page: int
+    offset: int
+    caption: str = ""
+    # 파싱이 "텍스트만으로는 불완전하다"고 본 그림. 이게 참이면 설명이 그림을
+    # 대신할 수 없다는 뜻이라, 화면이 더 크게 보여줄 근거가 된다.
+    needs_vision: bool = False
+
+
+@dataclass(frozen=True)
 class Section:
     """화면 하나 = 한 번에 보여줄 개념 묶음 (단순 슬라이스)."""
 
@@ -75,6 +97,9 @@ class Section:
     #    보충을 끼울수록 진도가 뒤로 가고 열려 있던 단원 평가가 다시 잠긴다 —
     #    학습을 했는데 벌을 받는 그림이다.
     origin: str = ""
+    # 이 화면 원문 구간에 들어 있던 그림. 파싱이 위치까지 복원해 준 것을
+    # 그대로 나른다 — 여기가 비면 화면은 텍스트만 남는다.
+    figures: tuple[Figure, ...] = ()
 
     @property
     def inserted(self) -> bool:
@@ -128,28 +153,50 @@ def _batches(items: list[Concept], size: int) -> list[list[Concept]]:
     return out
 
 
-def _source_for(source: str, keys: tuple[str, ...]) -> str:
-    """화면 개념 구간만. 일부라도 못 찾으면 비운다 — 조각 통째 폴백은 쓰지 않는다.
+def _source_span(source: str, keys: tuple[str, ...]) -> tuple[str, tuple[tuple[int, int], ...]]:
+    """화면 개념 구간의 **본문과 위치**. 일부라도 못 찾으면 비운다.
 
     예전에 section_source가 실패 시 조각 전체를 줬고, 그게 엉뚱한 원문 사고의
     원인이었다. 생성 쪽은 source가 비면 정의만으로 돌고, 📎도 안 뜬다.
+
+    위치를 같이 돌려주는 이유: 그림이 **조각 원문 offset**으로 오는데, 어느
+    화면 것인지 가르려면 화면이 원문의 어디인지 알아야 한다. 예전엔 텍스트만
+    쓰고 좌표를 버려서 그림을 붙일 방법이 없었다.
     """
     if not source.strip():
-        return ""
+        return "", ()
     excerpts = split_by_concepts(source, list(keys))
     if not excerpts or any(not e.matched for e in excerpts):
-        return ""
+        return "", ()
     excerpts.sort(key=lambda e: e.start)
-    return "\n\n".join(e.text for e in excerpts)
+    spans = tuple((e.start, e.end) for e in excerpts)
+    return "\n\n".join(e.text for e in excerpts), spans
+
+
+def _figures_in(
+    figures: list[Figure], spans: tuple[tuple[int, int], ...]
+) -> tuple[Figure, ...]:
+    """이 화면 구간에 들어오는 그림만, 원문 순서로."""
+    if not figures or not spans:
+        return ()
+    hit = [f for f in figures if any(lo <= f.offset < hi for lo, hi in spans)]
+    return tuple(sorted(hit, key=lambda f: f.offset))
 
 
 def group_into_sections(
-    concepts: list[Concept], source: str = "", pages: str = ""
+    concepts: list[Concept],
+    source: str = "",
+    pages: str = "",
+    figures: list[Figure] | None = None,
 ) -> list[Section]:
     """개념 목록을 화면 단위로 자른다.
 
     원문이 있으면 등장 위치로 정렬하고, 없으면 `order`로 정렬한다.
     의미(선수·표·사슬)는 보지 않는다 — 파싱/그래프가 준 순서만 따른다.
+
+    `figures`를 주면 각 화면의 원문 구간에 드는 것만 그 화면에 배정한다.
+    구간 밖 그림은 버린다 — 아무 화면에나 붙이면 관계없는 그림이 설명 옆에
+    선다.
     """
     if not concepts:
         return []
@@ -173,6 +220,7 @@ def group_into_sections(
     out: list[Section] = []
     for i, batch in enumerate(_batches(ordered, SCREEN_SIZE)):
         keys = tuple(c.key for c in batch)
+        text, spans = _source_span(source, keys)
         out.append(
             Section(
                 title=batch[0].key,
@@ -180,9 +228,10 @@ def group_into_sections(
                 # 슬라이스는 판단이 아니라 자르기라 ⚡에 올릴 이유가 없다.
                 reason="",
                 order=i,
-                source=_source_for(source, keys),
+                source=text,
                 page=page,
                 section_id=_section_id(chunk_id, keys),
+                figures=_figures_in(figures or [], spans),
             )
         )
     return out

@@ -6,6 +6,8 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.features.parsing.schemas import FigureOut
+
 
 class CourseCreate(BaseModel):
     # 주인은 토큰에서 온다(Depends(get_current_user_id)). 바디로 받으면
@@ -125,6 +127,12 @@ class BodySegmentOut(BaseModel):
     filename: str | None = None
     # skeleton | body — 목차 순서를 정한 자료인가, 설명을 대는 자료인가.
     role: str = "skeleton"
+    # 이 조각에 실려 있던 그림. 문서 트리(`parsing.SegmentOut`)와 같은 모양이라
+    # 학습 어댑터가 두 트리를 같은 코드로 읽는다.
+    #
+    # 없으면 **학습 화면이 텍스트만 남는다** — 조각 본문은 통째로 오는데 그 안에
+    # 있던 그림이 여기서 끊기면 화면이 그릴 게 없다(실측: PPT 한 권에 23장).
+    figures: list[FigureOut] = Field(default_factory=list)
 
 
 class CourseConceptOut(BaseModel):

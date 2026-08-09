@@ -11,6 +11,7 @@ import { Link, useParams } from "react-router-dom";
 
 import type { BlockOut } from "@/features/curriculum/api/curriculum";
 import { Cloze } from "@/features/curriculum/components/Cloze";
+import { Figures } from "@/features/curriculum/components/Figures";
 import { Mcq } from "@/features/curriculum/components/Mcq";
 import { Reason, StatusBadge } from "@/features/curriculum/components/bits";
 import { useAnswer, useLesson } from "@/features/curriculum/queries/useCurriculum";
@@ -103,6 +104,28 @@ export function SectionPage() {
   const clozes = data.blocks.filter((b) => b.type === "cloze");
   const mcq = data.blocks.find((b) => b.type === "mcq");
 
+  // 빈칸을 개념별로 묶는다. 화면 개념 순서를 그대로 따르고, 귀속이 애매한
+  // 것(개념 여럿 / 없음)은 맨 뒤 한 묶음으로 남긴다.
+  const byConcept = new Map<string, BlockOut[]>();
+  const rest: BlockOut[] = [];
+  for (const b of clozes) {
+    const key = b.conceptKeys.length === 1 ? b.conceptKeys[0] : null;
+    if (key && data.concepts.includes(key)) {
+      byConcept.set(key, [...(byConcept.get(key) ?? []), b]);
+    } else {
+      rest.push(b);
+    }
+  }
+  let n = 0;
+  const steps: { key: string | null; blocks: BlockOut[]; offset: number }[] = [];
+  for (const key of data.concepts) {
+    const blocks = byConcept.get(key);
+    if (!blocks?.length) continue;
+    steps.push({ key, blocks, offset: n });
+    n += blocks.length;
+  }
+  if (rest.length) steps.push({ key: null, blocks: rest, offset: n });
+
   const grade = (correct: boolean, conceptKey?: string) =>
     answer.mutate({ sectionId, correct, conceptKey });
 
@@ -158,25 +181,62 @@ export function SectionPage() {
         </article>
       )}
 
+      {/* 교재 그림. 설명 바로 뒤에 둔다 — 글을 읽고 그림을 보는 순서가
+          교재를 읽는 순서와 같다. */}
+      <Figures figures={data.figures ?? []} />
+
       {tieIn && <TieIn block={tieIn} tiedIn={data.tiedIn} onGraded={grade} />}
 
-      {(clozes.length > 0 || mcq) && (
+      {/* ★ 개념 단위로 끊어 낸다.
+          전에는 설명 한 덩어리 뒤에 빈칸을 몰아 놨는데, 그러면 "읽고 바로
+          꺼낸다"는 우리 주장과 화면이 어긋난다 — 셋을 다 읽고 나서 셋을 몰아
+          답하는 건 그냥 시험이다. 개념마다 물음을 붙이면 읽은 직후에 꺼낸다.
+
+          conceptKeys가 하나인 빈칸만 개념에 귀속시킨다. 여럿이거나 없는 것은
+          (성질 문항 등) 맨 끝 묶음으로 간다 — 어느 개념 것인지 모르는 걸
+          임의로 배정하면 학습자가 엉뚱한 순서로 읽는다. */}
+      {steps.length > 0 && (
         <section className="mb-8">
           <h2 className="mb-1 text-sm font-bold text-text-primary">꺼내보기</h2>
-          <p className="mb-3 text-[0.8rem] text-text-tertiary">
+          <p className="mb-4 text-[0.8rem] text-text-tertiary">
             설명을 덮고 답해보세요. 읽는 것보다 꺼내는 게 훨씬 오래 남습니다.
           </p>
-          <ul className="space-y-3">
-            {clozes.map((b, i) => (
-              <Cloze
-                key={`${b.conceptKeys.join()}-${i}`}
-                block={b}
-                index={i + 1}
-                onGraded={grade}
-              />
+
+          <div className="space-y-6">
+            {steps.map((step, si) => (
+              <div
+                key={step.key ?? `rest-${si}`}
+                className="rounded-xl border border-border-primary bg-white p-4"
+              >
+                {step.key && (
+                  <p className="mb-2.5 text-[0.78rem] font-bold text-accent">
+                    {step.key}
+                  </p>
+                )}
+                <ul className="space-y-3">
+                  {step.blocks.map((b, i) => (
+                    <Cloze
+                      key={`${b.conceptKeys.join()}-${i}`}
+                      block={b}
+                      index={step.offset + i + 1}
+                      onGraded={grade}
+                    />
+                  ))}
+                </ul>
+              </div>
             ))}
-            {mcq && <Mcq block={mcq} onGraded={grade} />}
-          </ul>
+
+            {mcq && (
+              <div className="rounded-xl border border-border-primary bg-white p-4">
+                <p className="mb-2.5 text-[0.78rem] font-bold text-text-secondary">
+                  섞어서 구별하기
+                </p>
+                <ul>
+                  <Mcq block={mcq} onGraded={grade} />
+                </ul>
+              </div>
+            )}
+          </div>
         </section>
       )}
 

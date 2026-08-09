@@ -284,6 +284,14 @@ class DocSegment(Base):
         back_populates="segment", cascade="all, delete-orphan",
         order_by="SegmentSentence.seq",
     )
+    # 이 조각 안에 있던 그림. `Document.figures`는 문서 전체라 조각별로 다시
+    # 묶어야 했다 — 소비자(코스 트리·학습 어댑터)가 조각 단위로 읽는다.
+    #
+    # ⚠️ cascade를 안 건다. 그림의 FK는 `ondelete="SET NULL"`이라 조각이 지워져도
+    #    그림은 문서에 남는다(재파싱 중간 상태에서 이미지가 사라지면 안 된다).
+    figures: Mapped[list["DocFigure"]] = relationship(
+        back_populates="segment", order_by="DocFigure.char_offset", viewonly=True,
+    )
 
 
 class SegmentSentence(Base):
@@ -604,6 +612,10 @@ class DocFigure(Base):
     data: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
 
     document: Mapped["Document"] = relationship(back_populates="figures")
+    # `DocSegment.figures`의 짝. 조각이 지워지면 FK가 NULL이 되므로 없을 수 있다.
+    segment: Mapped["DocSegment | None"] = relationship(
+        back_populates="figures", viewonly=True,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────

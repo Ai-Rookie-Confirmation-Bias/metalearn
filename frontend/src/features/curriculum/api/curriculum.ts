@@ -105,6 +105,16 @@ export interface BlockOut {
   conceptKeys: string[];
 }
 
+/** 교재에 실려 있던 그림. 바이트는 파싱이 서빙하고 여기엔 주소만 온다. */
+export interface FigureOut {
+  figureId: string;
+  page: number;
+  caption: string;
+  // 파싱이 "텍스트만으로 불완전"이라 본 그림 — 화면이 크게 놓을 근거
+  needsVision: boolean;
+  url: string;
+}
+
 export interface LessonOut {
   sectionId: string;
   docId: string;
@@ -118,6 +128,7 @@ export interface LessonOut {
   statusLabel: string;
   blocks: BlockOut[];
   source: string; // 📎 교재 원문 그대로. 요약이 아니다
+  figures: FigureOut[]; // 이 화면 구간에 있던 교재 그림
   // ⚡ 최근 틀린 개념 중 이 설명이 **실제로 엮은 것**. 비어 있으면 ⚡를 안 띄운다
   tiedIn: string[];
   covered: number;

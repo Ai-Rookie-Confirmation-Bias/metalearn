@@ -37,6 +37,7 @@ from app.features.parsing.models import (
     MaterialRole,
 )
 from app.features.parsing.repository import ParsingRepository
+from app.features.parsing.schemas import FigureOut
 from app.features.parsing.service import _evidence_of
 
 _log = logging.getLogger("uvicorn.error")
@@ -448,7 +449,11 @@ def _to_segment(
     role: str = MaterialRole.SKELETON.value,
     seq: int | None = None,
 ) -> BodySegmentOut:
-    """조각 하나를 그대로. `seq`를 주면 그 값으로 덮는다(단원 안 정렬용)."""
+    """조각 하나를 그대로. `seq`를 주면 그 값으로 덮는다(단원 안 정렬용).
+
+    그림도 같이 싣는다 — 이미지 바이트가 아니라 메타만이라 응답이 안 무거워지고
+    (`FigureOut`), 없으면 학습 화면이 텍스트만 남는다.
+    """
     return BodySegmentOut(
         id=row.id,
         seq=row.seq if seq is None else seq,
@@ -459,4 +464,8 @@ def _to_segment(
         document_id=document_id if document_id is not None else row.document_id,
         filename=filename,
         role=role,
+        figures=sorted(
+            (FigureOut.model_validate(f) for f in row.figures),
+            key=lambda f: f.char_offset,
+        ),
     )

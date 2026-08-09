@@ -15,13 +15,14 @@ from fastapi import (
     File,
     HTTPException,
     Query,
+    Response,
     UploadFile,
 )
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, get_db
 from app.core.deps import get_current_user_id
-from app.features.parsing.models import MaterialRole
+from app.features.parsing.models import DocFigure, MaterialRole
 from app.features.parsing.schemas import ConceptHitOut, DocumentOut, DocumentTree
 from app.features.parsing.service import ParsingService
 
@@ -90,6 +91,29 @@ async def search_concepts(
     """
     return await ParsingService(db).search_concepts(
         q, limit=limit, document_ids=document_id, min_sim=min_sim
+    )
+
+
+@router.get("/figures/{figure_id}")
+def get_figure(figure_id: uuid.UUID, db: Session = Depends(get_db)) -> Response:
+    """그림 원본 이미지.
+
+    **debug 라우터에도 같은 게 있지만 그쪽은 배포에서 빠진다.** 학습 화면이
+    교재 그림을 보여주려면 정식 경로가 필요해서 여기 뒀다.
+
+    문서 id를 안 받는다 — 그림 id가 UUID라 그것만으로 충분하고, 코스(자료 여럿)
+    화면에서는 그림이 어느 문서 것인지 화면이 따로 알 이유가 없다.
+
+    캐시를 길게 준다. 파싱 결과물이라 내용이 바뀌지 않고, 한 화면에 여러 장이
+    붙는다(실측 자료 하나에 23장·1.6MB).
+    """
+    figure = db.get(DocFigure, figure_id)
+    if figure is None:
+        raise HTTPException(status_code=404, detail="그림을 찾을 수 없습니다.")
+    return Response(
+        content=figure.data,
+        media_type=figure.mime,
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
     )
 
 
