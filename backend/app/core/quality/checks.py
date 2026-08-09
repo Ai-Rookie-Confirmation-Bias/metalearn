@@ -172,6 +172,15 @@ def mechanical_check(item_type: str, d: dict, evidence_text: str) -> str | None:
         if len(blanks) > 2:
             return f"cloze 빈칸 {len(blanks)}개 — 2개 초과 (완전일치 채점 불가능 수준)"
         text_norm = _norm(" ".join(str(s.get("text", "")) for s in segments if s.get("kind") == "text"))
+        # 빈칸이 산식의 결과 자리면 폐기 — "64 - 2 = [빈칸]"은 지문이 답을
+        # 계산으로 노출한다 (실기 노트 실측: 개념 인출이 아니라 뺄셈 문제가 됨.
+        # 풀이자 LLM도 계산해서 맞히므로 왕복 검증이 못 잡는다 → 코드로 차단).
+        prev_text = ""
+        for s in segments:
+            if s.get("kind") == "blank" and _norm(prev_text).endswith(("=", "≒", "≈")):
+                return "cloze 빈칸이 계산 결과 자리 (지문에 산식 노출)"
+            if s.get("kind") == "text":
+                prev_text = str(s.get("text", ""))
         for b in blanks:
             ans = _norm(str(b.get("answer", "")))
             # §9-② 구절 통째 빈칸 차단: 사람이 완전일치로 못 맞히는 답.

@@ -290,6 +290,13 @@ class ParsingService:
             "본문 가능" if report.is_body else "뼈대만", report.reason,
         )
 
+        # 문제은행 자동 생성 (확정안 §3 — 문제 페이지 생성 시점 = 파싱 직후).
+        # 12.5단계와 같은 원칙: 부가 트리거라 실패해도 파싱은 성공이다.
+        # 지연 import는 파싱↔quiz 순환 참조 방지 (상세: features/quiz/auto.py).
+        from app.features.quiz import auto as quiz_auto
+
+        quiz_auto.schedule_bank_generation(document.id)
+
     async def _probe_field(self, document) -> None:
         """12.5단계. 실패를 삼킨다 — 부가 산출물이라 파싱을 깨면 안 된다.
 

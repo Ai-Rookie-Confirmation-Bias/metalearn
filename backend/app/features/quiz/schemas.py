@@ -166,6 +166,10 @@ class SessionRequest(BaseModel):
     document_id: str
     toc_indexes: list[int]
     count: int = Field(default=10, ge=1, le=50)
+    # 클라이언트가 이미 푼 문항 id (푼 지 오래된 순). 안 푼 것 우선 샘플링에 쓰고,
+    # 모자라면 이 순서대로 복습으로 채운다. 학습 페이지 데이터가 아니라 문제
+    # 페이지 자기 풀이 기록(localStorage)이라 격리 원칙(§7-③)과 무관하다.
+    exclude_ids: list[str] = Field(default_factory=list, max_length=2000)
 
 
 class SessionItem(BaseModel):
@@ -179,6 +183,9 @@ class SessionItem(BaseModel):
 
 class SessionResponse(BaseModel):
     items: list[SessionItem]
+    # 안 푼 문항이 모자라 복습으로 다시 나온 문항 수 (items 뒤쪽 recycled개).
+    # 화면이 "복습 N개 포함" 안내와 문항별 복습 뱃지에 쓴다.
+    recycled: int = 0
 
 
 class AttemptRequest(BaseModel):

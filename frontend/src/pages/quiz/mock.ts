@@ -1,7 +1,10 @@
-// 문제 페이지 목데이터 — 백엔드 응답 모양(JSON 스키마) 그대로.
-// GET /courses/:id/quiz → QuizBankSummary / POST .../session → SessionItem[] /
-// POST /quiz/attempts → AttemptResponse. 백엔드 붙일 때 fetch 함수로 교체만 하면 됨.
-// 정답은 이 파일의 비공개 배열에만 있고(서버 역할), 세션 응답에선 제거되어 나감.
+// 문제 페이지 타입 정의 + (기출 스타일 시연용) 목데이터.
+//
+// ⚠️ 08-08부터 화면은 실 API(./api.ts)를 쓴다 — 이 파일의 fetchSession/
+// submitAttempt/courseBanks는 화면에서 더 이상 부르지 않는다.
+// 남겨두는 이유: ① 타입 정의의 원본(백엔드 스키마와 1:1) ② 기출 스타일 모드
+// (QuizStyle="exam")는 백엔드(style 컬럼, QUIZ.md §3.6)가 생기기 전까지
+// 이 mock 세트가 유일한 시연 수단.
 
 export type QuizType = "mcq" | "cloze" | "shortAnswer" | "trueFalse";
 
@@ -33,6 +36,9 @@ export type CourseBank = {
   category: string;
   status: "ready" | "generating";
   summary: QuizBankSummary | null; // generating이면 null
+  // 은행은 있는데 리필(새 문제 추가) 배치가 도는 중 — 카드·범위 화면에
+  // "새 문제 만드는 중" 표시용. generating과 달리 풀이는 계속 가능하다.
+  refilling?: boolean;
   // 마지막 학습 시각 (책장과 같은 MAX(attempts.created_at) 계산값) — 추천 배너용
   last_activity_at: string | null;
   // 기출(kind=exam) 문서를 올린 과목만 true → "기출 스타일" 버튼 노출

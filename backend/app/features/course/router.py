@@ -78,7 +78,11 @@ def list_courses(
     user_id: uuid.UUID = Depends(get_current_user_id),
     db: Session = Depends(get_db),
 ) -> list[CourseOut]:
-    """내가 만든 수업. 책장은 curriculum 목록을 쓰지만 문제집·관리는 여기다."""
+    """내가 만든 수업. 책장은 curriculum 목록을 쓰지만 문제집·관리도 여기다.
+
+    문제집 과목 선택 화면도 이 목록을 쓴다 (id·title·documents만 소비).
+    quiz-pro3의 비스코프 list_courses()는 auth 도입으로 이 사용자 스코프 판에 흡수.
+    """
     return [
         CourseOut.model_validate(c) for c in CourseService(db).list_for(user_id)
     ]

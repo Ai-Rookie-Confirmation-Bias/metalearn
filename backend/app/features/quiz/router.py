@@ -88,7 +88,7 @@ class GenStatusResponse(BaseModel):
 
 
 async def _run_generation(
-    course_id: uuid.UUID, document_id: uuid.UUID, config
+    course_id: uuid.UUID, document_id: uuid.UUID, config, append: bool = False
 ) -> None:
     """백그라운드 생성 본체. 요청 세션은 응답과 함께 닫히므로 새 세션을 연다."""
     db = SessionLocal()
@@ -100,6 +100,7 @@ async def _run_generation(
             document_id,
             verify_llm=_verify_llm(),
             config=config,
+            append=append,
         )
         if not result.report.ok:
             jobs.fail(course_id, document_id, "파싱 산출물 계약 위반: " + " / ".join(result.report.errors))
@@ -132,6 +133,11 @@ async def generate_bank_from_parsing(
     budget: int | None = Query(
         None, ge=1, le=200, description="목차당 문항 예산. 안 주면 기본 배분"
     ),
+    mode: str = Query(
+        "replace",
+        pattern="^(replace|append)$",
+        description="replace=기존 은행 교체(기본) / append=리필 — 기존 유지 + 새 문항 추가",
+    ),
 ) -> GenStatusResponse:
     """파싱이 끝난 문서로 문제은행 생성을 **접수**한다 (202).
 
@@ -140,6 +146,8 @@ async def generate_bank_from_parsing(
     — 업로드→파싱의 202+폴링과 같은 사용법.
 
     같은 문서를 다시 부르면 그 문서의 기존 문항을 **교체**한다.
+    `mode=append`는 리필 — 문제를 다 푼 사용자를 위해 기존 은행을 유지한 채
+    새 문항만 추가한다 (기존과 발문이 겹치는 문항은 자동 폐기).
     이미 생성 중이면 409.
     """
     from app.features.quiz.schemas import QuizGenConfig
@@ -154,7 +162,9 @@ async def generate_bank_from_parsing(
         raise HTTPException(status_code=409, detail="이미 생성 작업이 진행 중입니다")
 
     config = QuizGenConfig(toc_min=budget, toc_max=budget) if budget else None
-    background.add_task(_run_generation, course_id, document_id, config)
+    background.add_task(
+        _run_generation, course_id, document_id, config, mode == "append"
+    )
     return GenStatusResponse(status="running")
 
 
@@ -186,8 +196,16 @@ def bank_summary(course_id: uuid.UUID, db: Session = Depends(get_db)) -> list[Qu
 def start_session(
     course_id: uuid.UUID, req: SessionRequest, db: Session = Depends(get_db)
 ) -> SessionResponse:
+    # exclude_ids는 클라이언트 localStorage 출신 — 손상된 값 하나 때문에
+    # 세션 전체를 거부하지 않는다 (파싱 안 되는 id는 그냥 무시).
+    exclude: list[uuid.UUID] = []
+    for raw in req.exclude_ids:
+        try:
+            exclude.append(uuid.UUID(raw))
+        except ValueError:
+            continue
     return QuizService(db, solar_client).start_session(
-        course_id, uuid.UUID(req.document_id), req.toc_indexes, req.count
+        course_id, uuid.UUID(req.document_id), req.toc_indexes, req.count, exclude
     )
 
 

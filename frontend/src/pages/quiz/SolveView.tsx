@@ -6,9 +6,11 @@ import {
   LightbulbIcon,
   PaperclipIcon,
   ArrowRightIcon,
+  ArrowCounterClockwiseIcon,
 } from "@phosphor-icons/react";
 
-import { submitAttempt, type AttemptResponse, type SessionItem } from "./mock";
+import { submitAttempt } from "./api";
+import type { AttemptResponse, SessionItem } from "./mock";
 
 export type SolveResult = { tocIndex: number; correct: boolean };
 
@@ -26,13 +28,18 @@ function answerLabel(item: SessionItem, graded: AttemptResponse): string {
 }
 
 // 화면 2: 풀이·채점 — 확정안 §6-2. 한 문항씩, 서버 채점 후 💡 고른 선지 해설 + 📎 근거.
+// recycled: items 뒤쪽 recycled개는 복습 재등장분 — 시작 안내 + 문항별 뱃지로 표시.
 export function SolveView({
   items,
+  recycled = 0,
   tocTitles,
+  onSolved,
   onFinish,
 }: {
   items: SessionItem[];
+  recycled?: number;
   tocTitles: Record<number, string>;
+  onSolved?: (item: SessionItem) => void;
   onFinish: (results: SolveResult[]) => void;
 }) {
   const [index, setIndex] = useState(0);
@@ -43,6 +50,7 @@ export function SolveView({
 
   const item = items[index];
   const isLast = index === items.length - 1;
+  const isReview = index >= items.length - recycled; // 서버가 복습분을 뒤쪽에 붙여준다
 
   const submit = async (input: number | boolean | string | string[]) => {
     if (graded || submitting) return;
@@ -51,6 +59,7 @@ export function SolveView({
       const resp = await submitAttempt(item.id, input); // 서버 채점 (정답은 서버만 앎)
       setGraded(resp);
       setResults((prev) => [...prev, { tocIndex: item.toc_index, correct: resp.correct }]);
+      onSolved?.(item); // 풀이 기록 — 다음 세션의 "안 푼 문제 우선" 재료
     } finally {
       setSubmitting(false);
     }
@@ -68,11 +77,27 @@ export function SolveView({
 
   return (
     <div className="mx-auto w-full max-w-[720px] p-12">
-      {/* 진행 헤더: 3/10 + 목차명 */}
+      {/* 복습 안내 — 안 푼 문제가 부족했던 세션에만, 첫 문항에서 한 번 (한 화면 안내 하나) */}
+      {recycled > 0 && index === 0 && !graded && (
+        <div className="mb-4 flex items-start gap-3 rounded-xl bg-bg-secondary p-4 text-[0.85rem] leading-relaxed text-text-secondary">
+          <ArrowCounterClockwiseIcon weight="bold" className="mt-0.5 shrink-0 text-base text-text-tertiary" />
+          <span>
+            안 푼 문제가 부족해서 <b className="text-text-primary">복습 {recycled}문항</b>이
+            뒤쪽에 함께 나와요. 오래 전에 푼 것부터 다시 나옵니다.
+          </span>
+        </div>
+      )}
+
+      {/* 진행 헤더: 3/10 + 복습 뱃지 + 목차명 */}
       <div className="mb-4 flex items-center justify-between text-[0.9rem] font-semibold">
-        <span className="text-text-primary">
+        <span className="flex items-center gap-2 text-text-primary">
           {index + 1}
           <span className="text-text-tertiary">/{items.length}</span>
+          {isReview && (
+            <span className="flex items-center gap-1 rounded-full bg-[#f59e0b]/10 px-2 py-0.5 text-xs font-semibold text-[#b45309]">
+              <ArrowCounterClockwiseIcon weight="bold" /> 복습
+            </span>
+          )}
         </span>
         <span className="text-text-secondary">{tocTitles[item.toc_index]}</span>
       </div>
@@ -85,19 +110,22 @@ export function SolveView({
 
       {/* 문항 카드 */}
       <div className="rounded-2xl border border-border-primary bg-white p-8 shadow-sm">
+        {/* key=item.id — 같은 유형이 연달아 나와도 문항마다 새로 마운트해
+            입력 상태(단답 텍스트·빈칸 배열)를 초기화한다. 없으면 React가
+            컴포넌트를 재사용해 이전 문항에 쓴 답이 그대로 남는다. */}
         {item.type === "mcq" && (
-          <McqSolve item={item} graded={graded} picked={picked as number | null}
+          <McqSolve key={item.id} item={item} graded={graded} picked={picked as number | null}
             onPick={(i) => { setPicked(i); void submit(i); }} />
         )}
         {item.type === "trueFalse" && (
-          <TrueFalseSolve item={item} graded={graded} picked={picked as boolean | null}
+          <TrueFalseSolve key={item.id} item={item} graded={graded} picked={picked as boolean | null}
             onPick={(v) => { setPicked(v); void submit(v); }} />
         )}
         {item.type === "shortAnswer" && (
-          <ShortAnswerSolve item={item} graded={graded} onSubmit={(v) => void submit(v)} />
+          <ShortAnswerSolve key={item.id} item={item} graded={graded} onSubmit={(v) => void submit(v)} />
         )}
         {item.type === "cloze" && (
-          <ClozeSolve item={item} graded={graded} onSubmit={(v) => void submit(v)} />
+          <ClozeSolve key={item.id} item={item} graded={graded} onSubmit={(v) => void submit(v)} />
         )}
       </div>
 

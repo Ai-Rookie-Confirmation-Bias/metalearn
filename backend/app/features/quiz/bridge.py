@@ -49,8 +49,15 @@ async def generate_from_parsing(
     *,
     verify_llm: LLMClient | None = None,
     config: QuizGenConfig | None = None,
+    append: bool = False,
 ) -> QuizGenerationResult:
-    """파싱 문서 하나로 문제은행을 만든다. 같은 문서를 다시 부르면 교체된다."""
+    """파싱 문서 하나로 문제은행을 만든다. 같은 문서를 다시 부르면 교체된다.
+
+    append=True는 리필 — 문제를 다 푼 사용자를 위해 기존 은행을 유지한 채
+    새 문항만 추가한다 (발문 중복은 서비스가 걸러냄).
+    """
     parsed = parsed_document_of(db, document_id)
     service = QuizService(db, llm, verify_llm=verify_llm)
-    return await service.generate_bank(course_id, document_id, parsed, config=config)
+    return await service.generate_bank(
+        course_id, document_id, parsed, config=config, append=append
+    )

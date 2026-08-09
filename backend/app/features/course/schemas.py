@@ -50,6 +50,17 @@ class CourseOut(BaseModel):
     topics: list[CourseTopicOut] = []
 
 
+class CourseListItem(BaseModel):
+    """목록 화면용 한 줄 — topics(무거움)는 빼고 자료 구성만 싣는다."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    title: str
+    created_at: datetime
+    documents: list[CourseDocumentOut] = []
+
+
 class PrereqOut(BaseModel):
     """이 코스를 시작하기 전에 알아야 하는 것 한 줄.
 

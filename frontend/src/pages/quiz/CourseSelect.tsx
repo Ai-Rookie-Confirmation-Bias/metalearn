@@ -81,10 +81,13 @@ function RecentStudyBanner({
 function QuizBookCard({
   course,
   cover,
+  refillOutcome = null,
   onSelect,
 }: {
   course: CourseBank;
   cover: Cover;
+  // 이 과목의 직전 리필 결과 — 추가 문항 수(0=빈손) 또는 "failed"
+  refillOutcome?: number | "failed" | null;
   onSelect: (course: CourseBank, style: QuizStyle) => void;
 }) {
   const CoverIcon = cover.icon;
@@ -136,6 +139,25 @@ function QuizBookCard({
           목차 {course.summary?.tocs.length}개 · 범위를 골라 풀 수 있어요
         </div>
 
+        {/* 리필 진행 표시 — 은행이 있으니 풀이는 그대로 가능, 배치만 뒤에서 돈다.
+            완료되면 같은 자리가 결과(추가됨/빈손/실패) 배지로 바뀐다. */}
+        {course.refilling ? (
+          <div className="mb-4 flex items-center gap-2 rounded-lg bg-accent/[0.06] px-3 py-2 text-[0.82rem] font-semibold text-accent">
+            <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-accent/30 border-t-accent" />
+            새 문제를 만들고 있어요 — 완료되면 문항 수에 더해져요
+          </div>
+        ) : typeof refillOutcome === "number" && refillOutcome > 0 ? (
+          <div className="mb-4 rounded-lg bg-[#10b981]/[0.08] px-3 py-2 text-[0.82rem] font-semibold text-[#047857]">
+            ✓ 새 문제 {refillOutcome}개가 추가됐어요
+          </div>
+        ) : refillOutcome !== null ? (
+          <div className="mb-4 rounded-lg bg-bg-secondary px-3 py-2 text-[0.82rem] text-text-secondary">
+            {refillOutcome === "failed"
+              ? "문제 생성에 실패했어요 — 잠시 후 다시 시도해 주세요"
+              : "이 자료에선 새 문제를 더 만들지 못했어요"}
+          </div>
+        ) : null}
+
         {/* 기출(kind=exam)을 올린 과목만 기출 스타일 모드가 존재 */}
         {course.has_exam_style ? (
           <div className="mt-auto flex flex-col gap-2">
@@ -170,9 +192,12 @@ function QuizBookCard({
 
 export function CourseSelect({
   courses,
+  refillOutcome = null,
   onSelect,
 }: {
   courses: CourseBank[];
+  // 직전 리필 결과 — 해당 과목 카드에만 배지로 보여준다
+  refillOutcome?: { courseId: string; saved: number | "failed" } | null;
   onSelect: (course: CourseBank, style: QuizStyle) => void;
 }) {
   const coverByCourse = assignCovers(courses);
@@ -202,6 +227,9 @@ export function CourseSelect({
               key={course.course_id}
               course={course}
               cover={coverByCourse.get(course.course_id)!}
+              refillOutcome={
+                refillOutcome?.courseId === course.course_id ? refillOutcome.saved : null
+              }
               onSelect={onSelect}
             />
           ))}
