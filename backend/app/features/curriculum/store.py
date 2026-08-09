@@ -169,11 +169,19 @@ def summarize(doc: Document, progress: Progress) -> tuple[CourseMastery, list[Ch
 
 
 class Store:
-    """서버 하나가 들고 있는 전부. 사용자 구분은 아직 없다(단일 사용자 데모)."""
+    """서버 하나가 들고 있는 전부.
+
+    문서는 **공용**이다(파싱 설계 원칙 ① 그대로) — 같은 책을 N명이 봐도
+    목차·화면은 한 벌이면 된다. 갈리는 건 진도뿐이라 그것만 사용자별로 든다.
+    """
 
     def __init__(self) -> None:
         self.documents: dict[str, Document] = {}
-        self.progress = Progress()
+        # 파일 픽스처로 온 자료. 주인이 없는 데모 자료라 누구 책장에나 보인다 —
+        # 소유로 거를 때 이 집합이 예외 목록이 된다.
+        self.fixture_ids: set[str] = set()
+        # user_id → 진도. 첫 접근에 디스크에서 읽어 온다.
+        self._progress: dict[str, Progress] = {}
         # 온보딩 전 — fixture_profile이 데모용 성향을 채운다.
         from .profile import fixture_profile
 
@@ -191,6 +199,7 @@ class Store:
                 continue
             doc = build_document(path)
             self.documents[doc.doc_id] = doc
+        self.fixture_ids = set(self.documents)
         return list(self.documents)
 
     def ingest_tree(self, tree: dict, *, doc_id: str | None = None) -> Document:
@@ -216,12 +225,27 @@ class Store:
         self.documents[doc.doc_id] = doc
         return doc
 
-    def load_progress(self) -> int:
-        """스냅샷에서 진도를 복원한다. 복원한 화면 수를 돌려준다."""
-        from .persist import load_progress
+    def progress_of(self, user_id: str) -> Progress:
+        """그 사람의 진도. 처음 보는 사용자면 스냅샷에서 읽어 온다.
 
-        self.progress = load_progress()
-        return len(self.progress.sections)
+        모든 읽기 경로가 이 문을 지난다. 서버 전체에 하나였던 것을 사람별로
+        가른 자리라, 여기 말고 다른 데서 Progress를 만들면 그 사람 기록이
+        두 벌이 되고 저장은 한 벌만 된다.
+        """
+        cached = self._progress.get(user_id)
+        if cached is not None:
+            return cached
+        from .persist import load_progress, user_path
+
+        progress = load_progress(user_path(user_id))
+        self._progress[user_id] = progress
+        return progress
+
+    def migrate_legacy_progress(self, user_id: str) -> int:
+        """사용자 구분 전에 쌓인 단일 스냅샷을 그 사용자 몫으로 옮긴다."""
+        from .persist import migrate_legacy
+
+        return migrate_legacy(user_id)
 
     def profile_block(self) -> str:
         from .profile import prompt_block
@@ -230,6 +254,7 @@ class Store:
 
     def record(
         self,
+        user_id: str,
         section_id: str,
         correct: bool,
         concept_key: str | None,
@@ -237,18 +262,19 @@ class Store:
     ) -> SectionMastery:
         """시도 하나를 누적한다. **진단·인출·복습·형성이 전부 이 문을 지난다.**"""
         from .mastery import record
-        from .persist import save_progress
+        from .persist import save_progress, user_path
 
-        state = record(self.progress.of(section_id), correct, concept_key, kind)
-        self.progress.sections[section_id] = state
+        progress = self.progress_of(user_id)
+        state = record(progress.of(section_id), correct, concept_key, kind)
+        progress.sections[section_id] = state
         if not correct and concept_key:
-            rw = self.progress.recent_wrong
+            rw = progress.recent_wrong
             if concept_key in rw:
                 rw.remove(concept_key)
             rw.append(concept_key)
             del rw[:-RECENT_WRONG]
         try:
-            save_progress(self.progress)
+            save_progress(progress, user_path(user_id))
         except OSError as e:
             # 디스크가 막혀도 이번 요청의 기록은 메모리에 남긴다.
             print(f"[curriculum] 진도 저장 실패: {type(e).__name__}: {e}")

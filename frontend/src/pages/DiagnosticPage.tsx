@@ -1,28 +1,20 @@
-/**
- * 진단 — **시험이 아니라 설정이다.** 한 번 앉아서 1분 30초.
- *
- *   ① 분야 맞나       12.5 판정을 사람이 확인. **자동 검증이 없는 값이라
- *                     이 화면이 유일한 창구다**
- *   ② 카드 4장        같은 개념을 네 형식으로 써서 보여주고 고르게 한다
- *   ③ 과목 체크       안다/들어봤다/모른다 → "들어봤다"만 펼쳐서 항목별로
- *   ④ 확인 문항       자기신고가 뒤집힐 수 있는 곳에만. 과목당 1~2문항
- *   ⑤ 보강 마련       POST /supply → 목차 앞에 보강 단원이 끼워진다
- *
- * ⚠️ ②에 **학습 효과 근거는 없다**(meshing hypothesis, Pashler 2008).
- *    이건 성취가 아니라 이탈을 막는 장치다 — 읽기 싫은 형식이면 안 읽는다.
- *    그래서 문구가 "당신에게 맞는 학습법"이 아니라 "읽기 편한 쪽"이다.
- *
- * ④는 한 번에 다 안 온다. 답을 받아야 다음이 정해져서 빈 배열이 올 때까지
- * GET → POST를 반복한다(§features/course/api.ts).
- */
-import { useEffect, useMemo, useRef, useState } from "react";
+// 진단 화면 — **시험이 아니라 설정이다.**
+//
+// 문구를 그렇게 잡은 이유가 있다. 진단 문항 자동 생성은 실측에서 못 쓸 수준이었고
+// (책 밖 1/6 · 책 안 1/4), 대신 "안다고 한 것만 표본으로 확인"하는 방식이 14/15로
+// 됐다. 그래서 대부분은 체크리스트이고 ⑤만 문항이다.
+//
+// 화면 다섯 (docs/INTEGRATION.md §4 프론트):
+//   ① 왜 배우나   ② 분야 맞나   ③ 어떤 설명이 편한가
+//   ④ 선수 체크(과목 → 펼침)   ⑤ 확인 문항(없을 수 있다)
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
   ArrowLeftIcon,
+  ArrowRightIcon,
   CheckCircleIcon,
-  WarningCircleIcon,
+  SpinnerGapIcon,
 } from "@phosphor-icons/react";
 
 import {
@@ -34,561 +26,549 @@ import {
   gradeProbes,
   saveConfig,
   supply,
+  type DiagnosticCards,
   type DiagnosticSetup,
+  type Goal,
   type Known,
   type Probe,
   type Style,
-} from "@/features/course/api";
-import { toGoal, useCourseDrafts } from "@/features/course/store";
-import { curriculumKeys } from "@/features/curriculum/queries/useCurriculum";
+} from "@/features/diagnostic/api";
 
-const STYLE_LABEL: Record<Style, string> = {
-  metaphor: "비유로",
-  definition: "정의로",
-  table: "표로",
-  why: "왜 쓰는지로",
-};
-
-const KNOWN_CHOICES: { value: Known; label: string; desc: string }[] = [
-  { value: "known", label: "안다", desc: "설명할 수 있어요" },
-  { value: "heard", label: "들어봤다", desc: "이름은 아는데 흐릿해요" },
-  { value: "unknown", label: "모른다", desc: "처음 봐요" },
+const GOALS: { value: Goal; label: string; hint: string }[] = [
+  { value: "exam", label: "시험 준비", hint: "범위를 빠짐없이. 기한이 있으면 분량을 줄입니다" },
+  { value: "work", label: "실무에 쓰려고", hint: "왜 그런지까지 깊게 봅니다" },
+  { value: "interest", label: "관심이 있어서", hint: "부담 없이 훑습니다" },
 ];
 
-const WEEKS = [2, 4, 8, 12, 24];
+const WEEKS = [1, 2, 4, 8];
 
-type Phase = "field" | "cards" | "subjects" | "items" | "probes" | "supply" | "done";
-
-const PHASE_STEP: Record<Phase, number> = {
-  field: 1,
-  cards: 2,
-  subjects: 3,
-  items: 3,
-  probes: 4,
-  supply: 4,
-  done: 4,
+// ⚠️ 문구 주의 — "당신에게 맞는 학습법"이 아니다. 러닝 스타일 맞춤에 학습 효과
+//    근거는 없다(Pashler 2008). 이건 성취가 아니라 **이탈을 막는 장치**다.
+const STYLE_LABEL: Record<Style, string> = {
+  metaphor: "비유로",
+  definition: "정의부터",
+  table: "표로 비교",
+  why: "왜 그런지부터",
 };
 
-function describe(error: unknown): string {
-  const detail = (error as { response?: { data?: { detail?: string } } })?.response
-    ?.data?.detail;
-  return detail ?? (error as Error)?.message ?? String(error);
+const KNOWN_CHOICES: { value: Known; label: string }[] = [
+  { value: "known", label: "안다" },
+  { value: "heard", label: "들어봤다" },
+  { value: "unknown", label: "모른다" },
+];
+
+const STEPS = ["왜 배우나", "분야", "설명 방식", "아는 것", "확인", "채우기"];
+
+function Choice({
+  active,
+  onClick,
+  children,
+  className,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={clsx(
+        "rounded-xl border-2 px-5 py-3 text-left transition-colors",
+        active
+          ? "border-accent bg-accent/5 text-text-primary"
+          : "border-border-primary text-text-secondary hover:border-accent/50",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
 }
 
-const cardBase = "border-2 rounded-xl bg-white text-left transition-all";
-const cardState = (on: boolean) =>
-  on
-    ? "border-primary bg-black/[0.03]"
-    : "border-border-primary hover:border-text-tertiary hover:bg-bg-secondary";
-
-function Spinner({ label }: { label: string }) {
+function KnownRow({
+  label,
+  why,
+  value,
+  onPick,
+}: {
+  label: string;
+  why?: string | null;
+  value: Known | undefined;
+  onPick: (k: Known) => void;
+}) {
   return (
-    <div className="flex flex-col items-center gap-3 py-16">
-      <span className="h-8 w-8 animate-spin rounded-full border-[3px] border-border-primary border-t-accent" />
-      <p className="text-[0.9rem] text-text-secondary">{label}</p>
+    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-primary px-5 py-3.5">
+      <div className="min-w-0">
+        <div className="font-semibold text-text-primary">{label}</div>
+        {why && <div className="mt-0.5 text-[0.85rem] text-text-tertiary">{why}</div>}
+      </div>
+      <div className="flex shrink-0 gap-1.5">
+        {KNOWN_CHOICES.map((c) => (
+          <button
+            key={c.value}
+            type="button"
+            onClick={() => onPick(c.value)}
+            className={clsx(
+              "rounded-lg px-3.5 py-1.5 text-[0.85rem] font-semibold transition-colors",
+              value === c.value
+                ? "bg-accent text-white"
+                : "bg-bg-secondary text-text-secondary hover:bg-accent/10",
+            )}
+          >
+            {c.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
 
 export function DiagnosticPage() {
-  const { courseId = "" } = useParams();
+  const { docId = "" } = useParams();
   const navigate = useNavigate();
-  const qc = useQueryClient();
-  const drafts = useCourseDrafts((s) => s.drafts);
-  const patchDraft = useCourseDrafts((s) => s.patch);
-  const draft = drafts.find((d) => d.courseId === courseId);
 
-  const [phase, setPhase] = useState<Phase>("field");
+  const [step, setStep] = useState(0);
   const [setup, setSetup] = useState<DiagnosticSetup | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  // ① 기간
+  const [goal, setGoal] = useState<Goal | null>(null);
   const [weeks, setWeeks] = useState<number | null>(null);
-  // ② 카드
-  const [cards, setCards] = useState<Partial<Record<Style, string>> | null>(null);
-  const [concept, setConcept] = useState<string | null>(null);
-  // ③ 과목 → 항목
-  const [subjectAnswers, setSubjectAnswers] = useState<Record<string, Known>>({});
-  const [expand, setExpand] = useState<string[]>([]);
-  const [itemAnswers, setItemAnswers] = useState<Record<string, Known>>({});
-  // ④ 문항
-  const [probes, setProbes] = useState<Probe[]>([]);
-  const [picks, setPicks] = useState<Record<string, number>>({});
-  const [asked, setAsked] = useState(0);
-  const [result, setResult] = useState<{ subjects: number; inserted: number } | null>(
+  const [style, setStyle] = useState<Style | null>(null);
+
+  const [cards, setCards] = useState<DiagnosticCards | null>(null);
+  const [subjectAns, setSubjectAns] = useState<Record<string, Known>>({});
+  const [expand, setExpand] = useState<string[] | null>(null);
+  const [itemAns, setItemAns] = useState<Record<string, Known>>({});
+  const [probes, setProbes] = useState<Probe[] | null>(null);
+  const [picked, setPicked] = useState<Record<string, number>>({});
+  // 진단이 끝나고 조달까지 마친 결과. null이면 아직 진행 중이다.
+  const [done, setDone] = useState<{ subjects: number; inserted: number } | null>(
     null,
   );
+  // 몇 문항을 실제로 물었나. 라운드가 여러 번이라 누적한다.
+  const [asked, setAsked] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    fetchSetup(courseId)
+    setError(null);
+    fetchSetup(docId)
       .then((s) => {
         if (!alive) return;
         setSetup(s);
-        setWeeks(s.deadline_weeks ?? null);
+        setGoal(s.goal);
+        setWeeks(s.deadline_weeks);
+        setStyle(s.style);
       })
-      .catch((e) => alive && setError(describe(e)));
+      .catch(() =>
+        alive &&
+        setError(
+          "진단은 수업(코스)에만 있습니다. 자료 하나를 열었다면 이 화면은 건너뜁니다.",
+        ),
+      );
     return () => {
       alive = false;
     };
-  }, [courseId]);
+  }, [docId]);
+
+  // ③에 들어갈 때 카드를 부른다 — LLM 1콜이라 미리 부르지 않는다.
+  useEffect(() => {
+    if (step !== 2 || cards) return;
+    let alive = true;
+    setBusy(true);
+    fetchCards(docId)
+      .then((c) => alive && setCards(c))
+      .catch(() => alive && setCards({ concept: null, cards: {} }))
+      .finally(() => alive && setBusy(false));
+    return () => {
+      alive = false;
+    };
+  }, [step, cards, docId]);
 
   const subjects = setup?.subjects ?? [];
-  const expandItems = useMemo(
-    () => subjects.filter((s) => expand.includes(s.subject)),
-    [subjects, expand],
+  // 펼칠 과목만 항목을 묻는다. 전부 물으면 실측 54개 — 과목으로 먼저 거르면 30개.
+  const expanded = useMemo(
+    () => (expand ? subjects.filter((s) => expand.includes(s.subject)) : []),
+    [expand, subjects],
   );
 
-  // ── ① 분야 확인 → 목표·기간 저장 → 카드 ──────────────────────
-  async function goCards() {
-    if (!setup) return;
+  const back = () => (step === 0 ? navigate(`/curriculum/${docId}`) : setStep((s) => s - 1));
+
+  async function next() {
     setBusy(true);
     setError(null);
     try {
-      await saveConfig(courseId, {
-        goal: draft ? toGoal(draft.purpose) : undefined,
-        deadline_weeks: weeks ?? undefined,
-      });
-      setPhase("cards");
-      const got = await fetchCards(courseId);
-      setCards(got.cards);
-      setConcept(got.concept);
-      // 카드 생성이 실패하면 빈 객체가 온다. 고를 게 없으면 건너뛴다 —
-      // 형식 선택은 이탈 방지 장치지 진단의 필수 단계가 아니다.
-      if (!Object.values(got.cards).some(Boolean)) setPhase("subjects");
-    } catch (e) {
-      setError(describe(e));
+      if (step === 0) {
+        await saveConfig(docId, { goal: goal ?? undefined, deadline_weeks: weeks });
+        setStep(1);
+      } else if (step === 1) {
+        setStep(2);
+      } else if (step === 2) {
+        if (style) await saveConfig(docId, { style });
+        setStep(3);
+      } else if (step === 3) {
+        if (expand === null) {
+          // ④-1 과목 단위 → 서버가 펼칠 과목을 정한다
+          const r = await answerSubjects(docId, subjectAns);
+          setSetup(r.setup);
+          setExpand(r.expand);
+          if (r.expand.length === 0) await toProbes();
+        } else {
+          // ④-2 펼친 과목의 항목별 답
+          if (Object.keys(itemAns).length > 0) {
+            setSetup(await answerPrereqs(docId, itemAns));
+          }
+          await toProbes();
+        }
+      } else if (step === 4) {
+        const results: Record<string, boolean> = {};
+        (probes ?? []).forEach((p, i) => {
+          const got = picked[String(i)];
+          if (got !== undefined) results[p.prereq_id] = got === p.answer_index;
+        });
+        await gradeProbes(docId, results);
+        setAsked((n) => n + (probes?.length ?? 0));
+        // **한 라운드로 안 끝난다.** 맞힌 과목은 한 번 더 묻는다 — 4지선다는
+        // 찍어서 맞으니 한 번으로는 못 믿는다. 빈 배열이 올 때까지 돈다.
+        await toProbes();
+      }
+    } catch {
+      setError("저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function pickStyle(style: Style) {
-    setBusy(true);
-    try {
-      await saveConfig(courseId, { style });
-      setPhase("subjects");
-    } catch (e) {
-      setError(describe(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // ── ③ 과목 → 펼침 → 항목 ────────────────────────────────────
-  async function submitSubjects() {
-    setBusy(true);
-    setError(null);
-    try {
-      const out = await answerSubjects(courseId, subjectAnswers);
-      setSetup(out.setup);
-      setExpand(out.expand);
-      if (out.expand.length === 0) await startProbes();
-      else setPhase("items");
-    } catch (e) {
-      setError(describe(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function submitItems() {
-    setBusy(true);
-    setError(null);
-    try {
-      setSetup(await answerPrereqs(courseId, itemAnswers));
-      await startProbes();
-    } catch (e) {
-      setError(describe(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  // ── ④ 확인 문항 — 빈 배열이 올 때까지 GET → POST ────────────
-  async function startProbes() {
-    setPhase("probes");
-    setProbes([]);
-    setPicks({});
-    const round = await fetchProbes(courseId);
-    if (round.length === 0) await runSupply();
-    else setProbes(round);
-  }
-
-  async function submitProbes() {
-    setBusy(true);
-    setError(null);
-    try {
-      const results: Record<string, boolean> = {};
-      for (const p of probes) results[p.prereq_id] = picks[p.prereq_id] === p.answer_index;
-      await gradeProbes(courseId, results);
-      setAsked((n) => n + probes.length);
+  async function toProbes() {
+    const p = await fetchProbes(docId);
+    // ⑤는 **빈 목록일 수 있다** — 다 끝났거나, 정답을 못 세워 문항을 못 냈거나.
+    // 어느 쪽이든 여기서 진단이 끝나고 조달로 넘어간다.
+    if (p.length === 0) {
       setProbes([]);
-      setPicks({});
-      const next = await fetchProbes(courseId);
-      if (next.length === 0) await runSupply();
-      else setProbes(next);
-    } catch (e) {
-      setError(describe(e));
-    } finally {
-      setBusy(false);
+      await runSupply();
+      return;
     }
+    setProbes(p);
+    setPicked({});
+    setStep(4);
   }
 
-  // ── ⑤ 보강 ──────────────────────────────────────────────────
-  const supplied = useRef(false);
+  /** 26·27 — 모르는 과목의 자료를 마련해 목차 앞에 끼운다.
+   *
+   *  실패해도 진단 결과는 이미 저장돼 있다. 보강만 없는 채로 끝낸다. */
   async function runSupply() {
-    if (supplied.current) return;
-    supplied.current = true;
-    setPhase("supply");
+    setStep(5);
     try {
-      const out = await supply(courseId);
-      setResult({ subjects: out.subjects, inserted: out.inserted + out.updated });
-      if (draft) patchDraft(draft.id, { diagnosed: true });
-      // 보강 단원이 목차에 끼워졌다. 책장이 들고 있는 목차는 이제 낡았다.
-      await qc.invalidateQueries({ queryKey: curriculumKeys.documents });
-      await qc.invalidateQueries({ queryKey: curriculumKeys.document(courseId) });
-      setPhase("done");
-    } catch (e) {
-      setError(describe(e));
-      setPhase("done");
+      const out = await supply(docId);
+      setDone({ subjects: out.subjects, inserted: out.inserted + out.updated });
+    } catch {
+      setDone({ subjects: 0, inserted: 0 });
     }
   }
 
-  // ── 그리기 ──────────────────────────────────────────────────
-  const allSubjectsAnswered =
-    subjects.length > 0 && subjects.every((s) => subjectAnswers[s.subject]);
-  const allItemsAnswered = expandItems.every((s) =>
-    s.items.every((i) => itemAnswers[i.id]),
-  );
-  const allPicked = probes.every((p) => picks[p.prereq_id] !== undefined);
+  const canNext =
+    step === 0
+      ? goal !== null
+      : step === 3 && expand === null
+        ? subjects.length > 0 && subjects.every((s) => subjectAns[s.subject])
+        : true;
+
+  if (error && !setup) {
+    return (
+      <div className="mx-auto max-w-[680px] px-8 py-24 text-center">
+        <p className="text-text-secondary">{error}</p>
+        <button
+          type="button"
+          onClick={() => navigate(`/curriculum/${docId}`)}
+          className="mt-6 rounded-xl bg-accent px-6 py-2.5 font-semibold text-white"
+        >
+          학습으로 가기
+        </button>
+      </div>
+    );
+  }
+
+  if (done) {
+    return (
+      <div className="mx-auto max-w-[680px] px-8 py-24 text-center">
+        <CheckCircleIcon className="mx-auto mb-5 text-[3.5rem] text-accent" weight="fill" />
+        <h2 className="text-[1.75rem] font-bold text-text-primary">진단이 끝났어요</h2>
+        <p className="mt-2 text-text-secondary">
+          여기서 답한 것은 <strong>분량과 설명 방식</strong>을 정하는 데 쓰입니다.
+          학습하면서 계속 다시 재요.
+        </p>
+        {done.inserted > 0 && (
+          <p className="mt-4 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] text-text-secondary">
+            먼저 알아야 할 <strong>{done.subjects}과목</strong>을 살펴서{" "}
+            <strong>{done.inserted}개 단원</strong>을 목차 앞에 넣었어요
+            {asked > 0 && ` (확인 문항 ${asked}개)`}.
+          </p>
+        )}
+        <button
+          type="button"
+          onClick={() => navigate(`/curriculum/${docId}`)}
+          className="mt-8 inline-flex items-center gap-2 rounded-xl bg-accent px-7 py-3 font-semibold text-white"
+        >
+          학습 시작하기 <ArrowRightIcon />
+        </button>
+      </div>
+    );
+  }
 
   return (
-    <div className="flex min-h-screen justify-center bg-bg-secondary px-4 py-10">
-      <div className="w-full max-w-[640px]">
-        <div className="rounded-2xl border border-border-primary bg-white p-12 shadow-lg max-[480px]:p-6">
-          <div className="mb-4 flex items-center justify-between">
-            <span className="text-sm font-semibold text-accent">
-              STEP {PHASE_STEP[phase]} / 4
-            </span>
-            {setup && <span className="text-[0.8rem] text-text-tertiary">{setup.field}</span>}
+    <div className="mx-auto w-full max-w-[760px] px-8 py-12">
+      <div className="mb-2 flex items-center gap-2 text-[0.85rem] font-semibold">
+        {STEPS.map((s, i) => (
+          <span key={s} className={i === step ? "text-accent" : "text-text-tertiary"}>
+            {i > 0 && <span className="mr-2 text-border-primary">·</span>}
+            {s}
+          </span>
+        ))}
+      </div>
+      <p className="mb-8 text-[0.9rem] text-text-tertiary">
+        시험이 아니에요. <strong>어떻게 가르칠지 정하려고</strong> 묻는 거예요.
+      </p>
+
+      {step === 0 && (
+        <>
+          <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-text-primary">
+            이 자료를 왜 배우시나요?
+          </h2>
+          <p className="mb-7 text-[0.95rem] text-text-secondary">
+            목적에 따라 설명 분량이 달라져요.
+          </p>
+          <div className="flex flex-col gap-3">
+            {GOALS.map((g) => (
+              <Choice key={g.value} active={goal === g.value} onClick={() => setGoal(g.value)}>
+                <div className="font-semibold text-text-primary">{g.label}</div>
+                <div className="mt-0.5 text-[0.85rem] text-text-tertiary">{g.hint}</div>
+              </Choice>
+            ))}
           </div>
 
-          {error && (
-            <div className="mb-6 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50/50 px-4 py-3 text-[0.85rem] text-red-700">
-              <WarningCircleIcon weight="fill" className="mt-0.5 shrink-0 text-lg" />
-              <span>{error}</span>
+          {goal === "exam" && (
+            <div className="mt-7">
+              <div className="mb-3 font-semibold text-text-primary">시험까지 얼마나 남았나요?</div>
+              <div className="flex flex-wrap gap-2">
+                {WEEKS.map((w) => (
+                  <Choice key={w} active={weeks === w} onClick={() => setWeeks(w)}>
+                    {w}주
+                  </Choice>
+                ))}
+                <Choice active={weeks === null} onClick={() => setWeeks(null)}>
+                  정해지지 않음
+                </Choice>
+              </div>
+              <p className="mt-3 text-[0.85rem] text-text-tertiary">
+                기간이 짧으면 아는 단원을 줄이고 모르는 쪽에 시간을 씁니다.
+              </p>
             </div>
           )}
+        </>
+      )}
 
-          {!setup && !error && <Spinner label="자료를 읽는 중…" />}
-
-          {/* ① 분야 맞나 */}
-          {setup && phase === "field" && (
-            <>
-              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
-                이 분야가 맞나요?
-              </h2>
-              <p className="mb-8 text-[0.95rem] text-text-secondary">
-                올린 자료를 읽고 판단한 분야예요. 이 값으로 먼저 알아야 할 것을 찾아요.
-              </p>
-
-              <div className="mb-8 rounded-xl border-2 border-primary bg-black/[0.03] px-5 py-4">
-                <div className="text-[1.05rem] font-bold text-text-primary">
-                  {setup.field ?? "분야를 판단하지 못했어요"}
-                </div>
-                <div className="mt-1 text-[0.8rem] text-text-secondary">
-                  {setup.documents.join(" · ")}
-                </div>
+      {step === 1 && (
+        <>
+          <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-text-primary">
+            이 분야가 맞나요?
+          </h2>
+          <p className="mb-7 text-[0.95rem] text-text-secondary">
+            자료를 읽고 판단한 값이에요. 틀리면 선수 개념을 엉뚱하게 잡습니다.
+          </p>
+          <div className="rounded-2xl border border-border-primary bg-bg-secondary px-7 py-8 text-center">
+            <div className="text-[1.5rem] font-bold text-text-primary">
+              {setup?.field ?? "판정하지 못했어요"}
+            </div>
+            {setup?.documents?.length ? (
+              <div className="mt-2 text-[0.85rem] text-text-tertiary">
+                {setup.documents.join(" · ")}
               </div>
+            ) : null}
+          </div>
+          <p className="mt-4 text-[0.85rem] text-text-tertiary">
+            지금은 확인만 받습니다. 고치는 기능은 아직 없어요 — 다르면 알려주세요.
+          </p>
+        </>
+      )}
 
-              <h3 className="mb-3 text-[0.95rem] font-semibold text-text-primary">
-                언제까지 하실 건가요?
-              </h3>
-              <div className="mb-2 flex flex-wrap gap-2">
-                {WEEKS.map((w) => (
-                  <button
-                    key={w}
-                    onClick={() => setWeeks(w)}
+      {step === 2 && (
+        <>
+          <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-text-primary">
+            어떤 설명이 읽기 편한가요?
+          </h2>
+          <p className="mb-7 text-[0.95rem] text-text-secondary">
+            같은 개념{cards?.concept ? ` (${cards.concept})` : ""}을 네 가지로 써봤어요.
+            읽기 편한 쪽을 고르시면 그 방식으로 설명합니다.
+          </p>
+          {busy && !cards ? (
+            <div className="flex items-center gap-2 py-16 text-text-tertiary">
+              <SpinnerGapIcon className="animate-spin" /> 네 가지로 써보는 중…
+            </div>
+          ) : Object.keys(cards?.cards ?? {}).length === 0 ? (
+            <p className="rounded-xl bg-bg-secondary px-5 py-6 text-text-secondary">
+              예시를 만들지 못했어요. 이 단계는 건너뛰어도 됩니다.
+            </p>
+          ) : (
+            <div className="grid gap-3 md:grid-cols-2">
+              {(Object.keys(cards?.cards ?? {}) as Style[]).map((k) => (
+                <Choice
+                  key={k}
+                  active={style === k}
+                  onClick={() => setStyle(k)}
+                  className="h-full"
+                >
+                  <div className="mb-1.5 text-[0.8rem] font-bold text-accent">
+                    {STYLE_LABEL[k]}
+                  </div>
+                  {/* ⚠️ `whitespace-pre-wrap`이 없으면 표 카드가 죽는다 — 서버는
+                      개행이 있는 마크다운 표를 주는데 기본 white-space가 그걸
+                      한 줄로 뭉개서, "표로 비교"를 고르라면서 표를 안 보여주게 된다. */}
+                  <div
                     className={clsx(
-                      cardBase,
-                      cardState(weeks === w),
-                      "px-4 py-2 text-[0.9rem] font-medium text-text-primary",
+                      "whitespace-pre-wrap text-text-secondary",
+                      k === "table"
+                        ? "overflow-x-auto font-mono text-[0.72rem] leading-snug"
+                        : "text-[0.9rem] leading-relaxed",
                     )}
                   >
-                    {w}주
-                  </button>
-                ))}
-                <button
-                  onClick={() => setWeeks(null)}
-                  className={clsx(
-                    cardBase,
-                    cardState(weeks === null),
-                    "px-4 py-2 text-[0.9rem] font-medium text-text-primary",
-                  )}
-                >
-                  정하지 않음
-                </button>
-              </div>
-              {setup.subjects.length > 0 && (
-                <p className="mt-6 text-[0.85rem] text-text-tertiary">
-                  자료 밖에서 먼저 알아야 할 것이 {setup.subjects.length}과목 ·{" "}
-                  {setup.subjects.reduce((n, s) => n + s.items.length, 0)}개 있어요.
+                    {cards?.cards[k]}
+                  </div>
+                </Choice>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+
+      {step === 3 && (
+        <>
+          <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-text-primary">
+            {expand === null ? "이미 아는 게 있나요?" : "조금 더 자세히"}
+          </h2>
+          <p className="mb-7 text-[0.95rem] text-text-secondary">
+            {expand === null
+              ? "아는 것은 설명을 줄이고, 모르는 것은 먼저 채웁니다."
+              : "“들어봤다”고 하신 것만 항목별로 여쭤봐요."}
+          </p>
+
+          {expand === null ? (
+            <div className="flex flex-col gap-2.5">
+              {subjects.length === 0 && (
+                <p className="rounded-xl bg-bg-secondary px-5 py-6 text-text-secondary">
+                  확인할 선수 개념이 없어요. 다음으로 넘어가세요.
                 </p>
               )}
-            </>
-          )}
-
-          {/* ② 카드 4장 */}
-          {phase === "cards" && (
-            <>
-              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
-                어떤 설명이 읽기 편하세요?
-              </h2>
-              <p className="mb-8 text-[0.95rem] text-text-secondary">
-                {concept ? `「${concept}」을 네 가지로 써봤어요. ` : ""}
-                고른 쪽으로 설명을 씁니다.
-              </p>
-              {!cards ? (
-                <Spinner label="네 가지로 써보는 중…" />
-              ) : (
-                <div className="flex flex-col gap-3">
-                  {(Object.keys(STYLE_LABEL) as Style[])
-                    .filter((k) => cards[k])
-                    .map((k) => (
-                      <button
-                        key={k}
-                        disabled={busy}
-                        onClick={() => pickStyle(k)}
-                        className={clsx(cardBase, cardState(false), "px-5 py-4")}
-                      >
-                        <div className="mb-1 text-[0.8rem] font-semibold text-accent">
-                          {STYLE_LABEL[k]}
-                        </div>
-                        {/* `table`은 마크다운 표로 온다. 그대로 흘리면 `|`가
-                            날것으로 보이므로 줄과 칸을 살려서 보여준다. */}
-                        <div
-                          className={clsx(
-                            "whitespace-pre-wrap text-text-primary",
-                            k === "table"
-                              ? "font-mono text-[0.8rem] leading-relaxed"
-                              : "text-[0.9rem] leading-relaxed",
-                          )}
-                        >
-                          {cards[k]}
-                        </div>
-                      </button>
-                    ))}
-                </div>
+              {subjects.map((s) => (
+                <KnownRow
+                  key={s.subject}
+                  label={s.subject}
+                  why={`${s.items.length}개 항목${s.ordered ? " · 순서가 있어요" : ""}`}
+                  value={subjectAns[s.subject]}
+                  onPick={(k) => setSubjectAns((p) => ({ ...p, [s.subject]: k }))}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="flex flex-col gap-6">
+              {expanded.length === 0 && (
+                <p className="rounded-xl bg-bg-secondary px-5 py-6 text-text-secondary">
+                  더 물어볼 게 없어요.
+                </p>
               )}
-            </>
-          )}
-
-          {/* ③-1 과목 */}
-          {phase === "subjects" && (
-            <>
-              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
-                이건 어느 정도 아세요?
-              </h2>
-              <p className="mb-8 text-[0.95rem] text-text-secondary">
-                자료가 안 가르치는 것들이에요. 모르는 건 앞에 따로 넣어드릴게요.
-              </p>
-              <div className="flex flex-col gap-4">
-                {subjects.map((s) => (
-                  <div key={s.subject}>
-                    <div className="mb-2 flex items-baseline gap-2">
-                      <span className="font-semibold text-text-primary">{s.subject}</span>
-                      <span className="text-[0.75rem] text-text-tertiary">
-                        {s.items.length}개
-                      </span>
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                      {KNOWN_CHOICES.map((c) => (
-                        <button
-                          key={c.value}
-                          onClick={() =>
-                            setSubjectAnswers((a) => ({ ...a, [s.subject]: c.value }))
-                          }
-                          className={clsx(
-                            cardBase,
-                            cardState(subjectAnswers[s.subject] === c.value),
-                            "px-3 py-2 text-center",
-                          )}
-                        >
-                          <div className="text-[0.85rem] font-semibold text-text-primary">
-                            {c.label}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
+              {expanded.map((s) => (
+                <div key={s.subject}>
+                  <div className="mb-2.5 font-bold text-text-primary">{s.subject}</div>
+                  <div className="flex flex-col gap-2">
+                    {s.items.map((it) => (
+                      <KnownRow
+                        key={it.id}
+                        label={it.item}
+                        why={it.why}
+                        value={itemAns[it.id] ?? it.known ?? undefined}
+                        onPick={(k) => setItemAns((p) => ({ ...p, [it.id]: k }))}
+                      />
+                    ))}
                   </div>
-                ))}
-              </div>
-            </>
+                </div>
+              ))}
+            </div>
           )}
+        </>
+      )}
 
-          {/* ③-2 펼친 과목의 항목 */}
-          {phase === "items" && (
-            <>
-              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
-                조금 더 좁혀볼게요
-              </h2>
-              <p className="mb-8 text-[0.95rem] text-text-secondary">
-                "들어봤다"고 하신 과목이에요. 아는 항목은 보강에서 빼드려요.
-              </p>
-              <div className="flex flex-col gap-6">
-                {expandItems.map((s) => (
-                  <div key={s.subject}>
-                    <div className="mb-2 font-semibold text-text-primary">{s.subject}</div>
-                    <div className="flex flex-col gap-2">
-                      {s.items.map((item) => (
-                        <div
-                          key={item.id}
-                          className="flex items-center gap-3 rounded-xl border border-border-primary px-4 py-2"
-                        >
-                          <span className="min-w-0 flex-1 truncate text-[0.9rem] text-text-primary">
-                            {item.item}
-                          </span>
-                          <div className="flex shrink-0 gap-1">
-                            {KNOWN_CHOICES.map((c) => (
-                              <button
-                                key={c.value}
-                                onClick={() =>
-                                  setItemAnswers((a) => ({ ...a, [item.id]: c.value }))
-                                }
-                                className={clsx(
-                                  "rounded-lg border px-2 py-1 text-[0.75rem] transition-colors",
-                                  itemAnswers[item.id] === c.value
-                                    ? "border-primary bg-black/[0.03] font-semibold text-text-primary"
-                                    : "border-border-primary text-text-secondary hover:bg-bg-secondary",
-                                )}
-                              >
-                                {c.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </>
-          )}
-
-          {/* ④ 확인 문항 */}
-          {phase === "probes" && (
-            <>
-              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
-                한 번만 확인할게요
-              </h2>
-              <p className="mb-8 text-[0.95rem] text-text-secondary">
-                과목마다 한두 문항이에요. 틀려도 괜찮아요 — 그만큼 더 넣어드릴 뿐이에요.
-                {asked > 0 && ` 지금까지 ${asked}문항.`}
-              </p>
-              {probes.length === 0 ? (
-                <Spinner label="문항을 만드는 중…" />
-              ) : (
-                <div className="flex flex-col gap-6">
-                  {probes.map((p) => (
-                    <div key={p.prereq_id}>
-                      <div className="mb-1 text-[0.75rem] font-semibold text-accent">
-                        {p.subject}
-                      </div>
-                      <div className="mb-3 text-[0.95rem] font-semibold text-text-primary">
-                        {p.stem}
-                      </div>
-                      <div className="flex flex-col gap-2">
-                        {p.choices.map((choice, i) => (
-                          <button
-                            key={i}
-                            onClick={() => setPicks((s) => ({ ...s, [p.prereq_id]: i }))}
-                            className={clsx(
-                              cardBase,
-                              cardState(picks[p.prereq_id] === i),
-                              "px-4 py-3 text-[0.875rem] leading-relaxed text-text-primary",
-                            )}
-                          >
-                            {choice}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
+      {step === 4 && (
+        <>
+          <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-text-primary">
+            안다고 하신 것 중 몇 개만
+          </h2>
+          <p className="mb-7 text-[0.95rem] text-text-secondary">
+            과목마다 한두 문항이에요. 틀려도 괜찮아요 — 그만큼 앞에 더 넣어드릴 뿐이에요.
+          </p>
+          <div className="flex flex-col gap-6">
+            {(probes ?? []).map((p, i) => (
+              <div key={p.prereq_id} className="rounded-2xl border border-border-primary p-6">
+                <div className="mb-1 text-[0.8rem] font-semibold text-text-tertiary">
+                  {p.subject} · {p.item}
+                </div>
+                <div className="mb-4 font-semibold text-text-primary">{p.stem}</div>
+                <div className="flex flex-col gap-2">
+                  {p.choices.map((c, ci) => (
+                    <Choice
+                      key={ci}
+                      active={picked[String(i)] === ci}
+                      onClick={() => setPicked((prev) => ({ ...prev, [String(i)]: ci }))}
+                    >
+                      {c}
+                    </Choice>
                   ))}
                 </div>
-              )}
-            </>
-          )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
-          {phase === "supply" && <Spinner label="모자란 부분을 채우는 중…" />}
-
-          {/* ⑤ 끝 */}
-          {phase === "done" && (
-            <div className="py-6 text-center">
-              <CheckCircleIcon
-                weight="fill"
-                className="mx-auto mb-4 text-[3rem] text-emerald-500"
-              />
-              <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
-                준비됐어요
-              </h2>
-              <p className="mb-8 text-[0.95rem] text-text-secondary">
-                {result
-                  ? `${result.subjects}과목을 살펴서 ${result.inserted}개 단원을 목차 앞에 넣었어요.`
-                  : "목차를 그대로 씁니다."}
-                {asked > 0 && ` 문항 ${asked}개로 확인했어요.`}
-              </p>
-              <button
-                onClick={() => navigate(`/curriculum/${encodeURIComponent(courseId)}`)}
-                className="inline-flex items-center gap-2 rounded-xl bg-primary px-6 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover"
-              >
-                학습 시작하기
-              </button>
-            </div>
-          )}
-
-          {/* 아래 버튼 */}
-          {setup && phase !== "done" && phase !== "cards" && phase !== "supply" && (
-            <div className="mt-10 flex items-center justify-between border-t border-border-primary pt-6">
-              <button
-                onClick={() => navigate("/library")}
-                className="flex items-center gap-2 text-[13.3333px] font-medium text-text-secondary transition-colors hover:text-primary"
-              >
-                <ArrowLeftIcon /> 나중에 하기
-              </button>
-              <button
-                disabled={
-                  busy ||
-                  (phase === "subjects" && !allSubjectsAnswered) ||
-                  (phase === "items" && !allItemsAnswered) ||
-                  (phase === "probes" && (probes.length === 0 || !allPicked))
-                }
-                onClick={() => {
-                  if (phase === "field") void goCards();
-                  else if (phase === "subjects") void submitSubjects();
-                  else if (phase === "items") void submitItems();
-                  else if (phase === "probes") void submitProbes();
-                }}
-                className={clsx(
-                  "inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-[0.6rem] text-[13.3333px] font-semibold text-white shadow-sm transition-all",
-                  busy ||
-                    (phase === "subjects" && !allSubjectsAnswered) ||
-                    (phase === "items" && !allItemsAnswered) ||
-                    (phase === "probes" && (probes.length === 0 || !allPicked))
-                    ? "cursor-not-allowed opacity-50"
-                    : "hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md",
-                )}
-              >
-                {busy ? "…" : phase === "field" ? "맞아요" : "다음"}
-              </button>
-            </div>
-          )}
+      {step === 5 && (
+        <div className="flex flex-col items-center gap-4 py-24 text-center">
+          <SpinnerGapIcon className="animate-spin text-[2.5rem] text-accent" />
+          <p className="font-semibold text-text-primary">모자란 부분을 채우는 중…</p>
+          <p className="text-[0.9rem] text-text-tertiary">
+            모른다고 하신 과목마다 무엇을 가르칠지 정리하고 있어요. 과목당 몇 초 걸려요.
+          </p>
         </div>
+      )}
 
-        <p className="mt-4 text-center text-[0.75rem] text-text-tertiary">
-          나중에 해도 돼요. 그때는 모르는 것으로 보고 전부 넣어드립니다.
-        </p>
+      {error && setup && (
+        <p className="mt-6 rounded-xl bg-red-50 px-5 py-3 text-[0.9rem] text-red-600">{error}</p>
+      )}
+
+      <div
+        className={clsx(
+          "mt-10 flex items-center justify-between border-t border-border-primary pt-6",
+          step === 5 && "hidden",
+        )}
+      >
+        <button
+          type="button"
+          onClick={back}
+          className="inline-flex items-center gap-2 text-text-secondary hover:text-text-primary"
+        >
+          <ArrowLeftIcon /> {step === 0 ? "학습으로" : "이전"}
+        </button>
+        <button
+          type="button"
+          onClick={next}
+          disabled={!canNext || busy}
+          className={clsx(
+            "inline-flex items-center gap-2 rounded-xl px-7 py-3 font-semibold text-white transition-opacity",
+            canNext && !busy ? "bg-accent" : "cursor-not-allowed bg-text-tertiary/40",
+          )}
+        >
+          {busy ? <SpinnerGapIcon className="animate-spin" /> : null}
+          {step === 4 ? "채점하기" : "다음"}
+        </button>
       </div>
     </div>
   );

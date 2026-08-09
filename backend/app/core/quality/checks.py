@@ -25,6 +25,56 @@ def _norm(s: str) -> str:
     return re.sub(r"\s+", "", str(s))
 
 
+# 내부 문장 번호 인용의 확실한 패턴만 제거 (pro3 실측 §12 — 프롬프트로 안 막힘).
+# 애매한 변형은 지우지 않고 남긴다 — mechanical_check가 잡아 수정 루프로 보낸다.
+_REFS = r"(?<![0-9A-Za-z])s\d+(?:\s*[,·~]\s*s?\d+)*"
+_SCRUB_PATTERNS = [
+    re.compile(r"[(\[（]\s*s\d+(?:\s*[,·~\-]\s*s?\d+)*\s*[)\]）]"),  # "(s31)" "[s3, s4]"
+    re.compile(_REFS + r"(?:번)?(?:\s*문장)?\s*에\s*(?:따르면|의하면|따라)\s*,?\s*"),
+    re.compile(_REFS + r"(?:번)?(?:\s*문장)?\s*에서(?:는)?\s*,?\s*"),
+]
+
+
+def scrub_sentence_refs(item_type: str, d: dict) -> None:
+    """본문에 섞인 문장 번호 인용("s31에 따르면", "(s26)")을 코드로 걷어낸다.
+
+    폐기 전에 고칠 수 있는 것을 고치는 전처리 — polish_mcq와 같은 자리(검증 직전).
+    정답·accepted는 건드리지 않는다 (근거 대조·채점 계약에 걸린 필드)."""
+
+    def clean(s):
+        if not isinstance(s, str):
+            return s
+        out = s
+        for pat in _SCRUB_PATTERNS:
+            out = pat.sub("", out)
+        if out == s:
+            return s
+        out = re.sub(r"\s{2,}", " ", out)
+        out = re.sub(r"\s+(?=[.,!?])", "", out)  # 인용 제거 자리의 " ." 정리
+        return out.strip()
+
+    if item_type == "mcq":
+        for key in ("question", "explanation"):
+            if key in d:
+                d[key] = clean(d[key])
+        if isinstance(d.get("options"), list):
+            d["options"] = [clean(o) for o in d["options"]]
+        if isinstance(d.get("wrongExplanations"), dict):
+            d["wrongExplanations"] = {k: clean(v) for k, v in d["wrongExplanations"].items()}
+    elif item_type == "cloze":
+        for seg in d.get("segments", []):
+            if isinstance(seg, dict) and seg.get("kind") == "text":
+                seg["text"] = clean(seg.get("text"))
+    elif item_type == "shortAnswer":
+        for key in ("prompt", "explanation"):
+            if key in d:
+                d[key] = clean(d[key])
+    elif item_type == "trueFalse":
+        for key in ("statement", "explanation"):
+            if key in d:
+                d[key] = clean(d[key])
+
+
 def visible_texts(item_type: str, d: dict) -> list[str]:
     """학습자에게 그대로 노출되는 텍스트 필드 (문장 번호 유출 검사 대상)."""
     if item_type == "mcq":
@@ -119,9 +169,17 @@ def mechanical_check(item_type: str, d: dict, evidence_text: str) -> str | None:
         blanks = [s for s in segments if s.get("kind") == "blank"]
         if not blanks:
             return "cloze에 빈칸 없음"
+        if len(blanks) > 2:
+            return f"cloze 빈칸 {len(blanks)}개 — 2개 초과 (완전일치 채점 불가능 수준)"
         text_norm = _norm(" ".join(str(s.get("text", "")) for s in segments if s.get("kind") == "text"))
         for b in blanks:
             ans = _norm(str(b.get("answer", "")))
+            # §9-② 구절 통째 빈칸 차단: 사람이 완전일치로 못 맞히는 답.
+            # 풀이자 LLM은 근거 원문을 보고 복사할 수 있어 solve가 못 잡는다.
+            if len(ans) > 15:
+                return f"cloze 정답 '{b.get('answer')}'이 공백 제거 15자 초과 (구절 통째 빈칸)"
+            if any(ch in ans for ch in "→▶"):
+                return f"cloze 정답 '{b.get('answer')}'에 화살표 포함 (절차 나열 빈칸)"
             if not ans or ans not in evidence_norm:
                 return f"cloze 정답 '{b.get('answer')}'이 근거 문장에 없음"
             # answer와 동일한 alias 정리 (프롬프트로 못 막는 중복 — QUIZ_TUNING §5-②)
@@ -187,10 +245,40 @@ def check_solution(item_type: str, data: dict, solver_answer) -> str | None:
     ):
         solver_answer = solver_answer[0]
 
+    # 문자열 불리언("False") — solar-pro3 풀이자 실측 편차. 내용이 맞으면 살린다.
+    if item_type == "trueFalse" and isinstance(solver_answer, str):
+        low = solver_answer.strip().lower()
+        if low in ("true", "false", "참", "거짓"):
+            solver_answer = low in ("true", "참")
+
+    # 빈칸 1개짜리 cloze에 배열 없이 답하는 편차 — 형식이 아니라 내용으로 판정
+    if item_type == "cloze" and isinstance(solver_answer, str):
+        solver_answer = [solver_answer]
+
     if item_type == "mcq":
         answers = solver_answer if isinstance(solver_answer, list) else [solver_answer]
+        # 선지 번호 대신 선지 텍스트로 답하는 편차('REDO') — 유일하게 일치하는
+        # 선지가 있으면 그 번호로 취급 (pro3 실측). 일치가 없거나 둘 이상이면 불량.
+        options = data.get("options") if isinstance(data.get("options"), list) else []
+        converted = []
+        for a in answers:
+            try:
+                converted.append(int(a))
+                continue
+            except (TypeError, ValueError):
+                pass
+            if m := re.fullmatch(r"\s*(\d+)\s*번\s*", str(a)):  # "2번" 표기
+                converted.append(int(m.group(1)))
+                continue
+            matches = [
+                i for i, o in enumerate(options)
+                if _norm(str(o)).lower() == _norm(str(a)).lower()
+            ]
+            if len(matches) != 1:
+                return f"풀이자 응답 형식 불량: {solver_answer!r}"
+            converted.append(matches[0])
         try:
-            picked = sorted({int(a) for a in answers})
+            picked = sorted({int(a) for a in converted})
         except (TypeError, ValueError):
             return f"풀이자 응답 형식 불량: {solver_answer!r}"
         if len(picked) > 1:
@@ -201,4 +289,23 @@ def check_solution(item_type: str, data: dict, solver_answer) -> str | None:
 
     if grade(item_type, data, solver_answer):
         return None
+
+    # 단답 관용 — 풀이 왕복의 목적은 "풀 수 있는 문항인가"지 표기 시험이 아니다.
+    # pro3 풀이자 실측 편차 3종을 내용 기준으로 재채점:
+    #   '용어 : 정의 전체' → 콜론 앞 / '용어 (English)' → 괄호 제거 /
+    #   '용어 방법'처럼 접미 수식 → 정답으로 시작하고 군더더기 짧으면 인정
+    if item_type == "shortAnswer" and isinstance(solver_answer, str):
+        trimmed = {
+            solver_answer.split(":", 1)[0].strip(),
+            re.sub(r"[(（][^)）]*[)）]", "", solver_answer).strip(),
+        }
+        for candidate in trimmed:
+            if candidate and grade(item_type, data, candidate):
+                return None
+        a_norm = re.sub(r"\s+", "", solver_answer).lower()
+        for acc in data.get("accepted", []):
+            acc_norm = re.sub(r"\s+", "", str(acc)).lower()
+            if acc_norm and a_norm.startswith(acc_norm) and len(a_norm) - len(acc_norm) <= 15:
+                return None
+
     return f"풀이자 답 '{solver_answer}'이 채점 기준 불일치"

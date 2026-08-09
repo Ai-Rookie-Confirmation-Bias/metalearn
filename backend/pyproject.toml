@@ -13,7 +13,9 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "python-jose[cryptography]>=3.3",
-    "passlib[bcrypt]>=1.7",
+    # passlib을 거치지 않고 bcrypt를 직접 부른다. passlib 1.7.4는 bcrypt 4.1+에서
+    # 버전 탐지가 깨져 해싱 호출 자체가 죽는다 — core/security.py 주석 참고.
+    "bcrypt>=4.1",
     "httpx>=0.28",
     # 파싱 업로드 라우터가 UploadFile/Form을 쓴다. 없으면 **import 단계에서** 앱이
     # 통째로 죽는다(FastAPI가 라우트 등록 때 검사한다). 선언이 빠져 있어서

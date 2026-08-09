@@ -12,6 +12,19 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "change-me-in-env"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24
 
+    # ── 소셜 로그인 (Google / Naver) ─────────────────────────────
+    # 비어 있으면 그 제공자는 "미설정"이다 — /api/auth/providers가 false를 주고
+    # 프론트가 버튼을 잠근다. 키를 넣고 백엔드만 재시작하면 켜진다.
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    NAVER_CLIENT_ID: str = ""
+    NAVER_CLIENT_SECRET: str = ""
+    # 콜백 주소를 이 값으로 조립한다 — {OAUTH_BACKEND_BASE_URL}/api/auth/callback/{provider}.
+    # **제공자 콘솔에 등록한 Redirect URI와 글자 하나까지 같아야 한다.**
+    OAUTH_BACKEND_BASE_URL: str = "http://localhost:8000"
+    # 로그인이 끝나면 여기로 돌려보낸다(토큰은 URL 해시로).
+    FRONTEND_BASE_URL: str = "http://localhost:5173"
+
     # ── Upstage Solar ────────────────────────────────────────────
     UPSTAGE_API_KEY: str = ""
     SOLAR_BASE_URL: str = "https://api.upstage.ai/v1"
@@ -122,19 +135,15 @@ class Settings(BaseSettings):
     LINK_JUDGE_BATCH_SIZE: int = 50   # 회색지대 LLM 확인 1회당 쌍 수
     LINK_MAX_JUDGE_PAIRS: int = 200   # 문서쌍당 LLM 확인 상한
 
-    # 문제은행 생성·검증에 쓰는 모델. **일부러 파싱/학습과 다르게 둔다.**
+    # 문제은행 생성·검증에 쓰는 모델.
     #
-    # quiz 파이프라인은 `solar-pro2`를 하드코딩하고 있었고, QUIZ_TUNING의
-    # 스모크 1~12회차 품질 실측이 전부 그 모델 기준이다. 통합하며 호출이
-    # SOLAR_CHAT_MODEL(solar-pro3)로 넘어가자 **생성 문항이 0개**가 됐다 —
     # 두 모델의 출력 형태가 다르다(실측):
     #     solar-pro2  ```json [ {...}, {...} ] ```   ← 배열, 코드펜스
     #     solar-pro3  {...}{...}                     ← 객체를 이어붙임
-    # quiz의 응답 파서는 앞의 형태를 읽는다. 모델만 바뀌었는데 조용히 0개가 됐다.
-    #
-    # 🔴 pro3로 옮기려면 프롬프트·파서·품질 실측을 다시 해야 한다 — quiz 담당이
-    #    결정할 일이라 통합에서는 검증된 모델에 못박아 둔다.
-    QUIZ_CHAT_MODEL: str = "solar-pro2"
+    # 통합 시점엔 파서가 앞의 형태만 읽어 pro3에서 문항이 0개였다.
+    # 지금은 core/quality/parsing.py::extract_json이 이어붙임도 배열로 건진다
+    # (quiz 담당 확정 2026-08-07 — 품질 실측은 QUIZ_TUNING §12).
+    QUIZ_CHAT_MODEL: str = "solar-pro3"
 
     # 교차 검증용 EXAONE (OpenAI 호환 엔드포인트 — 키가 있으면 검증 모델로 사용)
     EXAONE_API_KEY: str = ""

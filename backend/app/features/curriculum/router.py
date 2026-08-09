@@ -7,11 +7,13 @@ from __future__ import annotations
 
 import time
 import uuid
+from collections import Counter
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
+from app.core.deps import get_current_user_id
 
 from .blocks import ConceptBrief
 from .bridge import (
@@ -25,6 +27,8 @@ from .bridge import (
 from .mastery import DAY, WEIGHT, label
 from .planner import formative_ready, weak_for_section
 from .schemas import (
+    AnalysisDoc,
+    AnalysisOut,
     AnswerIn,
     AnswerOut,
     BlockOut,
@@ -39,7 +43,7 @@ from .schemas import (
     SectionOut,
 )
 from .service import build_formative, build_lesson, build_review, prewarm_document
-from .store import Chapter, Document, store, summarize, with_supplements
+from .store import Chapter, Document, Progress, store, summarize, with_supplements
 
 # 한 번에 보여줄 복습 화면 수. 다 보여주면 어디부터 할지 학습자가 정해야 하고,
 # 화면마다 LLM 콜이 하나씩 붙는다.
@@ -48,12 +52,20 @@ REVIEW_BATCH = 5
 router = APIRouter()
 
 
-def _doc(doc_id: str, db: Session | None = None) -> Document:
+def _me(user_id: uuid.UUID) -> Progress:
+    """이 요청을 낸 사람의 진도. 자료는 공용이고 진도만 사람별이다."""
+    return store.progress_of(str(user_id))
+
+
+def _doc(doc_id: str, db: Session | None, progress: Progress) -> Document:
     """이 자료 — **보충 화면이 끼워진 상태로.**
 
     파싱이 준 문서(`store.documents`)는 그대로 두고 읽을 때 계산한다. 순수
     함수라 같은 상태면 같은 결과가 나오고, 어느 엔드포인트로 들어와도 같은
     화면 목록을 본다. 여기 한 곳만 지나면 목차·학습·평가·채점이 다 따라온다.
+
+    보충이 **진도의 함수**라서 사람마다 다른 문서가 나온다 — 같은 책이라도
+    많이 틀린 사람에게만 보충 화면이 끼워진다.
 
     store에 없고 id가 UUID면 DB에서 한 번 당겨 본다 — 책장 sync 전에
     딥링크로 들어오거나 서버가 재시작된 자리. **코스일 수도 자료일 수도 있어
@@ -76,13 +88,13 @@ def _doc(doc_id: str, db: Session | None = None) -> Document:
     doc = store.documents.get(doc_id)
     if doc is None:
         raise HTTPException(404, f"자료를 찾을 수 없습니다: {doc_id}")
-    return with_supplements(doc, store.progress)
+    return with_supplements(doc, progress)
 
 
-def _sections_out(chapter: Chapter) -> list[SectionOut]:
+def _sections_out(chapter: Chapter, progress: Progress) -> list[SectionOut]:
     out = []
     for s in chapter.sections:
-        m = store.progress.of(s.section_id)
+        m = progress.of(s.section_id)
         out.append(
             SectionOut(
                 section_id=s.section_id,
@@ -107,21 +119,126 @@ def _sections_out(chapter: Chapter) -> list[SectionOut]:
     return out
 
 
-@router.get("/documents", response_model=list[str])
-async def list_documents(db: Session = Depends(get_db)) -> list[str]:
-    """학습 가능한 것 목록 — 자료 하나 또는 **수업 하나**.
+async def _my_doc_ids(db: Session, user_id: uuid.UUID) -> list[str]:
+    """책장에 뜨는 것 = 분석이 세는 것. **한 곳에서 정한다.**
 
-    파일 픽스처 + 파싱 DB에 ready인 문서 + 코스(아직 store에 없으면 여기서 주입).
+    두 군데서 각자 고르면 "책장엔 6권인데 분석은 4권"이 되고, 어느 쪽이 맞는지
+    화면에서 알 수 없다.
+    """
+    mine = set(sync_ready_documents(db, user_id=user_id))
+    mine |= set(await sync_courses(db, user_id=user_id))
+    members = course_member_document_ids(db, user_id=user_id)
+    return [
+        k
+        for k in store.documents
+        if (k in store.fixture_ids or k in mine) and k not in members
+    ]
+
+
+@router.get("/analysis", response_model=AnalysisOut)
+async def analysis(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> AnalysisOut:
+    """메타인지 분석 — **네 출처가 하나로 모인 것**을 자료 가로질러 보여준다.
+
+    계산은 전부 `summarize()`가 이미 한다. 여기가 하는 일은 자료별 결과를 모아
+    화면 수로 가중해 합치는 것뿐이다.
+
+    ⚠️ 단순 평균을 쓰면 안 된다 — 3화면짜리 샘플과 124화면짜리 교재를 같은
+       무게로 평균내면 준비도가 샘플에 끌려간다. 분량이 곧 비중이다.
+
+    ⚠️ `by_kind`에서 **비어 있는 출처가 곧 빈 구멍**이다. 진단이 0이면 누적이
+       사실상 3출처로 돌고 있다는 뜻이고, 그건 화면에 보여야 한다.
+    """
+    progress = _me(user_id)
+    docs: list[AnalysisDoc] = []
+    weak_count: Counter[str] = Counter()
+    by_kind: Counter[str] = Counter()
+    w_ready = w_under = 0.0
+    total = done = due = attempts = 0
+
+    for doc_id in await _my_doc_ids(db, user_id):
+        doc = _doc(doc_id, db, progress)
+        course, _plans = summarize(doc, progress)
+        n = sum(c.sections_total for c in course.chapters)
+        weakest = course.weakest
+
+        for ch in course.chapters:
+            for k, v in ch.by_kind.items():
+                by_kind[k] += v
+            attempts += ch.attempts
+            for name in ch.weak_concepts:
+                weak_count[name] += 1
+
+        docs.append(
+            AnalysisDoc(
+                doc_id=doc.doc_id,
+                title=doc.title,
+                readiness=round(course.readiness, 4),
+                understanding=round(course.understanding, 4),
+                sections_total=n,
+                sections_done=sum(c.sections_touched for c in course.chapters),
+                sections_due=course.sections_due,
+                weakest_chapter=weakest.chapter if weakest else None,
+                weak_concepts=list(weakest.weak_concepts) if weakest else [],
+                by_kind=dict(
+                    Counter(
+                        {k: v for c in course.chapters for k, v in c.by_kind.items()}
+                    )
+                ),
+            )
+        )
+        total += n
+        done += sum(c.sections_touched for c in course.chapters)
+        due += course.sections_due
+        w_ready += course.readiness * n
+        w_under += course.understanding * n
+
+    return AnalysisOut(
+        readiness=round(w_ready / total, 4) if total else 0.0,
+        understanding=round(w_under / total, 4) if total else 0.0,
+        sections_total=total,
+        sections_done=done,
+        sections_due=due,
+        attempts_total=attempts,
+        by_kind=dict(by_kind),
+        documents=docs,
+        weak_concepts=weak_count.most_common(12),
+    )
+
+
+@router.get("/documents", response_model=list[str])
+async def list_documents(
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[str]:
+    """**내** 책장 — 학습 가능한 것 목록. 자료 하나 또는 **수업 하나**.
+
+    파일 픽스처 + 내가 올린 ready 문서 + 내 코스(아직 store에 없으면 여기서 주입).
     책장이 이 목록만 보므로, 이 한 줄이 파싱→학습 이음매다.
 
     **코스에 묶인 자료는 뺀다.** PPT + 교재로 수업을 만들었으면 책장에는 그
     수업 한 권만 있어야 한다 — 셋이 나란히 뜨면 어느 걸 눌러야 할지 알 수 없고,
     자료를 눌러 들어가면 교재 설명이 안 붙은 반쪽을 보게 된다.
+
+    픽스처는 누구에게나 보인다. DB 행이 없는 데모 자료라 소유를 붙일 자리가
+    없고, 붙였다면 새 계정으로 처음 들어온 사람이 빈 화면만 본다.
+
+    store를 그대로 늘어놓지 않는 이유: store는 서버가 지금까지 읽은 자료
+    **전부**라 남이 올린 것도 들어 있다. 소유는 매번 DB에서 다시 센다.
+
+    ⚠️ 제외도 **내 코스 기준**이다(`course_member_document_ids(user_id=…)`).
+    자료는 공용이라, 남이 자기 수업에 넣었다는 이유로 내 책장에서 사라지면 안 된다.
     """
-    sync_ready_documents(db)
-    await sync_courses(db)
-    members = course_member_document_ids(db)
-    return [doc_id for doc_id in store.documents if doc_id not in members]
+    mine = set(sync_ready_documents(db, user_id=user_id))
+    mine |= set(await sync_courses(db, user_id=user_id))
+    members = course_member_document_ids(db, user_id=user_id)
+    return [
+        k
+        for k in store.documents
+        if (k in store.fixture_ids or k in mine) and k not in members
+    ]
 
 
 @router.post(
@@ -175,10 +292,15 @@ async def ingest_from_course(
 
 
 @router.get("/documents/{doc_id}", response_model=DocumentOut)
-def get_document(doc_id: str, db: Session = Depends(get_db)) -> DocumentOut:
+def get_document(
+    doc_id: str,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> DocumentOut:
     """[화면 1] 내 자료 — 준비도와 목차 목록."""
-    doc = _doc(doc_id, db)
-    course, plans = summarize(doc, store.progress)
+    progress = _me(user_id)
+    doc = _doc(doc_id, db, progress)
+    course, plans = summarize(doc, progress)
     weakest = course.weakest
     weakest_index = next(
         (c.index for c in doc.chapters if weakest and c.title == weakest.chapter), None
@@ -218,13 +340,19 @@ def get_document(doc_id: str, db: Session = Depends(get_db)) -> DocumentOut:
 
 
 @router.get("/documents/{doc_id}/chapters/{index}", response_model=ChapterOut)
-def get_chapter(doc_id: str, index: int, db: Session = Depends(get_db)) -> ChapterOut:
+def get_chapter(
+    doc_id: str,
+    index: int,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> ChapterOut:
     """[화면 2] 목차 하나 — 절 목록과 왜 이렇게 나왔는지."""
-    doc = _doc(doc_id, db)
+    progress = _me(user_id)
+    doc = _doc(doc_id, db, progress)
     chapter = doc.chapter(index)
     if chapter is None:
         raise HTTPException(404, f"목차를 찾을 수 없습니다: {index}")
-    course, plans = summarize(doc, store.progress)
+    course, plans = summarize(doc, progress)
     summary, plan = course.chapters[index], plans[index]
     ready, why = formative_ready(summary)
     return ChapterOut(
@@ -241,7 +369,7 @@ def get_chapter(doc_id: str, index: int, db: Session = Depends(get_db)) -> Chapt
         mode=plan.mode,
         reason=plan.reason,
         weak_concepts=list(plan.weak_concepts),
-        sections=_sections_out(chapter),
+        sections=_sections_out(chapter, progress),
         # 목차 마지막 항목(단원 평가)의 잠금 여부. 여기서 판정해 보내야
         # 화면이 문턱을 알 필요가 없다. 평가 자체를 부르면 생성이 돌아 비싸다.
         formative_ready=ready,
@@ -253,19 +381,24 @@ def get_chapter(doc_id: str, index: int, db: Session = Depends(get_db)) -> Chapt
     "/documents/{doc_id}/chapters/{index}/formative", response_model=FormativeOut
 )
 async def get_formative(
-    doc_id: str, index: int, refresh: bool = False, db: Session = Depends(get_db)
+    doc_id: str,
+    index: int,
+    refresh: bool = False,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
 ) -> FormativeOut:
     """[화면 4] 단원 평가 — 화면을 가로질러 구별할 수 있는가.
 
     **여기만 잠근다.** 학습은 절대 안 잠근다(integration이 학습을 잠갔다가
     이탈을 겪었다). 잠금 판정은 `planner.formative_ready` — 진도로만 본다.
     """
-    doc = _doc(doc_id, db)
+    progress = _me(user_id)
+    doc = _doc(doc_id, db, progress)
     chapter = doc.chapter(index)
     if chapter is None:
         raise HTTPException(404, f"목차를 찾을 수 없습니다: {index}")
 
-    course, _plans = summarize(doc, store.progress)
+    course, _plans = summarize(doc, progress)
     summary = course.chapters[index]
     ready, reason = formative_ready(summary)
 
@@ -283,7 +416,7 @@ async def get_formative(
         (
             s.title,
             tuple(ConceptBrief(c.key, c.definition) for c in s.concepts),
-            store.progress.of(s.section_id).attempts,
+            progress.of(s.section_id).attempts,
         )
         for s in chapter.sections
     ]
@@ -320,7 +453,11 @@ async def get_formative(
     "/documents/{doc_id}/sections/{section_id}", response_model=LessonOut
 )
 async def get_lesson(
-    doc_id: str, section_id: str, refresh: bool = False, db: Session = Depends(get_db)
+    doc_id: str,
+    section_id: str,
+    refresh: bool = False,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
 ) -> LessonOut:
     """[화면 3] 절 하나 — 설명·비유·빈칸·객관식 + 원문.
 
@@ -330,17 +467,18 @@ async def get_lesson(
     **분량**은 이 목차의 `plan.mode`를 설명 지시에 넣는다.
     **최근 틀린 개념**도 이어지는 것만 골라 넘긴다.
     """
-    doc = _doc(doc_id, db)
+    progress = _me(user_id)
+    doc = _doc(doc_id, db, progress)
     found = doc.section(section_id)
     if found is None:
         raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")
     chapter, section = found
 
-    _, plans = summarize(doc, store.progress)
+    _, plans = summarize(doc, progress)
     plan = plans[chapter.index]
 
     all_keys = [k for ch in doc.chapters for s in ch.sections for k in s.concept_keys]
-    weak = weak_for_section(section, store.progress.recent_wrong, all_keys)
+    weak = weak_for_section(section, progress.recent_wrong, all_keys)
     # 이 화면에 없는 문서 개념 — 인출 정답이 여기 걸리면 라벨 사고로 폐기
     foreign = tuple(k for k in all_keys if k not in section.concept_keys)
 
@@ -352,7 +490,7 @@ async def get_lesson(
         mode=plan.mode,
         refresh=refresh,
     )
-    m = store.progress.of(section_id)
+    m = progress.of(section_id)
     return LessonOut(
         section_id=section.section_id,
         doc_id=doc.doc_id,
@@ -381,20 +519,30 @@ async def get_lesson(
 
 
 @router.post("/documents/{doc_id}/prewarm")
-async def prewarm(doc_id: str, limit: int = 6, db: Session = Depends(get_db)) -> dict:
+async def prewarm(
+    doc_id: str,
+    limit: int = 6,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> dict:
     """데모용 — 앞 N개 화면을 미리 만들어 캐시에 올린다.
 
     화면당 5~7초라 영상에서 기다리면 안 된다. 찍기 전에 한 번 호출한다.
     """
-    doc = _doc(doc_id, db)
+    progress = _me(user_id)
+    doc = _doc(doc_id, db, progress)
     return await prewarm_document(
-        doc, store.progress, limit=limit, profile_block=store.profile_block()
+        doc, progress, limit=limit, profile_block=store.profile_block()
     )
 
 
 @router.get("/documents/{doc_id}/review", response_model=ReviewOut)
 async def get_review(
-    doc_id: str, days: int = 0, limit: int = REVIEW_BATCH, db: Session = Depends(get_db)
+    doc_id: str,
+    days: int = 0,
+    limit: int = REVIEW_BATCH,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
 ) -> ReviewOut:
     """[화면 5] 복습 큐 — 망각곡선이 불러온 화면들.
 
@@ -406,14 +554,15 @@ async def get_review(
     문항은 **새로 만든다.** 그때 그 빈칸을 다시 내면 개념이 아니라 그 문장을
     외웠는지를 재게 된다. 설명은 안 준다(복습이지 재학습이 아니다).
     """
-    doc = _doc(doc_id, db)
+    progress = _me(user_id)
+    doc = _doc(doc_id, db, progress)
     now = time.time() + days * DAY
 
     due = [
-        (ch, s, store.progress.of(s.section_id))
+        (ch, s, progress.of(s.section_id))
         for ch in doc.chapters
         for s in ch.sections
-        if store.progress.of(s.section_id).needs_review(now)
+        if progress.of(s.section_id).needs_review(now)
     ]
     # 많이 잊은 것부터. 다 보여주면 어디부터 할지 학습자가 정해야 한다.
     due.sort(key=lambda t: t[2].recall(now))
@@ -443,14 +592,19 @@ async def get_review(
 
 @router.post("/documents/{doc_id}/sections/{section_id}/answer", response_model=AnswerOut)
 def answer(
-    doc_id: str, section_id: str, body: AnswerIn, db: Session = Depends(get_db)
+    doc_id: str,
+    section_id: str,
+    body: AnswerIn,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
 ) -> AnswerOut:
     """시도 한 건을 기록하고 **바뀐 값을 그 자리에서** 돌려준다.
 
     이게 있어야 "학습 → 분석 → 커리큘럼 변경"이 화면에서 눈에 보인다.
     진단·인출·복습·형성이 전부 여기로 들어와 하나의 누적으로 쌓인다(`body.kind`).
     """
-    doc = _doc(doc_id, db)
+    progress = _me(user_id)
+    doc = _doc(doc_id, db, progress)
     found = doc.section(section_id)
     if found is None:
         raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")
@@ -458,8 +612,10 @@ def answer(
         raise HTTPException(422, f"알 수 없는 출처입니다: {body.kind}")
     chapter, _ = found
 
-    state = store.record(section_id, body.correct, body.concept_key, body.kind)
-    course, plans = summarize(doc, store.progress)
+    state = store.record(
+        str(user_id), section_id, body.correct, body.concept_key, body.kind
+    )
+    course, plans = summarize(doc, progress)
     summary, plan = course.chapters[chapter.index], plans[chapter.index]
     return AnswerOut(
         section_id=section_id,

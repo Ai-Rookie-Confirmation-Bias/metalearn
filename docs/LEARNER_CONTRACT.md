@@ -377,13 +377,14 @@ mcq      {question, options[], answer, explanation, concept, sectionId}
 | | 상태 |
 |---|---|
 | **저장** | JSON 스냅샷(`curriculum_progress.json`). 재시작해도 진도는 남는다. DB는 다음 |
-| **진단** | 생성기도 화면도 없다. `diagnostic 0.5` 자리가 비어 있다 |
+| ~~**진단**~~ | 08-08에 채웠다. 생성기(박지성 24) + 화면 5단계. 다만 `diagnostic 0.5`가 실제로 쌓이려면 ⑤ 확인 문항까지 풀어야 한다 |
 | **성향** | `CURRICULUM_PROFILE` fixture → `build_lesson`. 온보딩 UI는 아직 |
 | **분량 배분** | `plan.mode` → `mode_block`이 설명 프롬프트에 붙는다 |
 | **실파싱 연결** | `GET /documents`가 ready 문서를 sync · `POST .../from-parsing/{id}` · doc_id=파싱 UUID |
 | **선수 데이터** | 파싱 선수 이름의 절반 넘게가 개념 목록에 없다(필기 122/339, 실기 211/404). 보충 화면 기능의 상한 |
-| **업로드 화면** | 없다. `POST /api/parsing/documents`를 부르는 프론트가 하나도 없어서 지금은 curl로 올린다 — 데모의 **첫 장면**이다 |
-| **메타인지 분석** | 22줄 placeholder. 4출처 누적을 보여줄 유일한 화면인데 비어 있다 |
+| ~~**업로드 화면**~~ | 08-07에 채웠다. `/create`가 `POST /api/parsing/documents`를 부르고 책장이 "분석 중"으로 폴링한다 |
+| ~~**메타인지 분석**~~ | 08-08에 채웠다(`GET /api/curriculum/analysis` + `/analysis`). 다만 실측 `byKind`는 아직 `{retrieval: 4}` 하나 — **화면은 생겼는데 4출처는 아직 안 찼다** |
+| ~~**코스 만드는 자리**~~ | 08-08에 채웠다. `/create` → ready 뒤 `POST /api/courses` → 책장에 수업 한 권. `GET /api/courses` 목록도 있다 |
 
 ### 2026-08-07 이후 상태
 
@@ -398,3 +399,13 @@ mcq      {question, options[], answer, explanation, concept, sectionId}
 
 **확정안 §7-③ 데이터 격리는 그대로다.** 문제은행 풀이는 `quiz_attempts`에만 남고
 우리 누적(진단·인출·복습·형성 넷)에 안 섞인다. 합치자는 건 §6 회의 안건이다.
+
+### 2026-08-08 이후 상태 — 4출처가 **화면에는** 다 있다
+
+진단 화면과 메타인지 분석 화면이 붙어서, 네 출처가 어디서 오는지 **보여줄 자리**는
+전부 생겼다. 그런데 실측 `byKind`는 아직 `{retrieval: 4}` 하나다.
+
+**이 구분을 흐리면 안 된다.** 화면이 생긴 것과 누적이 찬 것은 다르다. 분석 화면이
+빈 출처를 감추지 않고 경고로 띄우는 게 그래서다 — 0을 숨기면 화면이 실제보다
+튼튼해 보이고, 그건 이 문서가 하려는 말과 정반대다. 데모에서 4출처를 주장하려면
+진단 ⑤까지 풀고 복습·형성까지 한 바퀴 돌린 계정이 필요하다.

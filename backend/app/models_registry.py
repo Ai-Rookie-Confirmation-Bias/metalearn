@@ -6,6 +6,7 @@ SQLAlchemy는 임포트된 모델만 메타데이터에 등록한다. 요청 경
 
 새 도메인을 추가하면 여기에 한 줄 추가할 것.
 """
+from app.features.auth import models as _auth  # noqa: F401
 from app.features.course import models as _course  # noqa: F401
 from app.features.learning import models as _learning  # noqa: F401
 from app.features.parsing import models as _parsing  # noqa: F401

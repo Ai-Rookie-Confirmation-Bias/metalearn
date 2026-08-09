@@ -14,8 +14,16 @@
 
 `known`은 0007에서 이미 만들어 뒀다. 여기서는 `verified`만 더한다.
 
-Revision ID: 0009
-Revises: 0008
+Revision ID: 0010
+Revises: 0009
+
+⚠️ 원래 0009였다. 로그인 쪽 `0009_users`와 **리비전 id가 겹쳤다** — 파일 이름이
+   달라 git은 충돌로 안 보고, alembic이 `upgrade head`에서 거절한다(head가 둘로
+   갈라진다). 0002 때와 똑같은 구조라 두 번째다.
+   users와 진단 테이블 사이엔 FK가 없으므로 순서만 바뀔 뿐 내용은 그대로다.
+
+   ⇒ 앞으로 새 마이그레이션은 `alembic revision`이 만드는 해시를 쓰는 게 낫다.
+      순번을 손으로 붙이는 한 브랜치마다 같은 번호가 계속 나온다.
 Create Date: 2026-08-07
 """
 from typing import Sequence, Union
@@ -23,8 +31,8 @@ from typing import Sequence, Union
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0009"
-down_revision: Union[str, None] = "0008"
+revision: str = "0010"
+down_revision: Union[str, None] = "0009"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

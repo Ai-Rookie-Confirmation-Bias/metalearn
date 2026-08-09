@@ -8,6 +8,7 @@ import { Link, useParams } from "react-router-dom";
 import { KIND_LABEL, type AttemptKind } from "@/features/curriculum/api/curriculum";
 import { Bar, ModeBadge, Reason, StatusBadge, pct } from "@/features/curriculum/components/bits";
 import { useDocument, useDocuments } from "@/features/curriculum/queries/useCurriculum";
+import { DiagnosticBanner } from "@/features/diagnostic/DiagnosticBanner";
 
 function Picker() {
   const { data, isLoading } = useDocuments();
@@ -61,6 +62,11 @@ export function CurriculumPage() {
       <Link to="/library" className="text-[0.8rem] text-text-tertiary hover:underline">
         ← 나의 책장
       </Link>
+
+      {/* 코스면 진단 안내가 뜬다. 자료 하나면 아무것도 안 그린다. */}
+      <div className="mt-4">
+        <DiagnosticBanner docId={docId ?? ""} />
+      </div>
 
       <header className="mt-3 mb-8">
         <h1 className="text-2xl font-bold text-text-primary">📚 {data.title}</h1>

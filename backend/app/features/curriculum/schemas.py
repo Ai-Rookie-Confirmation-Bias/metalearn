@@ -250,3 +250,45 @@ class AnswerOut(_Camel):
     chapter_reason: str = ""
     readiness: float
     understanding: float = 0.0
+
+
+# ── 메타인지 분석 ────────────────────────────────────────────────
+
+
+class AnalysisDoc(_Camel):
+    """분석 화면이 보는 자료 한 권."""
+
+    doc_id: str
+    title: str
+    readiness: float
+    understanding: float
+    sections_total: int
+    sections_done: int
+    sections_due: int
+    # 가장 약한 목차 — 없으면 아직 판정할 자격이 없다는 뜻(MIN_WEIGHT 미달)
+    weakest_chapter: str | None = None
+    weak_concepts: list[str] = []
+    by_kind: dict[str, int] = {}
+
+
+class AnalysisOut(_Camel):
+    """내 학습 전체를 가로지른 요약.
+
+    화면 하나가 이걸 다 보여준다 — **네 출처가 하나로 모인다**는 게 이 서비스의
+    주장이고, 그 주장이 눈에 보이는 유일한 자리다.
+
+    ⚠️ `readiness`는 자료별 값을 **화면 수로 가중**해 합친다. 세 화면짜리와
+       124화면짜리를 단순 평균하면 작은 자료가 전체를 흔든다.
+    """
+
+    readiness: float
+    understanding: float
+    sections_total: int
+    sections_done: int
+    sections_due: int
+    attempts_total: int
+    # 진단·인출·복습·형성이 각각 몇 건인가. **비어 있는 출처가 곧 빈 구멍이다.**
+    by_kind: dict[str, int] = {}
+    documents: list[AnalysisDoc] = []
+    # 자료를 가로질러 모은 약점 — (개념, 몇 번 틀렸나)
+    weak_concepts: list[tuple[str, int]] = []

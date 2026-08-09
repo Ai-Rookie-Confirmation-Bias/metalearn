@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import app.models_registry  # noqa: F401 — 전 모델 로드 (FK 해석)
 from app.api import api_router
 from app.core.config import settings
+from app.core.deps import DEV_USER_ID
 from app.core.llm.solar import solar_client
 
 
@@ -51,12 +52,15 @@ def _load_curriculum() -> None:
         print(f"[curriculum] 로드 실패(무시하고 계속): {type(e).__name__}: {e}")
         return
 
+    # 진도는 이제 사용자별이라 여기서 다 읽지 않는다 — 요청이 들어올 때
+    # 그 사람 것만 읽는다(`store.progress_of`). 여기서 할 일은 사용자 구분이
+    # 없던 시절의 단일 스냅샷을 dev 유저 몫으로 옮기는 것뿐이고, 그것도 한 번뿐이다.
     try:
-        n = store.load_progress()
+        n = store.migrate_legacy_progress(str(DEV_USER_ID))
         if n:
-            print(f"[curriculum] 진도 스냅샷 복원: 화면 {n}개")
+            print(f"[curriculum] 예전 진도 스냅샷을 dev 유저로 이관: 화면 {n}개")
     except Exception as e:  # noqa: BLE001
-        print(f"[curriculum] 진도 복원 실패(빈 진도로 계속): {type(e).__name__}: {e}")
+        print(f"[curriculum] 진도 이관 실패(무시하고 계속): {type(e).__name__}: {e}")
 
     from app.features.curriculum.profile import explain as profile_explain
 

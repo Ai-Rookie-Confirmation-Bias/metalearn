@@ -1,16 +1,13 @@
 /**
  * 수업 생성(Create Course) 위저드 — 모델 B(진단 분리).
  *   STEP 1 메인 자료 → STEP 2 추가 자료(선택) → STEP 3 목표 → 책장으로.
- * 진단(바닥 찾기)은 여기 없음: 책장 카드의 "진단 시작하기"에서 별도.
- *
- * 마지막에 만드는 건 코스가 아니라 **초안**이다(features/course/store.ts).
- * 코스는 자료가 전부 ready여야 만들 수 있고 파싱이 분 단위라, 그 사이에
- * 사용자를 붙잡아 두지 않는다. 초안을 코스로 바꾸는 건 책장이 한다.
+ * 진단(바닥 찾기)은 여기 없음: 학습 화면의 진단 배너에서 별도.
  * 참고 원본: UXUI_ANT/create_course.html · 스키마: docs/SCHEMA.md
  *
  * 파일은 **고르는 순간 서버로 올라간다.** 마지막에 몰아 올리면 사용자가 목표를
  * 고르는 동안 놀고 있던 시간만큼 파싱이 늦어진다(파이프라인이 분 단위다).
- * 여기서 하는 일은 접수까지고, 그 뒤 진행 상황은 책장이 폴링해서 보여준다.
+ * 여기서 하는 일은 접수 + **수업 의도**를 남기는 것까지고, POST /courses는
+ * 파싱이 끝난 뒤 책장이 부른다(역할·목차가 ready 이후에야 채워지므로).
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
@@ -30,14 +27,14 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 
-import { ACCEPT_EXTENSIONS, uploadDocument } from "@/features/parsing/api/documents";
-import { usePendingUploads } from "@/features/parsing/store";
-import { useCourseDrafts } from "@/features/course/store";
+import { usePendingCourse } from "@/features/course-create/pendingCourse";
 import type {
   DocumentKind,
   Material,
   Purpose,
 } from "@/features/course-create/types";
+import { ACCEPT_EXTENSIONS, uploadDocument } from "@/features/parsing/api/documents";
+import { usePendingUploads } from "@/features/parsing/store";
 
 // 링크·텍스트는 뺐다 — 서버에 그걸 받는 문이 없다. 고를 수 있게 두면
 // 제출할 수 없는 행이 목록에 남는다.
@@ -244,10 +241,14 @@ function MaterialRow({
   );
 }
 
+function titleFrom(name: string) {
+  return name.replace(/\.[^.]+$/, "") || name;
+}
+
 export function CreateCoursePage() {
   const navigate = useNavigate();
   const addPending = usePendingUploads((s) => s.add);
-  const addDraft = useCourseDrafts((s) => s.add);
+  const setPendingCourse = usePendingCourse((s) => s.set);
 
   const [step, setStep] = useState(0); // 0 메인 / 1 추가 / 2 목표
   const [primaries, setPrimaries] = useState<Material[]>([]);
@@ -313,25 +314,24 @@ export function CreateCoursePage() {
 
   const back = () => (step === 0 ? navigate("/library") : setStep((s) => s - 1));
   const next = () => {
-    if (!canNext) return;
+    if (!canNext || !purpose) return;
     if (step < 2) {
       setStep((s) => s + 1);
       return;
     }
-    // 파일은 이미 서버에 있다. 여기서 코스를 만들지는 **못한다** — 서버가
-    // 그 자리에서 뼈대의 목차를 복사하고 밀도로 역할을 정하는데, 둘 다 파싱이
-    // 끝나야 생기는 값이라 지금 부르면 목차 0개짜리 코스가 만들어진다.
+    // 파일은 이미 서버에 있다. 코스는 **파싱이 끝난 뒤** 만든다 — 역할·목차가
+    // ready 이후에야 채워지므로. 여기서는 의도를 남기고 책장이 폴링한다.
     //
-    // 그래서 초안만 남기고 나간다. 책장이 파싱을 지켜보다가 전부 ready가 되면
-    // 그때 POST /courses를 부른다(§LibraryPage).
-    const docIds = accepted.map((m) => m.docId as string);
+    // ⚠️ roles는 안 보낸다. 메인/추가 ≠ skeleton/body/reference.
+    // ⚠️ purpose는 진단 goal로 매핑해 코스 생성 직후 PATCH한다(책장 쪽).
+    const documentIds = accepted.map((m) => m.docId as string);
+    const filenames = Object.fromEntries(
+      accepted.map((m) => [m.docId as string, m.name]),
+    );
+    const title = titleFrom(primaries.find((m) => m.docId)?.name ?? accepted[0].name);
+
+    setPendingCourse({ documentIds, filenames, title, purpose });
     addPending(accepted.map((m) => ({ docId: m.docId as string, filename: m.name })));
-    addDraft({
-      id: nextId(),
-      title: (primaries.find((m) => m.docId) ?? accepted[0]).name,
-      docIds,
-      purpose: purpose as Purpose,
-    });
     navigate("/library");
   };
 

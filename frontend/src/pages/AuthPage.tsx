@@ -1,3 +1,8 @@
+import { useQuery } from "@tanstack/react-query";
+import { clsx } from "clsx";
+
+import { fetchProviders, startLogin, type Provider } from "@/features/auth/api";
+
 // 구글 공식 4색 G 로고 (Phosphor는 단색이라 공식 SVG 인라인)
 function GoogleG({ className = "h-[1.15rem] w-[1.15rem]" }: { className?: string }) {
   return (
@@ -24,10 +29,20 @@ function RecentBadge() {
 // localStorage['ml_last_provider']로 표시 분기:
 //   - 없음        → 첫 방문: 가입 문구
 //   - google/naver → 재방문: 로그인 문구 + 해당 버튼에 "최근 로그인" 뱃지
-// ⚠️ OAuth 연결 및 플래그 세팅(로그인 성공 시)은 다음 단계. 지금은 읽기만.
+//   (그 플래그는 로그인 성공 후 /auth/callback에서 심는다)
 export function AuthPage() {
   const lastProvider = localStorage.getItem("ml_last_provider"); // "google" | "naver" | null
   const returning = lastProvider !== null;
+
+  // 자격증명이 없는 제공자는 눌러도 503만 돌아온다 — 서버에 물어보고 잠근다.
+  // 응답이 오기 전(isPending)에는 잠그지 않는다. 첫 화면에서 버튼이 회색으로
+  // 떴다가 켜지면 고장 난 것처럼 보인다.
+  const { data: providers } = useQuery({
+    queryKey: ["auth", "providers"],
+    queryFn: fetchProviders,
+    staleTime: Infinity, // .env를 고치면 백엔드를 재시작한다. 그때 새로고침된다
+  });
+  const enabled = (p: Provider) => providers?.[p] !== false;
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-white px-4">
@@ -41,11 +56,17 @@ export function AuthPage() {
             : "소셜 계정으로 3초 만에 가입하세요."}
         </p>
 
-        {/* 소셜 버튼 (모양만 — OAuth 연결은 다음 단계) */}
         <div className="flex flex-col gap-3">
           <button
             type="button"
-            className="relative w-full flex items-center justify-center gap-3 py-3 rounded-xl border border-border-primary bg-white text-[0.95rem] font-semibold text-text-primary shadow-sm hover:bg-bg-secondary hover:shadow-md transition-all"
+            disabled={!enabled("google")}
+            onClick={() => startLogin("google")}
+            className={clsx(
+              "relative w-full flex items-center justify-center gap-3 py-3 rounded-xl border border-border-primary bg-white text-[0.95rem] font-semibold text-text-primary shadow-sm transition-all",
+              enabled("google")
+                ? "hover:bg-bg-secondary hover:shadow-md"
+                : "cursor-not-allowed opacity-50",
+            )}
           >
             <GoogleG />
             Google로 계속하기
@@ -54,13 +75,26 @@ export function AuthPage() {
 
           <button
             type="button"
-            className="relative w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-[#03C75A] text-[0.95rem] font-semibold text-white shadow-sm hover:brightness-95 hover:shadow-md transition-all"
+            disabled={!enabled("naver")}
+            onClick={() => startLogin("naver")}
+            className={clsx(
+              "relative w-full flex items-center justify-center gap-3 py-3 rounded-xl bg-[#03C75A] text-[0.95rem] font-semibold text-white shadow-sm transition-all",
+              enabled("naver")
+                ? "hover:brightness-95 hover:shadow-md"
+                : "cursor-not-allowed opacity-50",
+            )}
           >
             <span className="text-[1.15rem] font-black leading-none">N</span>
             네이버로 계속하기
             {lastProvider === "naver" && <RecentBadge />}
           </button>
         </div>
+
+        {providers && !enabled("naver") && (
+          <p className="text-[0.8rem] text-text-tertiary text-center mt-4">
+            네이버 로그인은 아직 준비 중이에요.
+          </p>
+        )}
 
         <p className="text-[0.8rem] text-text-tertiary text-center mt-6 leading-relaxed">
           계속하면 이용약관과 개인정보처리방침에

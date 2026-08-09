@@ -8,8 +8,8 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 class CourseCreate(BaseModel):
-    # users 테이블이 아직 없어 클라이언트가 직접 준다. auth가 들어오면 토큰에서.
-    user_id: uuid.UUID
+    # 주인은 토큰에서 온다(Depends(get_current_user_id)). 바디로 받으면
+    # 아무나 남의 이름으로 코스를 만들 수 있다.
     document_ids: list[uuid.UUID] = Field(..., min_length=1)
     title: str | None = None
     # 비우면 밀도로 제안한다. {document_id: skeleton|body|reference}
@@ -262,8 +262,8 @@ class PrereqAnswersIn(BaseModel):
 class ProbeOut(BaseModel):
     """⑤ 확인 문항 하나. **정답은 우리가 정했고 LLM은 오답만 만들었다.**
 
-    한 번에 다 오지 않는다 — 답을 받아야 다음이 정해지는 계층 탐색이라,
-    화면은 **빈 배열이 올 때까지** `GET → POST`를 반복한다.
+    한 번에 다 오지 않는다 — 답을 받아야 다음이 정해지므로(틀리면 그 과목은
+    끝, 맞으면 한 번 더) 화면은 **빈 배열이 올 때까지** `GET → POST`를 반복한다.
     """
 
     prereq_id: uuid.UUID
@@ -296,8 +296,8 @@ class SupplyOut(BaseModel):
 class ProbeGradeOut(BaseModel):
     """채점 결과. `subjects_left`가 0이면 진단이 끝났다.
 
-    한 답이 구간을 통째로 정한다 — 순서가 있는 과목이라 맞힌 자리 아래는 전부
-    안다, 틀린 자리 위는 전부 모른다다.
+    **0이 아니면 화면은 다시 `GET`을 해야 한다.** 맞힌 과목은 한 번 더 묻기
+    때문이다 — 4지선다는 찍어서 맞으니 한 번으로는 못 믿는다. 실측 2라운드.
     """
 
     graded: int = 0

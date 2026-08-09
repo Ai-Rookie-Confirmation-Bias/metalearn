@@ -4,19 +4,20 @@ import App from "@/App";
 import AppLayout from "@/AppLayout";
 import { LandingPage } from "@/pages/LandingPage";
 import { AuthPage } from "@/pages/AuthPage";
+import { AuthCallbackPage } from "@/pages/AuthCallbackPage";
 import { ProfileSetupPage } from "@/pages/ProfileSetupPage";
 import { LearningPage } from "@/pages/LearningPage";
 import { LibraryPage } from "@/pages/LibraryPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
-import { DiagnosticPage } from "@/pages/DiagnosticPage";
 import { ParsingDebugPage } from "@/pages/ParsingDebugPage";
 import { CurriculumLayout } from "@/pages/CurriculumLayout";
 import { CurriculumPage } from "@/pages/CurriculumPage";
 import { ChapterPage } from "@/pages/ChapterPage";
 import { FormativePage } from "@/pages/FormativePage";
 import { ReviewPage } from "@/pages/ReviewPage";
+import { DiagnosticPage } from "@/pages/DiagnosticPage";
 import { SectionPage } from "@/pages/SectionPage";
 import { QuizPage } from "@/pages/QuizPage";
 
@@ -35,6 +36,10 @@ export const router = createBrowserRouter([
       { path: "welcome", element: <ProfileSetupPage /> },
     ],
   },
+  // OAuth 착지점. 제공자 → 백엔드 → 여기(#token=…)로 온다. 셸이 없다 —
+  // 토큰을 저장하고 곧바로 /library로 넘어가는 통과 지점이라 사이드바가 한 번
+  // 깜빡일 이유가 없다.
+  { path: "/auth/callback", element: <AuthCallbackPage /> },
   // 학습 화면 — 자체 헤더를 가진 전체화면 3컬럼 (셸 밖)
   { path: "/learning", element: <LearningPage /> },
   {
@@ -64,6 +69,10 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <CurriculumPage /> },
       { path: "chapters/:index", element: <ChapterPage /> },
+      // 진단 — 학습 **전에** 한 번. 목차 밖이라 자료 아래 바로 둔다.
+      // 코스에만 있다(선수 개념이 코스 층에서 나온다). 자료 하나면 404를
+      // 받고 화면이 "학습으로 가기"만 보여준다.
+      { path: "diagnostic", element: <DiagnosticPage /> },
       // 🔁 망각곡선이 불러온 화면들. 목차 밖이라 자료 아래 바로 둔다
       { path: "review", element: <ReviewPage /> },
       { path: "chapters/:index/formative", element: <FormativePage /> },
@@ -72,9 +81,6 @@ export const router = createBrowserRouter([
   },
   // 수업 생성 위저드 — 셸 없는 전체화면 집중 플로우
   { path: "/create", element: <CreateCoursePage /> },
-  // 진단 — 위저드와 같은 이유로 셸 밖이다. 코스가 있어야 열리므로
-  // 책장 카드에서만 들어온다(§LibraryPage).
-  { path: "/diagnostic/:courseId", element: <DiagnosticPage /> },
   // 파싱 단계별 실행기 (개발용) — 셸 없이 단독. 배포 시 제외 대상.
   { path: "/debug/parsing", element: <ParsingDebugPage /> },
 ]);

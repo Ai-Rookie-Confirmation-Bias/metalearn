@@ -20,6 +20,7 @@ from app.features.course.service import CourseService
 from app.features.course.supply import GENERATED
 from app.features.parsing.models import DocStatus
 from app.features.parsing.models import Document as ParsingDocument
+from app.features.parsing.models import UserDocument
 from app.features.parsing.service import ParsingService
 
 from .models import Document
@@ -54,33 +55,43 @@ def ingest_parsing_document(
     return store.ingest_tree(tree.model_dump(mode="json"), doc_id=key)
 
 
-def sync_ready_documents(db: Session) -> list[str]:
-    """DB에 ready인 파싱 문서 중 store에 없는 것을 올린다.
+def sync_ready_documents(
+    db: Session, *, user_id: uuid.UUID | None = None
+) -> list[str]:
+    """ready인 파싱 문서를 store에 올리고, **그 id 목록**을 돌려준다.
+
+    `user_id`를 주면 그 사람이 소유한 것만 본다(user_documents 조인).
+    문서 자체는 공용이지만 책장은 사람 것이다 — 남이 올린 교재가 내 책장에
+    뜨면 그건 책장이 아니라 서버 목록이다.
 
     목록 API가 호출할 때마다 돌린다 — 문서 수가 데모 규모일 때만 싼 경로다.
-    이미 올린 것은 건너뛴다(재파싱 반영은 `from-parsing?refresh=true`).
+    이미 올라와 있으면 다시 안 읽는다(재파싱 반영은 `from-parsing?refresh=true`).
     """
-    rows = db.scalars(
-        select(ParsingDocument).where(
-            ParsingDocument.status == DocStatus.READY.value,
-            # 26이 만든 보강 자료는 뺀다. 그건 코스 목차에 끼워 쓰는 것이지
-            # 책장에서 골라 읽는 책이 아니다 — 원문이 없고 명세만 들었다.
-            ParsingDocument.source_format != GENERATED,
-        )
-    ).all()
-    added: list[str] = []
-    for row in rows:
+    stmt = select(ParsingDocument).where(
+        ParsingDocument.status == DocStatus.READY.value,
+        # 26이 만든 보강 자료는 뺀다. 그건 코스 목차에 끼워 쓰는 것이지
+        # 책장에서 골라 읽는 책이 아니다 — 원문이 없고 명세만 들었다.
+        ParsingDocument.source_format != GENERATED,
+    )
+    if user_id is not None:
+        stmt = stmt.join(
+            UserDocument, UserDocument.document_id == ParsingDocument.id
+        ).where(UserDocument.user_id == user_id)
+
+    ids: list[str] = []
+    for row in db.scalars(stmt).all():
         key = str(row.id)
         if key in store.documents:
+            ids.append(key)
             continue
         try:
             ingest_parsing_document(db, row.id)
-            added.append(key)
+            ids.append(key)
         except LookupError as e:
             print(f"[curriculum] 파싱 문서 주입 건너뜀 {key}: {e}")
         except Exception as e:  # noqa: BLE001 — 목록이 죽으면 안 된다
             print(f"[curriculum] 파싱 문서 주입 실패 {key}: {type(e).__name__}: {e}")
-    return added
+    return ids
 
 
 async def ingest_course(
@@ -122,26 +133,46 @@ def ingest_course_stored(db: Session, course_id: uuid.UUID) -> Document:
     return store.ingest_course_tree(tree.model_dump(mode="json"), doc_id=key)
 
 
-def course_member_document_ids(db: Session) -> set[str]:
+def course_member_document_ids(
+    db: Session, *, user_id: uuid.UUID | None = None
+) -> set[str]:
     """코스에 묶인 자료 id들.
 
     책장에서 **뺀다.** 안 그러면 PPT 한 권 · 교재 한 권 · 그 둘을 묶은 수업
     한 권이 나란히 떠서, 학습자가 어느 걸 눌러야 하는지 알 수 없다.
+
+    ⚠️ `user_id`를 주면 **그 사람의 코스에 묶인 것만** 뺀다. 자료는 공용이라
+    남이 자기 수업에 넣었다는 이유로 내 책장에서 사라지면 안 된다.
     """
-    return {str(v) for v in db.scalars(select(CourseDocument.document_id))}
+    stmt = select(CourseDocument.document_id)
+    if user_id is not None:
+        stmt = stmt.join(Course, Course.id == CourseDocument.course_id).where(
+            Course.user_id == user_id
+        )
+    return {str(v) for v in db.scalars(stmt)}
 
 
-async def sync_courses(db: Session) -> list[str]:
-    """DB의 코스 중 store에 없는 것을 올린다. `sync_ready_documents`와 같은 사정."""
-    rows = db.scalars(select(Course)).all()
-    added: list[str] = []
-    for row in rows:
+async def sync_courses(
+    db: Session, *, user_id: uuid.UUID | None = None
+) -> list[str]:
+    """코스를 store에 올리고 **그 id 목록**을 돌려준다.
+
+    `sync_ready_documents`와 같은 사정이고 같은 이유로 **사람별로 거른다** —
+    `courses.user_id`가 있으니 남의 수업이 내 책장에 뜨면 안 된다.
+    """
+    stmt = select(Course)
+    if user_id is not None:
+        stmt = stmt.where(Course.user_id == user_id)
+
+    ids: list[str] = []
+    for row in db.scalars(stmt).all():
         key = str(row.id)
         if key in store.documents:
+            ids.append(key)
             continue
         try:
             await ingest_course(db, row.id)
-            added.append(key)
+            ids.append(key)
         except Exception as e:  # noqa: BLE001 — 목록이 죽으면 안 된다
             print(f"[curriculum] 코스 주입 실패 {key}: {type(e).__name__}: {e}")
-    return added
+    return ids

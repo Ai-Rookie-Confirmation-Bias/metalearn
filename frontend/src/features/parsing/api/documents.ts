@@ -69,11 +69,13 @@ export const ACCEPT_EXTENSIONS = ".pdf,.png,.jpg,.jpeg,.tiff,.bmp,.heic";
  * 업로드 → 백그라운드 파싱 시작(202). 응답은 파싱 결과가 아니라 **접수증**이다.
  *
  * 같은 파일(지문 일치)은 다시 파싱하지 않고 기존 문서를 그대로 돌려준다.
- * 그래서 실수로 지웠다 다시 올리는 비용이 0이다.
+ * 그래서 실수로 지웠다 다시 올리는 비용이 0이다. 그래도 **내 책장에는 꽂힌다** —
+ * 문서는 공용이고 소유는 따로 기록된다.
  *
- * `role` 파라미터는 보내지 않는다 — 서버가 그 값을 user_documents에만 쓰는데
- * user_id가 없으면 아예 저장되지 않는다(users 테이블이 아직 없다).
- * 반영도 안 되는 값을 보내면 "역할을 정했다"는 착각만 남는다.
+ * 주인은 서버가 정한다(토큰, 없으면 dev 유저). 클라가 보낼 값이 아니다.
+ *
+ * `role`은 안 보낸다. 서버의 역할은 뼈대/본문/참고인데 위저드가 묻는 건
+ * 메인/추가라 축이 다르다. 임의로 짝지으면 사용자가 고르지 않은 값이 저장된다.
  */
 export async function uploadDocument(file: File): Promise<ParsingDocumentOut> {
   const form = new FormData();
