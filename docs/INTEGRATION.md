@@ -467,6 +467,7 @@ if not excerpts or any(not e.matched for e in excerpts):
 | 문서 | 무엇 | 담당 |
 | --- | --- | --- |
 | **INTEGRATION.md** | 지금 이 문서. 합쳐진 상태·실행·API·각자 할 일 | 공용 |
+| [DEMO.md](DEMO.md) | 데모 시나리오 — 무엇을 미리 만들고 무엇을 실연할지, 흐름 9장면, 시연 전 정리할 것 | 공용 |
 | [STATUS.md](STATUS.md) | **파싱이 뭘 주는지는 여기가 기준** — 항목별 완료/미완 | 박지성 |
 | [PARSING_v3.md](PARSING_v3.md) · [PARSING_PLAN.md](PARSING_PLAN.md) | 파싱 설계 · 단계 계획 | 박지성 |
 | [LEARNER_CONTRACT.md](LEARNER_CONTRACT.md) | 학습 계층 스키마·API·회의 안건 | 윤현석 |
