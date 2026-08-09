@@ -131,10 +131,20 @@ export function CurriculumPage() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="truncate font-semibold text-text-primary">{ch.title}</p>
+                  <p className="truncate font-semibold text-text-primary">
+                    {ch.title}
+                    {/* ✚ 교재에 없던 단원. 진단이 "모른다"고 한 과목을 채운 것이라
+                        원문(📎)이 없다 — 그걸 안 알리면 교재 내용으로 오해한다. */}
+                    {ch.inserted && (
+                      <span className="ml-2 rounded bg-accent/10 px-1.5 py-0.5 align-middle text-[0.68rem] font-bold text-accent">
+                        ✚ 먼저 채우기
+                      </span>
+                    )}
+                  </p>
                   <p className="mt-0.5 text-[0.75rem] text-text-tertiary">
                     화면 {ch.sectionsDone}/{ch.sectionsTotal}
                     {ch.pages && <> · 📖 {ch.pages}</>}
+                    {ch.inserted && <> · 교재 밖 내용</>}
                   </p>
                 </div>
                 <div className="flex flex-shrink-0 items-center gap-1.5">

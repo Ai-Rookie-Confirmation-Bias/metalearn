@@ -367,6 +367,15 @@ def document_from_tree(tree: dict[str, Any], *, doc_id: str | None = None) -> Do
                     figures=picks[j],
                 )
             )
-        chapters.append(Chapter(index=i, title=topic.get("title") or f"목차 {i}", sections=tuple(enriched)))
+        chapters.append(
+            Chapter(
+                index=i,
+                title=topic.get("title") or f"목차 {i}",
+                sections=tuple(enriched),
+                # 코스 트리만 준다(`course_topics.origin`). 문서 트리엔 없어서
+                # 빈 값이 되고, 그건 "교재 목차 그대로"라는 뜻이라 맞다.
+                origin=str(topic.get("origin") or ""),
+            )
+        )
 
     return Document(doc_id=doc_id, title=title, chapters=tuple(chapters))

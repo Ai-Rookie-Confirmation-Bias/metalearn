@@ -29,9 +29,19 @@ export function ChapterPage() {
 
       <header className="mt-3 mb-6 border-b border-border-primary pb-6">
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl font-bold text-text-primary">📘 {data.title}</h1>
+          <h1 className="text-2xl font-bold text-text-primary">
+            {data.inserted ? "✚" : "📘"} {data.title}
+          </h1>
           <ModeBadge mode={data.mode} />
         </div>
+        {/* 교재에 없던 단원이면 먼저 밝힌다. 원문(📎)이 없는 이유이기도 하다. */}
+        {data.inserted && (
+          <p className="mt-2 rounded-lg bg-accent/5 px-4 py-2.5 text-[0.83rem] text-text-secondary">
+            <strong className="text-accent">✚ 먼저 채우는 단원</strong> — 진단에서
+            모른다고 하신 내용이라 <strong>교재에는 없습니다.</strong> 여기 설명은
+            교재 원문이 아니라 새로 쓴 것이라 📎 원문이 붙지 않습니다.
+          </p>
+        )}
         <p className="mt-1 text-[0.8rem] text-text-tertiary">
           화면 {data.sections.length}개{data.pages && <> · 📖 {data.pages}</>}
         </p>

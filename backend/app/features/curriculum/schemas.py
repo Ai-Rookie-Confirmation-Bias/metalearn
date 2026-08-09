@@ -44,6 +44,9 @@ class ChapterBrief(_Camel):
     recall: float = 0.0  # 회상 강도 — 지금도 꺼내지나(망각곡선)
     sections_due: int = 0  # 🔁 복습이 필요한 절 수
     mode: str  # deep | normal | compressed
+    # ✚ 진단이 끼운 보강 단원인가. **교재에 없던 내용**이라 화면이 구분해
+    # 보여야 한다 — 원문(📎)도 없다.
+    inserted: bool = False
     # ⚡ 왜 분량이 늘거나 줄었는지. 아직 근거가 없으면 빈 문자열
     reason: str = ""
 
@@ -114,6 +117,8 @@ class ChapterOut(_Camel):
     index: int
     title: str
     pages: str = ""
+    # ✚ 진단이 끼운 보강 단원 (교재에 없던 내용)
+    inserted: bool = False
     readiness: float  # 문서 전체 준비도(머리에 계속 보인다)
     ratio: float
     progress: float

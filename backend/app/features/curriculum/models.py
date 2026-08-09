@@ -14,6 +14,20 @@ class Chapter:
     index: int
     title: str
     sections: tuple[Section, ...]
+    # 이 목차가 어디서 왔는가. 빈 값이면 교재 목차 그대로.
+    #   "inserted"  진단이 "모른다"고 한 과목을 채우려고 **코스 층이 끼운** 단원
+    #
+    # ⚠️ 화면에서 반드시 구분해 보여야 한다. 교재에 없는 내용인데 있는 것처럼
+    #    보이면 "📎 원문은 AI가 지어낸 게 아니라 교재의 그 문장"이라는 우리
+    #    근거가 통째로 흔들린다. 보강 단원은 조각이 없어 원문도 없다.
+    #
+    # ⚠️ `Section.inserted`와 다른 것이다 — 그건 우리가 화면 사이에 끼운 보충
+    #    화면이고, 이건 진단이 목차 앞에 붙인 단원이다. 만든 주체도 층도 다르다.
+    origin: str = ""
+
+    @property
+    def inserted(self) -> bool:
+        return self.origin == "inserted"
 
     @property
     def pages(self) -> str:

@@ -32,6 +32,8 @@ export interface ChapterBrief {
   recall: number; // 회상 강도 — 지금도 꺼내지나
   sectionsDue: number; // 🔁 복습이 필요한 절 수
   mode: PlanMode;
+  // ✚ 진단이 끼운 보강 단원 — 교재에 없던 내용이라 구분해 보여준다
+  inserted: boolean;
   reason: string; // ⚡ 비어 있으면 아직 판단 근거가 없다는 뜻
 }
 
@@ -79,6 +81,7 @@ export interface ChapterOut {
   index: number;
   title: string;
   pages: string;
+  inserted: boolean; // ✚ 진단이 끼운 보강 단원
   readiness: number;
   ratio: number;
   progress: number;
