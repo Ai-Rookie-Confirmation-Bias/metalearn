@@ -201,6 +201,17 @@ export function OutlinePanel({ docId }: { docId: string }) {
               >
                 <span className="min-w-0 flex-1">
                   <span className="flex items-center gap-1.5">
+                    {/* ✚ 진단이 끼운 단원 — 교재에 없던 내용. 목차는 학습 내내
+                        옆에 떠 있으므로, 여기서 구분이 안 되면 학습자는 이걸
+                        교재 목차로 읽는다. */}
+                    {ch.inserted && (
+                      <span
+                        title="진단에서 모른다고 하신 내용 — 교재에는 없습니다"
+                        className="shrink-0 text-[0.75rem] font-bold text-accent"
+                      >
+                        ✚
+                      </span>
+                    )}
                     <span
                       className={clsx(
                         "truncate text-[0.875rem] font-bold",
@@ -219,6 +230,7 @@ export function OutlinePanel({ docId }: { docId: string }) {
                   <span className="mt-0.5 block text-[0.7rem] text-text-tertiary">
                     화면 {ch.sectionsDone}/{ch.sectionsTotal}
                     {ch.sectionsDue > 0 && <> · 🔁 {ch.sectionsDue}</>}
+                    {ch.inserted && <> · 교재 밖</>}
                   </span>
                 </span>
                 {isOpen ? (
