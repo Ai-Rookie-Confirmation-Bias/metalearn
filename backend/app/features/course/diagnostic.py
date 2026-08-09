@@ -310,15 +310,39 @@ class DiagnosticService:
     # 상태는 `course_prereqs.known/verified`가 그대로 들고 있다. 세션 테이블이
     # 없으므로 중간에 창을 닫아도 이어진다.
     async def probes(self, course: Course) -> list[Question]:
-        """이번 라운드에 물을 문항들. 빈 목록이면 진단이 끝났다."""
+        """이번 라운드에 물을 문항들. **빈 목록이면 진단이 끝났다.**
+
+        빈 목록에는 두 가지가 섞여 있다 — "더 물을 게 없다"와 "만들려다 다
+        버렸다". 앞은 정상이고 뒤는 사고다. 뒤일 때만 한 번 더 만들어 본다.
+        """
         pending: list[tuple[str, list[search.Item], search.Item]] = []
         for subject, items in self._subject_states(course.id):
             target = search.next_item(items)
             if target is not None:
                 pending.append((subject, items, target))
         if not pending:
-            return []
+            return []  # 더 물을 게 없다. 정상적인 끝
 
+        out = await self._make(course, pending)
+        if out:
+            return out
+
+        # **한 번만 다시 만든다.** 같은 프롬프트를 던져도 실행마다 결과가 달라서
+        # 재시도가 실제로 먹힌다(실측: 같은 요청 3회에 4·6·0문항). 버리는 쪽이
+        # 과한 게 아니라 생성이 흔들리는 것이라, 검사를 느슨하게 하는 대신
+        # 다시 만든다 — 그쪽을 풀면 정답이 둘인 문항이 사용자에게 나간다.
+        #
+        # 두 번까지만 한다. 세 번째도 빈손이면 그날 그 모델이 안 되는 것이고,
+        # 자기신고가 그대로 남아 보강은 정상적으로 나간다.
+        _log.info("확인 문항 다시 만든다 — 첫 판이 빈손 (%s)", course.title)
+        return await self._make(course, pending)
+
+    async def _make(
+        self,
+        course: Course,
+        pending: list[tuple[str, list[search.Item], search.Item]],
+    ) -> list[Question]:
+        """고른 항목들로 문항을 만든다. 못 만든 것은 조용히 빠진다."""
         targets = [(subject, target) for subject, _, target in pending]
         answers = await self._answers_of(targets)
 
@@ -357,7 +381,7 @@ class DiagnosticService:
              for s, _, t in pending if t.key not in made]
         )
         if not out:
-            _log.info("확인 문항 없음 — 이 라운드는 빈손이다 (%s)", course.title)
+            _log.info("확인 문항 없음 — 이 판은 빈손이다 (%s)", course.title)
         return out
 
     def _subject_states(
