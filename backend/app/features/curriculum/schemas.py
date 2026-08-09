@@ -295,6 +295,9 @@ class AnalysisDoc(_Camel):
     weakest_chapter: str | None = None
     weak_concepts: list[str] = []
     by_kind: dict[str, int] = {}
+    # ✚ 진단이 목차 앞에 끼운 보강 단원 수. **진단이 한 일은 여기 있다** —
+    # 점수를 쌓는 게 아니라 배울 순서를 바꾼다.
+    inserted_chapters: int = 0
 
 
 class AnalysisOut(_Camel):
@@ -318,3 +321,11 @@ class AnalysisOut(_Camel):
     documents: list[AnalysisDoc] = []
     # 자료를 가로질러 모은 약점 — (개념, 몇 번 틀렸나)
     weak_concepts: list[tuple[str, int]] = []
+    # ✚ 진단이 끼운 보강 단원 총합.
+    #
+    # ⚠️ `by_kind["diagnostic"]`은 **구조적으로 늘 0이다.** 진단(24)은 문항을
+    #    풀려 점수를 쌓는 게 아니라 `course_prereqs`에 "안다/모른다"를 남기고
+    #    그 결과로 목차를 바꾼다. 화면이 "진단 기록이 아직 없어요"라고 말하면
+    #    사실과 다르다 — 안 한 게 아니라 **다른 축을 잰다.**
+    #    그래서 진단이 한 일을 이 숫자로 보여준다.
+    inserted_chapters: int = 0

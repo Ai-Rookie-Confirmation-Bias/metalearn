@@ -18,6 +18,7 @@ export interface AnalysisDoc {
   weakestChapter: string | null;
   weakConcepts: string[];
   byKind: Partial<Record<AttemptKind, number>>;
+  insertedChapters: number;
 }
 
 export interface AnalysisOut {
@@ -32,6 +33,9 @@ export interface AnalysisOut {
   documents: AnalysisDoc[];
   // [개념, 몇 개 목차에서 약점으로 잡혔나]
   weakConcepts: [string, number][];
+  // ✚ 진단이 목차 앞에 끼운 보강 단원 수.
+  // 진단은 문항 점수를 쌓지 않는다 — 배울 순서를 바꾼다. 그게 여기 숫자다.
+  insertedChapters: number;
 }
 
 export async function fetchAnalysis(): Promise<AnalysisOut> {

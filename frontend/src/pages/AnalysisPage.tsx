@@ -14,7 +14,11 @@ import { KIND_LABEL, type AttemptKind } from "@/features/curriculum/api/curricul
 import { fetchAnalysis, type AnalysisDoc } from "@/features/curriculum/api/analysis";
 import { Bar, pct } from "@/features/curriculum/components/bits";
 
-const KINDS: AttemptKind[] = ["diagnostic", "retrieval", "review", "formative"];
+// ⚠️ `diagnostic`이 빠져 있다. 진단(24)은 **문항 점수를 쌓지 않는다** —
+//    "안다/모른다"를 받아 목차를 바꾼다(보강 단원 삽입). 그래서 이 막대에 넣으면
+//    영원히 0이고, 화면이 "진단 기록이 없어요"라고 거짓말을 하게 된다.
+//    진단이 한 일은 아래 `DiagnosisCard`가 따로 보여준다.
+const KINDS: AttemptKind[] = ["retrieval", "review", "formative"];
 
 // 가중치는 백엔드 mastery.WEIGHT와 같아야 한다. 화면에 왜 출처마다 무게가
 // 다른지 설명하려면 값이 보여야 해서 여기 적는다.
@@ -24,6 +28,27 @@ const KIND_WEIGHT: Record<AttemptKind, string> = {
   review: "×1.5",
   formative: "×2.0",
 };
+
+/** 진단이 한 일 — 점수가 아니라 **목차**를 바꿨다. */
+function DiagnosisCard({ inserted }: { inserted: number }) {
+  if (inserted === 0) return null;
+  return (
+    <div className="mb-8 rounded-2xl border border-accent/30 bg-accent/5 px-7 py-6">
+      <h3 className="font-bold text-text-primary">진단이 한 일</h3>
+      <p className="mt-0.5 mb-4 text-[0.85rem] text-text-secondary">
+        진단은 점수를 쌓지 않습니다. <strong>배울 순서를 바꿉니다.</strong>
+      </p>
+      <div className="flex items-baseline gap-3">
+        <span className="text-[1.75rem] font-bold tabular-nums text-accent">
+          ✚ {inserted}
+        </span>
+        <span className="text-[0.9rem] text-text-secondary">
+          모른다고 하신 과목을 <strong>교재 목차 앞에</strong> 단원으로 넣었습니다
+        </span>
+      </div>
+    </div>
+  );
+}
 
 const KIND_WHY: Record<AttemptKind, string> = {
   diagnostic: "배우기 전 답이라 증거가 약해요",
@@ -101,7 +126,8 @@ export function AnalysisPage() {
           메타인지 분석
         </h2>
         <p className="text-text-secondary">
-          네 가지 자리에서 푼 문항이 <strong>하나의 준비도</strong>로 모입니다.
+          진단은 <strong>배울 순서</strong>를 정하고, 그 뒤에 푼 문항들이{" "}
+          <strong>하나의 준비도</strong>로 모입니다.
         </p>
       </div>
 
@@ -143,7 +169,9 @@ export function AnalysisPage() {
             />
           </div>
 
-          {/* ── 네 출처 ─────────────────────────────────────── */}
+          <DiagnosisCard inserted={data.insertedChapters} />
+
+          {/* ── 출처별 누적 ─────────────────────────────────── */}
           <section className="mb-8 rounded-2xl border border-border-primary bg-white px-7 py-6">
             <h3 className="font-bold text-text-primary">누적이 어디서 왔나</h3>
             <p className="mt-0.5 mb-5 text-[0.85rem] text-text-secondary">

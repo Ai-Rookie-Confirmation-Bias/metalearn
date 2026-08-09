@@ -189,6 +189,7 @@ async def analysis(
                         {k: v for c in course.chapters for k, v in c.by_kind.items()}
                     )
                 ),
+                inserted_chapters=sum(1 for ch in doc.chapters if ch.inserted),
             )
         )
         total += n
@@ -207,6 +208,7 @@ async def analysis(
         by_kind=dict(by_kind),
         documents=docs,
         weak_concepts=weak_count.most_common(12),
+        inserted_chapters=sum(d.inserted_chapters for d in docs),
     )
 
 
