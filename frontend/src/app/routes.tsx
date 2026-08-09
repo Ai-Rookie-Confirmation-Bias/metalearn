@@ -69,10 +69,6 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <CurriculumPage /> },
       { path: "chapters/:index", element: <ChapterPage /> },
-      // 진단 — 학습 **전에** 한 번. 목차 밖이라 자료 아래 바로 둔다.
-      // 코스에만 있다(선수 개념이 코스 층에서 나온다). 자료 하나면 404를
-      // 받고 화면이 "학습으로 가기"만 보여준다.
-      { path: "diagnostic", element: <DiagnosticPage /> },
       // 🔁 망각곡선이 불러온 화면들. 목차 밖이라 자료 아래 바로 둔다
       { path: "review", element: <ReviewPage /> },
       { path: "chapters/:index/formative", element: <FormativePage /> },
@@ -81,6 +77,10 @@ export const router = createBrowserRouter([
   },
   // 수업 생성 위저드 — 셸 없는 전체화면 집중 플로우
   { path: "/create", element: <CreateCoursePage /> },
+  // 진단 — 위저드와 같은 이유로 **셸 밖 전체화면**이다. 목차를 옆에 두면
+  // "아직 안 정해진 목차"를 보면서 그 목차를 정하는 꼴이 된다. 코스에만 있다
+  // (선수 개념이 코스 층에서 나온다) — 자료 하나면 404를 받고 학습으로 보낸다.
+  { path: "/diagnostic/:courseId", element: <DiagnosticPage /> },
   // 파싱 단계별 실행기 (개발용) — 셸 없이 단독. 배포 시 제외 대상.
   { path: "/debug/parsing", element: <ParsingDebugPage /> },
 ]);

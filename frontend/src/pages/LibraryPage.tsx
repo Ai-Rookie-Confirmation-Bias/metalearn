@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { useQueries, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   PlusIcon,
   PlayIcon,
@@ -14,7 +14,7 @@ import {
   type Icon,
 } from "@phosphor-icons/react";
 
-import { createCourse } from "@/features/course/api";
+import { createCourse, listCourses } from "@/features/course/api";
 import {
   purposeToGoal,
   usePendingCourse,
@@ -107,11 +107,28 @@ function ContinueBanner({ doc }: { doc: DocumentOut }) {
   );
 }
 
-function BookCard({ doc, cover }: { doc: DocumentOut; cover: Cover }) {
+function BookCard({
+  doc,
+  cover,
+  needsDiagnostic,
+}: {
+  doc: DocumentOut;
+  cover: Cover;
+  /** 수업인데 진단을 아직 안 했다. **학습보다 먼저** 보낸다 — 진단이 목차 앞에
+   *  보강 단원을 끼우므로, 나중에 하면 이미 읽은 단원 앞에 끼워진다. */
+  needsDiagnostic?: boolean;
+}) {
   const done = sectionsDone(doc);
   const progress = Math.round(doc.readiness * 100);
   const started = done > 0;
-  const cta = started ? "이어서 학습하기" : "학습 시작하기";
+  const cta = needsDiagnostic
+    ? "진단하고 시작하기"
+    : started
+      ? "이어서 학습하기"
+      : "학습 시작하기";
+  const to = needsDiagnostic
+    ? `/diagnostic/${encodeURIComponent(doc.docId)}`
+    : learnPath(doc.docId);
   const CoverIcon = cover.icon;
 
   return (
@@ -155,7 +172,7 @@ function BookCard({ doc, cover }: { doc: DocumentOut; cover: Cover }) {
         )}
 
         <Link
-          to={learnPath(doc.docId)}
+          to={to}
           className="mt-auto inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
         >
           {cta}
@@ -364,6 +381,17 @@ export function LibraryPage() {
     })),
   });
 
+  // **코스 목록 한 번으로 진단 여부를 안다.** 카드마다 따로 물으면 자료 수만큼
+  // 요청이 나가고, 자료 하나짜리는 404라 콘솔이 지저분해진다.
+  const { data: courses } = useQuery({
+    queryKey: ["courses", "list"],
+    queryFn: listCourses,
+    staleTime: 10_000,
+  });
+  const undiagnosed = new Set(
+    (courses ?? []).filter((c) => !c.diagnosed_at).map((c) => c.id),
+  );
+
   const parsing = useParsingDocuments(pending.map((p) => p.docId));
   const parsingById = new Map(
     parsing
@@ -552,6 +580,7 @@ export function LibraryPage() {
                   key={doc.docId}
                   doc={doc}
                   cover={coverById.get(doc.docId) ?? COVERS[0]}
+                  needsDiagnostic={undiagnosed.has(doc.docId)}
                 />
               ))}
             </div>

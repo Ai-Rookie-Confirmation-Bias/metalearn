@@ -23,7 +23,7 @@ export function DiagnosticBanner({ docId }: { docId: string }) {
   if (data.diagnosed_at) {
     return (
       <Link
-        to={`/curriculum/${encodeURIComponent(docId)}/diagnostic`}
+        to={`/diagnostic/${encodeURIComponent(docId)}`}
         className="mb-4 inline-block text-[0.8rem] text-text-tertiary hover:underline"
       >
         🔎 진단 다시 하기
@@ -33,7 +33,7 @@ export function DiagnosticBanner({ docId }: { docId: string }) {
 
   return (
     <Link
-      to={`/curriculum/${encodeURIComponent(docId)}/diagnostic`}
+      to={`/diagnostic/${encodeURIComponent(docId)}`}
       className="mb-6 flex items-center gap-4 rounded-2xl border border-accent/30 bg-accent/5 px-6 py-5 transition-colors hover:bg-accent/10"
     >
       <CompassIcon className="shrink-0 text-[1.75rem] text-accent" weight="duotone" />

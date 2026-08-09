@@ -284,6 +284,9 @@ async def supply(
     """
     course = _course(course_id, db)
     result = await SupplyService(db).run(course, refresh=refresh)
+    # 조달까지 왔으면 진단은 끝난 것이다. 문항이 하나도 안 나온 경로(정답을 못
+    # 세워 건너뛴 경우)는 grade()를 안 지나므로 여기서도 찍어야 한다.
+    DiagnosticService(db).finish(course)
     db.commit()
 
     # **목차가 바뀌었으면 학습 store도 다시 조립한다.**

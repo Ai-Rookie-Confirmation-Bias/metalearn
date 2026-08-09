@@ -9,6 +9,7 @@
 //   ④ 선수 체크(과목 → 펼침)   ⑤ 확인 문항(없을 수 있다)
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
   ArrowLeftIcon,
@@ -35,7 +36,11 @@ import {
 } from "@/features/diagnostic/api";
 
 const GOALS: { value: Goal; label: string; hint: string }[] = [
-  { value: "exam", label: "시험 준비", hint: "범위를 빠짐없이. 기한이 있으면 분량을 줄입니다" },
+  {
+    value: "exam",
+    label: "시험 준비",
+    hint: "범위를 빠짐없이. 기한이 있으면 분량을 줄입니다",
+  },
   { value: "work", label: "실무에 쓰려고", hint: "왜 그런지까지 깊게 봅니다" },
   { value: "interest", label: "관심이 있어서", hint: "부담 없이 훑습니다" },
 ];
@@ -58,6 +63,20 @@ const KNOWN_CHOICES: { value: Known; label: string }[] = [
 ];
 
 const STEPS = ["왜 배우나", "분야", "설명 방식", "아는 것", "확인", "채우기"];
+
+/** 셸 밖 전체화면 껍데기. `/create` 위저드와 같은 틀이다 —
+ *  진단은 목차를 **정하는** 자리라 목차를 옆에 띄우지 않는다. */
+function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-screen justify-center bg-bg-secondary px-4 py-10">
+      <div className="w-full max-w-[760px]">
+        <div className="rounded-2xl border border-border-primary bg-white p-12 shadow-lg max-[560px]:p-6">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Choice({
   active,
@@ -102,7 +121,9 @@ function KnownRow({
     <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-primary px-5 py-3.5">
       <div className="min-w-0">
         <div className="font-semibold text-text-primary">{label}</div>
-        {why && <div className="mt-0.5 text-[0.85rem] text-text-tertiary">{why}</div>}
+        {why && (
+          <div className="mt-0.5 text-[0.85rem] text-text-tertiary">{why}</div>
+        )}
       </div>
       <div className="flex shrink-0 gap-1.5">
         {KNOWN_CHOICES.map((c) => (
@@ -126,8 +147,9 @@ function KnownRow({
 }
 
 export function DiagnosticPage() {
-  const { docId = "" } = useParams();
+  const { courseId: docId = "" } = useParams();
   const navigate = useNavigate();
+  const qc = useQueryClient();
 
   const [step, setStep] = useState(0);
   const [setup, setSetup] = useState<DiagnosticSetup | null>(null);
@@ -145,9 +167,10 @@ export function DiagnosticPage() {
   const [probes, setProbes] = useState<Probe[] | null>(null);
   const [picked, setPicked] = useState<Record<string, number>>({});
   // 진단이 끝나고 조달까지 마친 결과. null이면 아직 진행 중이다.
-  const [done, setDone] = useState<{ subjects: number; inserted: number } | null>(
-    null,
-  );
+  const [done, setDone] = useState<{
+    subjects: number;
+    inserted: number;
+  } | null>(null);
   // 몇 문항을 실제로 물었나. 라운드가 여러 번이라 누적한다.
   const [asked, setAsked] = useState(0);
 
@@ -162,11 +185,12 @@ export function DiagnosticPage() {
         setWeeks(s.deadline_weeks);
         setStyle(s.style);
       })
-      .catch(() =>
-        alive &&
-        setError(
-          "진단은 수업(코스)에만 있습니다. 자료 하나를 열었다면 이 화면은 건너뜁니다.",
-        ),
+      .catch(
+        () =>
+          alive &&
+          setError(
+            "진단은 수업(코스)에만 있습니다. 자료 하나면 이 화면을 건너뜁니다.",
+          ),
       );
     return () => {
       alive = false;
@@ -194,14 +218,18 @@ export function DiagnosticPage() {
     [expand, subjects],
   );
 
-  const back = () => (step === 0 ? navigate(`/curriculum/${docId}`) : setStep((s) => s - 1));
+  const back = () =>
+    step === 0 ? navigate(`/curriculum/${docId}`) : setStep((s) => s - 1);
 
   async function next() {
     setBusy(true);
     setError(null);
     try {
       if (step === 0) {
-        await saveConfig(docId, { goal: goal ?? undefined, deadline_weeks: weeks });
+        await saveConfig(docId, {
+          goal: goal ?? undefined,
+          deadline_weeks: weeks,
+        });
         setStep(1);
       } else if (step === 1) {
         setStep(2);
@@ -262,6 +290,10 @@ export function DiagnosticPage() {
     setStep(5);
     try {
       const out = await supply(docId);
+      // 책장 카드가 "진단하고 시작하기" → "학습 시작하기"로 바뀌어야 하고,
+      // 목차에는 보강 단원이 새로 들어와 있다.
+      qc.removeQueries({ queryKey: ["courses", "list"] });
+      qc.removeQueries({ queryKey: ["curriculum"] });
       setDone({ subjects: out.subjects, inserted: out.inserted + out.updated });
     } catch {
       setDone({ subjects: 0, inserted: 0 });
@@ -282,51 +314,63 @@ export function DiagnosticPage() {
 
   if (error && !setup) {
     return (
-      <div className="mx-auto max-w-[680px] px-8 py-24 text-center">
-        <p className="text-text-secondary">{error}</p>
-        <button
-          type="button"
-          onClick={() => navigate(`/curriculum/${docId}`)}
-          className="mt-6 rounded-xl bg-accent px-6 py-2.5 font-semibold text-white"
-        >
-          학습으로 가기
-        </button>
-      </div>
+      <Shell>
+        <div className="py-10 text-center">
+          <p className="text-text-secondary">{error}</p>
+          <button
+            type="button"
+            onClick={() => navigate(`/curriculum/${docId}`)}
+            className="mt-6 rounded-xl bg-accent px-6 py-2.5 font-semibold text-white"
+          >
+            학습으로 가기
+          </button>
+        </div>
+      </Shell>
     );
   }
 
   if (done) {
     return (
-      <div className="mx-auto max-w-[680px] px-8 py-24 text-center">
-        <CheckCircleIcon className="mx-auto mb-5 text-[3.5rem] text-accent" weight="fill" />
-        <h2 className="text-[1.75rem] font-bold text-text-primary">진단이 끝났어요</h2>
-        <p className="mt-2 text-text-secondary">
-          여기서 답한 것은 <strong>분량과 설명 방식</strong>을 정하는 데 쓰입니다.
-          학습하면서 계속 다시 재요.
-        </p>
-        {done.inserted > 0 && (
-          <p className="mt-4 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] text-text-secondary">
-            먼저 알아야 할 <strong>{done.subjects}과목</strong>을 살펴서{" "}
-            <strong>{done.inserted}개 단원</strong>을 목차 앞에 넣었어요
-            {asked > 0 && ` (확인 문항 ${asked}개)`}.
+      <Shell>
+        <div className="py-10 text-center">
+          <CheckCircleIcon
+            className="mx-auto mb-5 text-[3.5rem] text-accent"
+            weight="fill"
+          />
+          <h2 className="text-[1.75rem] font-bold text-text-primary">
+            진단이 끝났어요
+          </h2>
+          <p className="mt-2 text-text-secondary">
+            여기서 답한 것은 <strong>분량과 설명 방식</strong>을 정하는 데
+            쓰입니다. 학습하면서 계속 다시 재요.
           </p>
-        )}
-        <button
-          type="button"
-          onClick={() => navigate(`/curriculum/${docId}`)}
-          className="mt-8 inline-flex items-center gap-2 rounded-xl bg-accent px-7 py-3 font-semibold text-white"
-        >
-          학습 시작하기 <ArrowRightIcon />
-        </button>
-      </div>
+          {done.inserted > 0 && (
+            <p className="mt-4 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] text-text-secondary">
+              먼저 알아야 할 <strong>{done.subjects}과목</strong>을 살펴서{" "}
+              <strong>{done.inserted}개 단원</strong>을 목차 앞에 넣었어요
+              {asked > 0 && ` (확인 문항 ${asked}개)`}.
+            </p>
+          )}
+          <button
+            type="button"
+            onClick={() => navigate(`/curriculum/${docId}`)}
+            className="mt-8 inline-flex items-center gap-2 rounded-xl bg-accent px-7 py-3 font-semibold text-white"
+          >
+            학습 시작하기 <ArrowRightIcon />
+          </button>
+        </div>
+      </Shell>
     );
   }
 
   return (
-    <div className="mx-auto w-full max-w-[760px] px-8 py-12">
+    <Shell>
       <div className="mb-2 flex items-center gap-2 text-[0.85rem] font-semibold">
         {STEPS.map((s, i) => (
-          <span key={s} className={i === step ? "text-accent" : "text-text-tertiary"}>
+          <span
+            key={s}
+            className={i === step ? "text-accent" : "text-text-tertiary"}
+          >
             {i > 0 && <span className="mr-2 text-border-primary">·</span>}
             {s}
           </span>
@@ -346,19 +390,31 @@ export function DiagnosticPage() {
           </p>
           <div className="flex flex-col gap-3">
             {GOALS.map((g) => (
-              <Choice key={g.value} active={goal === g.value} onClick={() => setGoal(g.value)}>
+              <Choice
+                key={g.value}
+                active={goal === g.value}
+                onClick={() => setGoal(g.value)}
+              >
                 <div className="font-semibold text-text-primary">{g.label}</div>
-                <div className="mt-0.5 text-[0.85rem] text-text-tertiary">{g.hint}</div>
+                <div className="mt-0.5 text-[0.85rem] text-text-tertiary">
+                  {g.hint}
+                </div>
               </Choice>
             ))}
           </div>
 
           {goal === "exam" && (
             <div className="mt-7">
-              <div className="mb-3 font-semibold text-text-primary">시험까지 얼마나 남았나요?</div>
+              <div className="mb-3 font-semibold text-text-primary">
+                시험까지 얼마나 남았나요?
+              </div>
               <div className="flex flex-wrap gap-2">
                 {WEEKS.map((w) => (
-                  <Choice key={w} active={weeks === w} onClick={() => setWeeks(w)}>
+                  <Choice
+                    key={w}
+                    active={weeks === w}
+                    onClick={() => setWeeks(w)}
+                  >
                     {w}주
                   </Choice>
                 ))}
@@ -393,7 +449,8 @@ export function DiagnosticPage() {
             ) : null}
           </div>
           <p className="mt-4 text-[0.85rem] text-text-tertiary">
-            지금은 확인만 받습니다. 고치는 기능은 아직 없어요 — 다르면 알려주세요.
+            지금은 확인만 받습니다. 고치는 기능은 아직 없어요 — 다르면
+            알려주세요.
           </p>
         </>
       )}
@@ -404,8 +461,8 @@ export function DiagnosticPage() {
             어떤 설명이 읽기 편한가요?
           </h2>
           <p className="mb-7 text-[0.95rem] text-text-secondary">
-            같은 개념{cards?.concept ? ` (${cards.concept})` : ""}을 네 가지로 써봤어요.
-            읽기 편한 쪽을 고르시면 그 방식으로 설명합니다.
+            같은 개념{cards?.concept ? ` (${cards.concept})` : ""}을 네 가지로
+            써봤어요. 읽기 편한 쪽을 고르시면 그 방식으로 설명합니다.
           </p>
           {busy && !cards ? (
             <div className="flex items-center gap-2 py-16 text-text-tertiary">
@@ -471,7 +528,9 @@ export function DiagnosticPage() {
                   label={s.subject}
                   why={`${s.items.length}개 항목${s.ordered ? " · 순서가 있어요" : ""}`}
                   value={subjectAns[s.subject]}
-                  onPick={(k) => setSubjectAns((p) => ({ ...p, [s.subject]: k }))}
+                  onPick={(k) =>
+                    setSubjectAns((p) => ({ ...p, [s.subject]: k }))
+                  }
                 />
               ))}
             </div>
@@ -484,7 +543,9 @@ export function DiagnosticPage() {
               )}
               {expanded.map((s) => (
                 <div key={s.subject}>
-                  <div className="mb-2.5 font-bold text-text-primary">{s.subject}</div>
+                  <div className="mb-2.5 font-bold text-text-primary">
+                    {s.subject}
+                  </div>
                   <div className="flex flex-col gap-2">
                     {s.items.map((it) => (
                       <KnownRow
@@ -492,7 +553,9 @@ export function DiagnosticPage() {
                         label={it.item}
                         why={it.why}
                         value={itemAns[it.id] ?? it.known ?? undefined}
-                        onPick={(k) => setItemAns((p) => ({ ...p, [it.id]: k }))}
+                        onPick={(k) =>
+                          setItemAns((p) => ({ ...p, [it.id]: k }))
+                        }
                       />
                     ))}
                   </div>
@@ -509,21 +572,29 @@ export function DiagnosticPage() {
             안다고 하신 것 중 몇 개만
           </h2>
           <p className="mb-7 text-[0.95rem] text-text-secondary">
-            과목마다 한두 문항이에요. 틀려도 괜찮아요 — 그만큼 앞에 더 넣어드릴 뿐이에요.
+            과목마다 한두 문항이에요. 틀려도 괜찮아요 — 그만큼 앞에 더 넣어드릴
+            뿐이에요.
           </p>
           <div className="flex flex-col gap-6">
             {(probes ?? []).map((p, i) => (
-              <div key={p.prereq_id} className="rounded-2xl border border-border-primary p-6">
+              <div
+                key={p.prereq_id}
+                className="rounded-2xl border border-border-primary p-6"
+              >
                 <div className="mb-1 text-[0.8rem] font-semibold text-text-tertiary">
                   {p.subject} · {p.item}
                 </div>
-                <div className="mb-4 font-semibold text-text-primary">{p.stem}</div>
+                <div className="mb-4 font-semibold text-text-primary">
+                  {p.stem}
+                </div>
                 <div className="flex flex-col gap-2">
                   {p.choices.map((c, ci) => (
                     <Choice
                       key={ci}
                       active={picked[String(i)] === ci}
-                      onClick={() => setPicked((prev) => ({ ...prev, [String(i)]: ci }))}
+                      onClick={() =>
+                        setPicked((prev) => ({ ...prev, [String(i)]: ci }))
+                      }
                     >
                       {c}
                     </Choice>
@@ -538,15 +609,20 @@ export function DiagnosticPage() {
       {step === 5 && (
         <div className="flex flex-col items-center gap-4 py-24 text-center">
           <SpinnerGapIcon className="animate-spin text-[2.5rem] text-accent" />
-          <p className="font-semibold text-text-primary">모자란 부분을 채우는 중…</p>
+          <p className="font-semibold text-text-primary">
+            모자란 부분을 채우는 중…
+          </p>
           <p className="text-[0.9rem] text-text-tertiary">
-            모른다고 하신 과목마다 무엇을 가르칠지 정리하고 있어요. 과목당 몇 초 걸려요.
+            모른다고 하신 과목마다 무엇을 가르칠지 정리하고 있어요. 과목당 몇 초
+            걸려요.
           </p>
         </div>
       )}
 
       {error && setup && (
-        <p className="mt-6 rounded-xl bg-red-50 px-5 py-3 text-[0.9rem] text-red-600">{error}</p>
+        <p className="mt-6 rounded-xl bg-red-50 px-5 py-3 text-[0.9rem] text-red-600">
+          {error}
+        </p>
       )}
 
       <div
@@ -568,13 +644,15 @@ export function DiagnosticPage() {
           disabled={!canNext || busy}
           className={clsx(
             "inline-flex items-center gap-2 rounded-xl px-7 py-3 font-semibold text-white transition-opacity",
-            canNext && !busy ? "bg-accent" : "cursor-not-allowed bg-text-tertiary/40",
+            canNext && !busy
+              ? "bg-accent"
+              : "cursor-not-allowed bg-text-tertiary/40",
           )}
         >
           {busy ? <SpinnerGapIcon className="animate-spin" /> : null}
           {step === 4 ? "채점하기" : "다음"}
         </button>
       </div>
-    </div>
+    </Shell>
   );
 }

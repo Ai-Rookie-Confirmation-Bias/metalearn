@@ -650,6 +650,8 @@ class DiagnosticService:
         remaining = sum(
             1 for _, items in self._subject_states(course.id) if not search.done(items)
         )
+        if remaining == 0:
+            self.finish(course)
         return {"graded": graded, "subjects_left": remaining}
 
     # ── ①③ 설정 저장 ────────────────────────────────────────
@@ -667,4 +669,15 @@ class DiagnosticService:
             course.deadline_weeks = deadline_weeks
         if style in Style.ALL:
             course.style = style
-        course.diagnosed_at = datetime.now(UTC)
+        # ⚠️ **여기서 `diagnosed_at`을 찍지 않는다.** 그건 "설정을 저장했다"가
+        # 아니라 "진단을 끝냈다"는 뜻이고, 화면이 그 값으로 진단 안내를 감춘다.
+        #
+        # 실측 — 책장이 코스를 만들자마자 목표를 저장하려고 이 문을 지난다.
+        # 여기서 찍으면 사용자가 진단을 한 번도 안 했는데 배너가 "🔎 진단 다시
+        # 하기"(작은 회색 글씨)로 바뀌어, 책만 넣으면 끝나는 것처럼 보인다.
+        # 실제로 찍는 자리는 §finish — 모든 과목이 판정된 뒤다.
+
+    def finish(self, course: Course) -> None:
+        """진단이 끝났다고 도장을 찍는다. **끝났을 때만 부른다.**"""
+        if course.diagnosed_at is None:
+            course.diagnosed_at = datetime.now(UTC)

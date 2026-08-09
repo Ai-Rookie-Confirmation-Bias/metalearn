@@ -30,6 +30,8 @@ export interface Course {
   id: string;
   user_id: string;
   title: string;
+  /** 진단을 끝냈나. 비어 있으면 책장이 학습 대신 **진단으로** 보낸다. */
+  diagnosed_at: string | null;
   documents: CourseDocument[];
   topics: CourseTopic[];
 }

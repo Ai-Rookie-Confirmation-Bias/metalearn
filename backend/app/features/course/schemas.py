@@ -43,6 +43,9 @@ class CourseOut(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     title: str
+    # **진단을 끝냈나.** 책장이 이 값으로 "진단하고 시작하기"와 "학습 시작하기"를
+    # 가른다. 목록 한 번으로 알아야 카드마다 따로 물어보지 않는다.
+    diagnosed_at: datetime | None = None
     documents: list[CourseDocumentOut] = []
     topics: list[CourseTopicOut] = []
 
