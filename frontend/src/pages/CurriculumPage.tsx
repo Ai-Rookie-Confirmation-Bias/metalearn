@@ -5,7 +5,13 @@
 // 어디쯤 왔는지 감각이 사라진다.
 import { Link, useParams } from "react-router-dom";
 
-import { KIND_LABEL, type AttemptKind } from "@/features/curriculum/api/curriculum";
+import { useEffect, useRef } from "react";
+
+import {
+  KIND_LABEL,
+  prewarm,
+  type AttemptKind,
+} from "@/features/curriculum/api/curriculum";
 import { Bar, ModeBadge, Reason, StatusBadge, pct } from "@/features/curriculum/components/bits";
 import { useDocument, useDocuments } from "@/features/curriculum/queries/useCurriculum";
 import { DiagnosticBanner } from "@/features/diagnostic/DiagnosticBanner";
@@ -41,6 +47,16 @@ function Picker() {
 export function CurriculumPage() {
   const { docId } = useParams<{ docId: string }>();
   const { data, isLoading, isError } = useDocument(docId);
+
+  // 개요를 보는 동안 앞 화면을 서버가 미리 만든다. 여기 온 사람은 곧 첫 화면을
+  // 누르는데, 그때 처음 만들면 LLM 콜 5~7초를 그대로 기다리게 된다.
+  // 자료당 한 번만 — 목차를 오갈 때마다 다시 부르면 헛일이다.
+  const warmed = useRef<string | null>(null);
+  useEffect(() => {
+    if (!docId || warmed.current === docId) return;
+    warmed.current = docId;
+    prewarm(docId);
+  }, [docId]);
 
   if (!docId) return <Picker />;
   if (isLoading) return <p className="p-8 text-text-secondary">불러오는 중…</p>;

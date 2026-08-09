@@ -193,6 +193,25 @@ export async function fetchLesson(docId: string, sectionId: string): Promise<Les
   return data;
 }
 
+/** 앞 N개 화면을 서버 캐시에 미리 올린다.
+ *
+ * 화면 하나를 처음 열면 LLM 콜이라 **cold 5~7초**다. 자료를 연 사람은 곧
+ * 첫 화면을 누르므로, 개요를 보는 동안 서버가 미리 만들어 두면 클릭이
+ * 즉시 열린다(실측 5.5초 → 0.00초).
+ *
+ * ⚠️ 결과를 기다리지 않는다. 이건 **없어도 되는 최적화**라, 실패하거나
+ *    느려도 화면이 그것 때문에 막히면 안 된다.
+ */
+export function prewarm(docId: string, limit = 6): void {
+  void apiClient
+    .post(
+      `${base}/documents/${encodeURIComponent(docId)}/prewarm?limit=${limit}`,
+      undefined,
+      { timeout: 300000 },
+    )
+    .catch(() => {});
+}
+
 // 네 출처가 전부 이 문으로 들어간다. kind를 안 넘기면 인출로 친다 —
 // 지금 화면에서 오는 건 전부 인출이고, 진단·복습·형성은 붙을 때 명시하면 된다.
 export async function submitAnswer(args: {
