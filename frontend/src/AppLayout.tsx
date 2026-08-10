@@ -5,7 +5,6 @@ import { clsx } from "clsx";
 import {
   HexagonIcon,
   BooksIcon,
-  ExamIcon,
   ChartLineUpIcon,
   GearIcon,
   LightningIcon,
@@ -21,9 +20,12 @@ import { isLoggedIn } from "@/shared/api/client";
 // 로그인 후 공통 셸: 좌측 사이드바(고정) + 상단 검색바 + 본문 슬롯.
 // 사이드바는 안 사라지고 <Outlet/> 본문만 라우트에 따라 교체됨.
 
+// ⚠️ **문제집은 여기 없다.** 문제은행은 자료에 딸린 것이라 책장 카드에서 연다
+//    (`/quiz?course=<id>`). 사이드바에도 두면 진입점이 둘로 갈려서, 거기로 들어온
+//    사람은 책장에서 이미 고른 자료를 과목 선택 화면에서 **또 고르게 된다.**
+//    `/quiz` 라우트 자체는 살아 있다 — 카드의 딥링크와 "다른 과목"이 쓴다.
 const NAV: { to: string; label: string; icon: Icon }[] = [
   { to: "/library", label: "나의 책장", icon: BooksIcon },
-  { to: "/quiz", label: "문제집", icon: ExamIcon },
   { to: "/analysis", label: "메타인지 분석", icon: ChartLineUpIcon },
   { to: "/settings", label: "설정", icon: GearIcon },
 ];
