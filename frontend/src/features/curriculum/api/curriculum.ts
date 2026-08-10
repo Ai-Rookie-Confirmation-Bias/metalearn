@@ -34,6 +34,9 @@ export interface ChapterBrief {
   mode: PlanMode;
   // ✚ 진단이 끼운 보강 단원 — 교재에 없던 내용이라 구분해 보여준다
   inserted: boolean;
+  // 📚 그 내용을 이미 가르치는 자료가 책장에 있으면 그 한 줄.
+  // 비어 있으면 AI가 쓴 것이다 — 화면이 두 경우를 다르게 말한다.
+  coveredBy?: string;
   reason: string; // ⚡ 비어 있으면 아직 판단 근거가 없다는 뜻
 }
 
@@ -52,6 +55,9 @@ export interface DocumentOut {
   weakestChapter: number | null;
   byKind: Partial<Record<AttemptKind, number>>; // 누적이 어디서 왔는지
   chapters: ChapterBrief[];
+  // 기본 제공 자료(공개 교재·픽스처)인가. 책장이 이걸로 두 칸을 가른다 —
+  // 내가 올린 적 없는 책이 "내 자료"에 섞여 있으면 안 된다.
+  shared?: boolean;
 }
 
 export interface SectionOut {
@@ -82,6 +88,8 @@ export interface ChapterOut {
   title: string;
   pages: string;
   inserted: boolean; // ✚ 진단이 끼운 보강 단원
+  // 📚 그 내용을 이미 가르치는 자료가 책장에 있으면 그 한 줄.
+  coveredBy?: string;
   readiness: number;
   ratio: number;
   progress: number;

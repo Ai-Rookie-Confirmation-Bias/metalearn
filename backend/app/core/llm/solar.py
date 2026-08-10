@@ -32,8 +32,11 @@ _PARSE_TIMEOUT = 180.0
 _TRANSIENT_RETRIES = 5
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 
-# 프로세스 전역 동시 요청 상한 — 조각 병렬 추출 시 429 방지
-_MAX_CONCURRENT = 8
+# 프로세스 전역 동시 요청 상한 — 조각 병렬 추출 시 429 방지.
+# 실측 두 점: 40 동시 = 즉시 429 (PARSING_PLAN) / 8 = 안전. 전면 병렬 실험으로
+# 24까지 올림 — 429가 뜨면 _post_retrying 백오프가 흡수하지만, 재시도 로그가
+# 잦으면 이 값을 내리는 게 맞다.
+_MAX_CONCURRENT = 24
 
 
 def _strip_nul(value: Any) -> Any:

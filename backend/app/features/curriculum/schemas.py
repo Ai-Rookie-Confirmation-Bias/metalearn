@@ -47,6 +47,9 @@ class ChapterBrief(_Camel):
     # ✚ 진단이 끼운 보강 단원인가. **교재에 없던 내용**이라 화면이 구분해
     # 보여야 한다 — 원문(📎)도 없다.
     inserted: bool = False
+    # 📚 이 보강 단원을 이미 가르치는 자료가 **책장에 있다**면 그 한 줄.
+    # 예: "운영체제_2장.pdf — 인터럽트 (0.82)". 비어 있으면 AI가 쓴 것이다.
+    covered_by: str = ""
     # ⚡ 왜 분량이 늘거나 줄었는지. 아직 근거가 없으면 빈 문자열
     reason: str = ""
 
@@ -70,6 +73,13 @@ class DocumentOut(_Camel):
     # 누적이 **어디서 왔는지** 화면에 보여주는 값이다.
     by_kind: dict[str, int] = {}
     chapters: list[ChapterBrief]
+    # **기본 제공 자료인가.** 주인이 없어 누구 책장에나 뜨는 것 — 공개 교재
+    # (`visibility='public'`)와 파일 픽스처가 여기 해당한다.
+    #
+    # 책장이 이걸로 두 칸을 가른다. 안 가르면 "내가 올린 적 없는 책이 왜
+    # 내 책장에 있지"가 되고, 그게 촬영에서 그대로 잡힌다(실측: 시연 수업
+    # 셋에 픽스처 셋이 섞여 일곱 권).
+    shared: bool = False
 
 
 class IngestOut(_Camel):
@@ -119,6 +129,8 @@ class ChapterOut(_Camel):
     pages: str = ""
     # ✚ 진단이 끼운 보강 단원 (교재에 없던 내용)
     inserted: bool = False
+    # 📚 그 내용을 이미 가르치는 자료가 책장에 있으면 그 한 줄.
+    covered_by: str = ""
     readiness: float  # 문서 전체 준비도(머리에 계속 보인다)
     ratio: float
     progress: float

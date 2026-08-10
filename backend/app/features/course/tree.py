@@ -36,6 +36,7 @@ from app.features.parsing.models import (
     DocSegment,
     MaterialRole,
 )
+from app.features.course.supply import covered_by
 from app.features.parsing.repository import ParsingRepository
 from app.features.parsing.schemas import FigureOut
 from app.features.parsing.service import _evidence_of
@@ -153,6 +154,7 @@ class CourseTreeBuilder:
                         plan=topic.plan,
                         source_topic_id=source,
                         concepts=supplied[source],
+                        covered_by=covered_by(topic.note),
                     )
                 )
                 continue

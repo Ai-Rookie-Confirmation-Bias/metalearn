@@ -82,6 +82,10 @@ _FINGERPRINT_VERSION = "v1"
 # 여기는 지우는 게 아니라 표시만 하는 자리라 더 보수적일 이유가 없다.
 _HIT_SIM = 0.75
 
+# 히트를 `note` 안에서 도로 찾아내는 표식. **만드는 쪽과 읽는 쪽이 같은 상수를
+# 봐야 한다** — 한쪽 문구만 고치면 화면에서 조용히 사라진다(`covered_by`).
+HIT_PREFIX = "이미 있는 자료: "
+
 
 def _fingerprint(field: str, subject: str) -> str:
     raw = f"prereq:{_FINGERPRINT_VERSION}:{field}:{subject}"
@@ -479,8 +483,28 @@ def _plan_of(rows: list[CoursePrereq]) -> str:
     return TopicPlan.BRIEF.value
 
 
+def covered_by(note: str | None) -> str | None:
+    """`note`에서 **"이 선수 개념은 이미 있는 자료에 있다"** 부분만 떼어낸다.
+
+    `note`는 진단 통계와 히트가 한 줄에 붙어 있다. 앞부분("진단: 5항목 중
+    안다 3…")은 왜 이 단원이 생겼는지를 적은 디버그 문장이라 학습자에게
+    보여줄 것이 아니고, 뒷부분만 화면에 값이 있다.
+
+    문자열을 자르는 게 마음에 안 들지만 컬럼을 쪼개려면 마이그레이션이 필요하고,
+    형식을 아는 곳이 여기(`_note_of`가 만든다)라 여기 둔다. 접두사를 상수로
+    묶어 둔 이유도 그것이다 — 한쪽만 고치면 조용히 안 잡힌다.
+    """
+    if not note or HIT_PREFIX not in note:
+        return None
+    return note.split(HIT_PREFIX, 1)[1].strip() or None
+
+
 def _note_of(rows: list[CoursePrereq], hit: dict | None) -> str:
-    """왜 이 단원이 생겼는지 한 줄. 화면이 그대로 보여준다."""
+    """왜 이 단원이 생겼는지 한 줄. 화면이 그대로 보여준다.
+
+    히트는 이제 구조체(확정 화면이 쓴다)지만 **여기서 펴는 문자열 형식은 그대로
+    두어야 한다** — `covered_by()`가 이 문장을 도로 잘라서 학습 화면에 쓴다.
+    """
     known = sum(1 for r in rows if r.known == KNOWN)
     unknown = sum(1 for r in rows if r.known == UNKNOWN)
     asked = sum(1 for r in rows if r.verified is not None)
@@ -490,7 +514,7 @@ def _note_of(rows: list[CoursePrereq], hit: dict | None) -> str:
     if not hit:
         return note
     return (
-        f"{note} · 이미 있는 자료: {hit['filename']} — "
+        f"{note} · {HIT_PREFIX}{hit['filename']} — "
         f"{hit['concept']} ({hit['similarity']:.2f})"
     )
 

@@ -4,15 +4,8 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   PlusIcon,
   PlayIcon,
-  PencilIcon,
-  PenNibIcon,
-  BookOpenIcon,
-  NotebookIcon,
-  GraduationCapIcon,
-  BookmarkIcon,
   WarningCircleIcon,
   TrashIcon,
-  type Icon,
 } from "@phosphor-icons/react";
 
 import { createCourse, deleteCourse, listCourses } from "@/features/course/api";
@@ -36,35 +29,11 @@ import {
 } from "@/features/parsing/api/documents";
 import { useParsingDocuments } from "@/features/parsing/queries/useParsingDocuments";
 import { usePendingUploads } from "@/features/parsing/store";
-
-// 커버(색+아이콘)는 표현 계층. docId로 파생해 책장 안에서 안 겹치게.
-type Cover = { grad: string; icon: Icon };
-const COVERS: Cover[] = [
-  { grad: "from-[#0f172a] to-[#334155]", icon: PencilIcon },
-  { grad: "from-[#059669] to-[#10b981]", icon: BookOpenIcon },
-  { grad: "from-[#7c3aed] to-[#a855f7]", icon: PenNibIcon },
-  { grad: "from-[#d97706] to-[#f59e0b]", icon: NotebookIcon },
-  { grad: "from-[#e11d48] to-[#fb7185]", icon: GraduationCapIcon },
-  { grad: "from-[#0d9488] to-[#14b8a6]", icon: BookmarkIcon },
-];
-
-function hashIndex(id: string) {
-  return [...id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % COVERS.length;
-}
-
-function assignCovers(ids: string[]): Map<string, Cover> {
-  const used = new Set<number>();
-  const map = new Map<string, Cover>();
-  for (const id of ids) {
-    let idx = hashIndex(id);
-    for (let i = 0; used.has(idx) && i < COVERS.length; i++) {
-      idx = (idx + 1) % COVERS.length;
-    }
-    used.add(idx);
-    map.set(id, COVERS[idx]);
-  }
-  return map;
-}
+import {
+  COVERS,
+  assignCovers,
+  type Cover,
+} from "@/features/curriculum/components/covers";
 
 function learnPath(docId: string) {
   return `/curriculum/${encodeURIComponent(docId)}`;
@@ -135,6 +104,9 @@ function BookCard({
   const done = sectionsDone(doc);
   const progress = Math.round(doc.readiness * 100);
   const started = done > 0;
+
+  // 기본 제공 자료는 여기 안 온다 — `/shared` 페이지가 따로 맡는다.
+  // 이 카드는 **내가 올린 자료 전용**이라 진단·진도·문제집을 다 말할 수 있다.
   const cta = needsDiagnostic
     ? "진단하고 시작하기"
     : started
@@ -511,6 +483,11 @@ export function LibraryPage() {
     .map((q) => q.data)
     .filter((d): d is DocumentOut => Boolean(d) && !courseDocIds.has(d!.docId));
 
+  // 기본 제공 자료는 **여기 안 놓는다.** 사이드바 `/shared`가 따로 맡는다 —
+  // 올린 적 없는 책이 "나의 책장"에 섞이면 그게 내 것인지 아닌지 흐려지고,
+  // 그 자료들은 진단도 진도도 없어서 카드가 말할 수 있는 것 자체가 다르다.
+  const shelfMine = ready.filter((d) => !d.shared);
+
   // 파싱이 끝나도 커리큘럼 목록은 다시 물어봐야 안다 — 그 목록 API가 호출될
   // 때 ready 문서를 학습 store로 끌어오기 때문이다(파싱→학습 이음매).
   // 다만 곧 코스로 묶일 자료는 목록을 당겨도 개별 카드가 되므로, 코스 조립이
@@ -559,11 +536,23 @@ export function LibraryPage() {
         // 문제은행 생성을 **여기서** 접수한다. 실데이터 888초짜리라 진단을
         // 하는 동안 서버가 만들게 두는 게 가장 빠르다. 이 문을 아무도 안 불러서
         // 문제집이 계속 비어 있었다.
-        // 실패해도 넘어간다 — 문제집은 학습과 별개고, 문제집 화면에서 다시
-        // 접수할 수 있다(리필).
-        for (const id of documentIds) {
-          void requestGeneration(course.id, id).catch(() => {});
-        }
+        //
+        // ⚠️ **접수까지는 기다린다.** 전에는 `void ...catch(() => {})`로 던져
+        //    놓고 곧장 `navigate`했는데, 요청이 나가기 전에 이 컴포넌트가
+        //    언마운트되면서 취소됐다. 서버 상태가 `idle`이라 접수조차 안 된
+        //    것인데 catch가 삼켜서 아무 흔적도 없었다(실측: 업로드했는데
+        //    문항 0개, 로그에 POST가 아예 없음).
+        //
+        //    이 API는 배치를 걸고 즉시 돌아온다(202). 기다려도 체감이 없다.
+        //    실패해도 넘어간다 — 문제집은 학습과 별개고 문제집 화면에서 다시
+        //    접수할 수 있다(리필). 다만 **조용히 삼키지는 않는다.**
+        await Promise.allSettled(
+          documentIds.map((id) =>
+            requestGeneration(course.id, id).catch((e: unknown) => {
+              console.warn("[library] 문제은행 접수 실패", id, e);
+            }),
+          ),
+        );
 
         for (const id of documentIds) dropPending(id);
         clearPendingCourse();
@@ -617,10 +606,12 @@ export function LibraryPage() {
     ...ready.map((d) => d.docId),
   ]);
 
+  // **내 자료 기준이다.** 기본 제공 자료는 처음부터 깔려 있으므로, 그걸로
+  // 세면 아직 아무것도 안 올린 사람에게 "첫 학습을 시작해보세요"가 안 뜬다.
   const empty =
     !isLoading &&
     !isError &&
-    ready.length === 0 &&
+    shelfMine.length === 0 &&
     lonePending.length === 0 &&
     !pendingCourse;
 
@@ -718,7 +709,7 @@ export function LibraryPage() {
                 );
               })}
 
-              {ready.map((doc) => (
+              {shelfMine.map((doc) => (
                 <BookCard
                   key={doc.docId}
                   doc={doc}
@@ -737,6 +728,7 @@ export function LibraryPage() {
           )
         )}
       </section>
+
     </div>
   );
 }

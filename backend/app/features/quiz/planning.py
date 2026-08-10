@@ -18,12 +18,31 @@ from app.features.quiz.schemas import (
 from app.features.quiz.selection import ChunkSelection, EligibleConcept
 
 
+def classify_form_multi(definition: str, sentence_texts: list[str]) -> ContentForm:
+    """근거 문장 **각각** 판정해 결합. 문장들을 이어붙여 세면 불릿 여러 줄(줄마다
+    화살표 1개)이 절차형으로 오판된다 — "UML 구성요소"가 cloze로 출제된 실측 원인.
+    """
+    forms = [classify_form(definition, s) for s in sentence_texts] or [
+        classify_form(definition, "")
+    ]
+    for f in ("sequence", "enumeration", "contrast"):
+        if f in forms:
+            return f
+    return "definition"
+
+
 def classify_form(definition: str, evidence_text: str) -> ContentForm:
     """원문 형태 분류 — 규칙 기반 1차 판정 (LLM 아님 → 결정적).
 
     docs/QUIZ.md §2-⑤ 표의 판정 신호를 그대로 코드로 옮긴 것.
+    evidence_text는 문장 하나를 전제한다 — 여러 문장은 classify_form_multi로.
     """
     text = f"{definition} {evidence_text}"
+    # 표 텍스트(마크다운 파이프)는 나열형 — 팀원 파서가 표 블록을 문장 하나로
+    # 앵커링하므로("| 폭포수 | 선형 순차적 … | --- |"), 그대로 두면 셀 안 화살표
+    # 때문에 절차형이 되어 표 위에 cloze가 계획된다 (실데이터 검증에서 확인).
+    if evidence_text.count("|") >= 2:
+        return "enumeration"
     # sequence는 근거 원문에 실제 절차 나열(화살표류 구분자 2회 이상: A→B→C)이
     # 있을 때만. "단계"·"순서" 키워드 매칭은 개념 이름만으로 오분류를 일으켜 제거
     # (예: "개발 단계별 인월 수" — docs/QUIZ_TUNING.md §5-①).
@@ -139,11 +158,11 @@ def _plan_toc(
     plans_by_chunk: dict[int, list[ConceptPlan]] = {}
     for name, (chunk_index, ec) in ranked:
         chunk = chunk_by_index[chunk_index]
-        evidence_text = " ".join(
+        sentence_texts = [
             chunk.raw_text[chunk.sentences[i].start : chunk.sentences[i].end]
             for i in ec.evidence_sentence_ids[:5]
-        )
-        form = classify_form(ec.concept.definition, evidence_text)
+        ]
+        form = classify_form_multi(ec.concept.definition, sentence_texts)
         candidates = FORM_TYPE_CANDIDATES[form]
         types = _pick_types(candidates, alloc[name], type_quota, type_used)
         if not types:  # 예산에서 밀린 개념 — 생성 지시에서 제외

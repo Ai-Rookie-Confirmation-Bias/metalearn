@@ -265,3 +265,78 @@ def test_resolve_evidence_slices_source_text():
     assert ev["sentenceRanges"] == [[0, 26]]
     assert ev["text"] == "델파이 기법은 조정자와 전문가 의견을 종합한다."
     assert ev["pageFrom"] == 5
+
+# ── 개조식·나열 게이트 + 인정 표기 보강 (세션 12) ──────────────
+
+LIST_CHUNK = ParsedChunk(
+    index=4,
+    page_from=5,
+    page_to=5,
+    raw_text="■ UML (Unified Modeling Language) → 구성요소 : 사물, 관계, 다이어그램. 절차는 계획 → 설계 → 구현 순서로 진행한다.",
+    sentences=[SentenceAnchor(start=0, end=57), SentenceAnchor(start=58, end=84)],
+)
+
+
+def test_build_cloze_rejects_enumeration_slot():
+    """쉼표 나열의 한 자리를 비우면 '남은 항목 찾기' 퍼즐 — UML 구성요소 실측."""
+    from app.features.quiz.generation import build_cloze_segments
+
+    first = _item(type="cloze", data={"sentence": "s0", "answer": "사물"},
+                  evidence_sentence_ids=[0])
+    assert "나열" in build_cloze_segments(first, LIST_CHUNK)
+    middle = _item(type="cloze", data={"sentence": "s0", "answer": "관계"},
+                   evidence_sentence_ids=[0])
+    assert "나열" in build_cloze_segments(middle, LIST_CHUNK)
+
+
+def test_build_cloze_strips_bullet_and_allows_sequence():
+    """불릿 마커는 지문에서 제거하고, 절차 나열(→)의 빈칸은 순서가 유일성을 주므로 허용."""
+    from app.features.quiz.generation import build_cloze_segments
+
+    seq = _item(type="cloze", data={"sentence": "s1", "answer": "설계"},
+                evidence_sentence_ids=[1])
+    assert build_cloze_segments(seq, LIST_CHUNK) is None
+    stem = "".join(s.get("text", "") for s in seq.data["segments"])
+    assert "■" not in stem
+
+
+def test_augment_notations_adds_paren_variants():
+    """개념 이름의 괄호 병기로 한/영 인정 표기를 코드가 보강한다 (accepted 부실 실측)."""
+    from app.features.quiz.generation import augment_notations
+
+    chunk = ParsedChunk(
+        index=5, page_from=1, page_to=1,
+        raw_text="팬아웃은 모듈이 호출하는 하위 모듈 수다.",
+        sentences=[SentenceAnchor(start=0, end=22)],
+        concepts=[{"name": "팬아웃(Fan-out)", "definition": "호출하는 하위 모듈 수"}],
+    )
+    item = _item(
+        type="shortAnswer", concept="팬아웃",
+        data={"prompt": "모듈이 호출하는 하위 모듈 수는?", "accepted": ["팬아웃"],
+              "explanation": ""},
+        evidence_sentence_ids=[0],
+    )
+    augment_notations(item, chunk)
+    assert "Fan-out" in item.data["accepted"]
+
+    other = _item(
+        type="shortAnswer", concept="응집도",
+        data={"prompt": "...", "accepted": ["응집도"], "explanation": ""},
+        evidence_sentence_ids=[0],
+    )
+    augment_notations(other, chunk)
+    assert other.data["accepted"] == ["응집도"]  # 무관한 병기는 안 붙는다
+
+
+def test_build_cloze_rejects_table_text():
+    """표 블록 앵커 위에 빈칸을 뚫으면 지문이 표 파이프 그대로 나온다 — 조립에서 차단."""
+    from app.features.quiz.generation import build_cloze_segments
+
+    raw = "| 폭포수 | 선형 순차적 개발 모형이다 |"
+    chunk = ParsedChunk(
+        index=6, page_from=1, page_to=1, raw_text=raw,
+        sentences=[SentenceAnchor(start=0, end=len(raw))],
+    )
+    item = _item(type="cloze", data={"sentence": "s0", "answer": "폭포수"},
+                 evidence_sentence_ids=[0])
+    assert "표 텍스트" in build_cloze_segments(item, chunk)

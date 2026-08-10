@@ -162,14 +162,13 @@ export function SolveView({
             </div>
           )}
 
-          {/* 📎 원문 근거 — 확정안 §4 시각 언어 (파란 테두리) */}
-          <div className="rounded-xl border-2 border-accent/50 bg-accent/[0.03] p-5">
-            <div className="mb-2 flex items-center gap-1.5 text-[0.85rem] font-bold text-accent">
-              <PaperclipIcon weight="bold" /> 교재 {graded.evidence.pageFrom}쪽
-            </div>
-            <p className="text-[0.95rem] leading-relaxed text-text-primary">
-              “{graded.evidence.text}”
-            </p>
+          {/* 📎 원문 근거 — 위치만 안내. 원문 텍스트는 개조식 파편(■·→)이
+              그대로 노출돼 지저분해서 싣지 않는다 (파싱이 무손실 보존이라 정제 불가). */}
+          <div className="flex items-center gap-1.5 rounded-xl border-2 border-accent/50 bg-accent/[0.03] p-4 text-[0.85rem] font-bold text-accent">
+            <PaperclipIcon weight="bold" /> 근거: 교재 {graded.evidence.pageFrom}쪽
+            {graded.evidence.pageTo > graded.evidence.pageFrom && (
+              <>~{graded.evidence.pageTo}쪽</>
+            )}
           </div>
 
           <button

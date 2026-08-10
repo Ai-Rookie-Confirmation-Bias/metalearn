@@ -195,6 +195,11 @@ class Store:
         # 파일 픽스처로 온 자료. 주인이 없는 데모 자료라 누구 책장에나 보인다 —
         # 소유로 거를 때 이 집합이 예외 목록이 된다.
         self.fixture_ids: set[str] = set()
+        # **기본 제공 자료.** `visibility='public'`으로 적재된 실제 교재다.
+        # 픽스처와 같은 자리에 서지만 출처가 다르다 — 이쪽은 DB에 개념·원문이
+        # 있어서 `supply._existing_hits`가 선수 개념을 찾을 때 실제로 걸린다.
+        # 책장이 "기본 제공 / 내가 올린" 두 칸으로 갈리는 근거이기도 하다.
+        self.public_ids: set[str] = set()
         # user_id → 진도. 첫 접근에 디스크에서 읽어 온다.
         self._progress: dict[str, Progress] = {}
         # 온보딩 전 — fixture_profile이 데모용 성향을 채운다.

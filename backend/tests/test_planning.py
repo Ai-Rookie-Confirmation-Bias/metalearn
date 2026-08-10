@@ -73,3 +73,25 @@ def test_exam_frequency_boosts_allocation(parsed_doc):
         p.name: len(p.types) for o in orders for p in o.concept_plans
     }
     assert counts[target] == max(counts.values())
+
+
+def test_classify_form_multi_bullets_not_sequence():
+    """불릿 여러 줄(줄마다 화살표 1개)을 이어붙여 절차형으로 오판하지 않는다 —
+    'UML 구성요소'가 cloze로 출제되던 실측 원인."""
+    from app.features.quiz.planning import classify_form_multi
+
+    lines = [
+        "■ UML (Unified Modeling Language) → 구성요소 : 사물, 관계, 다이어그램",
+        "■ 사물 → 모델을 구성하는 기본 요소",
+    ]
+    assert classify_form_multi("모델링 언어", lines) != "sequence"
+    # 진짜 절차(한 문장 안 화살표 2개 이상)는 그대로 절차형
+    assert classify_form_multi("", ["계획 수립 → 위험 분석 → 개발 및 검증"]) == "sequence"
+
+
+def test_classify_form_table_text_is_enumeration():
+    """표 블록이 문장 하나로 앵커링된 실데이터 — 셀 안 화살표로 절차형이 되면 안 된다."""
+    from app.features.quiz.planning import classify_form
+
+    table = "| 폭포수 | 선형 순차적 개발 → 고전적 모형 |\n| --- | --- |\n| 프로토타입 | 고객 요구 → 시제품 |"
+    assert classify_form("", table) == "enumeration"

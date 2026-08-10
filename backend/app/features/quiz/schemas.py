@@ -94,6 +94,10 @@ class QuizGenConfig(BaseModel):
     toc_min: int = 15
     toc_max: int = 80
     overgen_ratio: float = 1.15  # 검증 탈락 대비 과생성
+    # 조각 동시 실행 폭. 32 = 사실상 전 조각 동시 — 실질 상한은 Solar 클라이언트의
+    # 전역 세마포어(8)가 잡는다. EXAONE은 dedicated 엔드포인트라 스로틀 없음.
+    # (동시 3 실측 12분·저장 186 / 전면 병렬 실측은 QUIZ_TUNING 참고)
+    gen_concurrency: int = 32
     # None = 모든 파서 버전 허용(기본). 특정 버전만 받으려면 리스트로 지정.
     supported_parser_versions: list[str] | None = None
 

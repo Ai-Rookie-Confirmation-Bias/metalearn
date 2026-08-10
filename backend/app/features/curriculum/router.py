@@ -22,6 +22,7 @@ from .bridge import (
     ingest_course_stored,
     ingest_parsing_document,
     sync_courses,
+    sync_public_documents,
     sync_ready_documents,
 )
 from .mastery import DAY, WEIGHT, label
@@ -141,6 +142,8 @@ async def _my_doc_ids(db: Session, user_id: uuid.UUID) -> list[str]:
     """
     mine = set(sync_ready_documents(db, user_id=user_id))
     mine |= set(await sync_courses(db, user_id=user_id))
+    # 기본 제공 자료는 주인이 없다 — 소유로 거르면 안 뜬다. 픽스처와 같은 자리.
+    mine |= set(sync_public_documents(db))
     members = course_member_document_ids(db, user_id=user_id)
     return [
         k
@@ -246,15 +249,13 @@ async def list_documents(
 
     ⚠️ 제외도 **내 코스 기준**이다(`course_member_document_ids(user_id=…)`).
     자료는 공용이라, 남이 자기 수업에 넣었다는 이유로 내 책장에서 사라지면 안 된다.
+
+    ⚠️ 고르는 일은 `_my_doc_ids` **한 곳**이 한다. 전에는 여기에 같은 로직이
+       복사돼 있었고, 그래서 기본 제공 자료를 `_my_doc_ids`에만 더했더니
+       분석에는 잡히는데 **책장에는 안 뜨는** 상태가 됐다. 그 함수 주석이
+       "책장에 뜨는 것 = 분석이 세는 것"이라고 적어 놓고 정작 둘이 갈려 있었다.
     """
-    mine = set(sync_ready_documents(db, user_id=user_id))
-    mine |= set(await sync_courses(db, user_id=user_id))
-    members = course_member_document_ids(db, user_id=user_id)
-    return [
-        k
-        for k in store.documents
-        if (k in store.fixture_ids or k in mine) and k not in members
-    ]
+    return await _my_doc_ids(db, user_id)
 
 
 @router.post(
@@ -334,12 +335,15 @@ def get_document(
         estimated_minutes=course.estimated_minutes(),
         weakest_chapter=weakest_index,
         by_kind=course.by_kind,
+        # 주인 없는 자료(공개 교재·픽스처)는 책장의 다른 칸으로 간다.
+        shared=doc.doc_id in store.public_ids or doc.doc_id in store.fixture_ids,
         chapters=[
             ChapterBrief(
                 index=ch.index,
                 title=ch.title,
                 pages=ch.pages,
                 inserted=ch.inserted,
+                covered_by=ch.covered_by,
                 sections_total=summary.sections_total,
                 sections_done=summary.sections_touched,
                 status=summary.status,
@@ -379,6 +383,7 @@ def get_chapter(
         title=chapter.title,
         pages=chapter.pages,
         inserted=chapter.inserted,
+        covered_by=chapter.covered_by,
         readiness=course.readiness,
         ratio=summary.ratio,
         progress=round(summary.progress, 3),

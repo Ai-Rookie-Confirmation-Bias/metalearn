@@ -230,7 +230,11 @@ export function OutlinePanel({ docId }: { docId: string }) {
                   <span className="mt-0.5 block text-[0.7rem] text-text-tertiary">
                     화면 {ch.sectionsDone}/{ch.sectionsTotal}
                     {ch.sectionsDue > 0 && <> · 🔁 {ch.sectionsDue}</>}
-                    {ch.inserted && <> · 교재 밖</>}
+                    {/* "교재 밖"은 **대신할 자료가 없을 때만** 맞는 말이다.
+                        책장에 있으면 그렇게 말한다 — 세 화면(사이드바·목차
+                        목록·목차 상세)이 같은 단원을 두고 다른 말을 하면
+                        어느 쪽이 맞는지 학습자가 알 수 없다. */}
+                    {ch.inserted && (ch.coveredBy ? <> · 📚 책장에 있음</> : <> · 교재 밖</>)}
                   </span>
                 </span>
                 {isOpen ? (

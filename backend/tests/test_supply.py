@@ -14,10 +14,12 @@ from app.features.course.models import TopicPlan  # noqa: E402
 from app.features.course.prompts import supply as supply_prompt  # noqa: E402
 from app.features.course.search import HEARD, KNOWN, UNKNOWN  # noqa: E402
 from app.features.course.supply import (  # noqa: E402
+    HIT_PREFIX,
     _as_index,
     _fingerprint,
     _note_of,
     _plan_of,
+    covered_by,
 )
 
 
@@ -97,17 +99,19 @@ def test_안_물어본_항목을_따로_센다():
     assert "미확인 2" in note
 
 
+def hit(filename: str, concept: str, similarity: float) -> dict:
+    """`_existing_hits`가 돌려주는 모양. 확정 화면(⑥)이 구조를 그대로 쓴다."""
+    return {
+        "document_id": "d",
+        "filename": filename,
+        "concept": concept,
+        "item": "아무 항목",
+        "similarity": similarity,
+    }
+
+
 def test_대체_자료가_있으면_붙인다():
-    """확정 화면이 구조를 쓰므로 히트는 dict다. note는 그걸 한 줄로 편다."""
-    note = _note_of(
-        [Row(KNOWN)],
-        {
-            "document_id": "d",
-            "filename": "pilgi.pdf",
-            "concept": "자료 구조",
-            "similarity": 0.83,
-        },
-    )
+    note = _note_of([Row(KNOWN)], hit("pilgi.pdf", "자료 구조", 0.83))
     assert note.endswith("(0.83)")
     assert "pilgi.pdf" in note
     assert "진단:" in note
@@ -115,6 +119,30 @@ def test_대체_자료가_있으면_붙인다():
 
 def test_대체_자료가_없으면_진단만_적는다():
     assert _note_of([Row(KNOWN)], None).startswith("진단:")
+
+
+def test_note에서_책장_히트만_떼어낸다():
+    """★ 만드는 쪽(`_note_of`)과 읽는 쪽(`covered_by`)이 같은 상수를 봐야 한다.
+
+    `note`는 진단 통계와 히트가 한 줄에 붙어 있다. 앞부분은 왜 이 단원이
+    생겼는지 적은 디버그 문장이라 학습자에게 보여줄 것이 아니고, 뒷부분만
+    화면에 값이 있다 — "AI가 새로 썼습니다"와 "그 책 어디에 있습니다"는
+    학습자에게 전혀 다른 말이다.
+
+    접두사를 한쪽만 고치면 화면에서 **조용히 사라진다.** 그래서 잠근다.
+    """
+    note = _note_of(
+        [Row(KNOWN), Row(UNKNOWN)], hit("운영체제_2장.pdf", "인터럽트", 0.82)
+    )
+
+    assert HIT_PREFIX in note
+    assert covered_by(note) == "운영체제_2장.pdf — 인터럽트 (0.82)"
+    assert "진단:" in note  # 통계는 note에 그대로 남는다
+
+    # 히트가 없으면 화면도 조용하다 — 그때는 AI가 쓴 단원이다.
+    assert covered_by(_note_of([Row(KNOWN)], None)) is None
+    assert covered_by(None) is None
+    assert covered_by("") is None
 
 
 # ── ④ LLM 응답 방어 ─────────────────────────────────────────────

@@ -5,6 +5,7 @@ import { clsx } from "clsx";
 import {
   HexagonIcon,
   BooksIcon,
+  BookOpenIcon,
   ChartLineUpIcon,
   GearIcon,
   LightningIcon,
@@ -26,6 +27,10 @@ import { isLoggedIn } from "@/shared/api/client";
 //    `/quiz` 라우트 자체는 살아 있다 — 카드의 딥링크와 "다른 과목"이 쓴다.
 const NAV: { to: string; label: string; icon: Icon }[] = [
   { to: "/library", label: "나의 책장", icon: BooksIcon },
+  // 미리 분석해 둔 CS 기초 자료. 내 책장과 **가른다** — 올린 적 없는 책이
+  // "나의 책장"에 섞이면 그게 내 것인지 아닌지 흐려지고, 그 자료들은 진단도
+  // 진도도 없어서 카드가 말할 수 있는 것 자체가 다르다.
+  { to: "/shared", label: "기본 제공 자료", icon: BookOpenIcon },
   { to: "/analysis", label: "메타인지 분석", icon: ChartLineUpIcon },
   { to: "/settings", label: "설정", icon: GearIcon },
 ];
