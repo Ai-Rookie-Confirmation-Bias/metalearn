@@ -75,6 +75,34 @@ export interface SupplyResult {
   updated: number;
 }
 
+/** ⑥ 확정 화면 한 줄 — 이 과목을 앞에 넣을지 사용자가 고른다. */
+export interface SupplySubject {
+  subject: string;
+  items: string[];
+  why: string | null;
+  known: number;
+  unknown: number;
+  asked: number;
+  plan: string;
+  /** 체크박스 기본값. 전부 안다고 한 과목은 꺼진 채로 뜬다. */
+  selected: boolean;
+  /** book: 이 책으로 설명한다 | ready: 만들어 둔 게 있다 | generate: 지금 만든다 */
+  source: "book" | "ready" | "generate" | string;
+  evidence: {
+    document_id: string;
+    filename: string;
+    concept: string;
+    item: string;
+    similarity: number;
+  } | null;
+}
+
+export interface SupplyPreview {
+  field: string;
+  subjects: SupplySubject[];
+  topics_before: number;
+}
+
 const base = (courseId: string) => `/api/courses/${courseId}/diagnostic`;
 
 export async function fetchSetup(courseId: string): Promise<DiagnosticSetup> {
@@ -132,11 +160,24 @@ export async function fetchProbes(courseId: string): Promise<Probe[]> {
  *
  *  **여러 번 불러도 안전하다.** 자료는 지문으로 한 번만 만들고 이미 끼운
  *  단원은 plan만 다시 맞춘다. 서버가 학습 store까지 다시 조립한다. */
-export async function supply(courseId: string): Promise<SupplyResult> {
+export async function supply(
+  courseId: string,
+  exclude?: string[],
+): Promise<SupplyResult> {
   const { data } = await apiClient.post<SupplyResult>(
     `/api/courses/${courseId}/supply`,
-    undefined,
+    { exclude: exclude ?? null },
     { timeout: 300000 },
+  );
+  return data;
+}
+
+/** ⑤ 다음, 조달 **전에** 부른다. LLM을 안 쓰므로 1~2초다 —
+ *  여기서 만들면 사용자가 뺄 과목까지 만들어 놓고 기다리게 된다. */
+export async function previewSupply(courseId: string): Promise<SupplyPreview> {
+  const { data } = await apiClient.get<SupplyPreview>(
+    `/api/courses/${courseId}/supply/preview`,
+    { timeout: 60000 },
   );
   return data;
 }

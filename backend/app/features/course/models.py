@@ -249,6 +249,12 @@ class CoursePrereq(Base):
     #   False  틀렸다 → known을 heard로 낮춘다
     verified: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
 
+    # 확정 화면(⑥)에서 사용자가 뺐다. **지우지 않고 표시만 한다** —
+    # 지우면 다음 진단이 같은 과목을 또 제안하고, 뺐다는 사실도 못 되짚는다.
+    excluded: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default="false"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

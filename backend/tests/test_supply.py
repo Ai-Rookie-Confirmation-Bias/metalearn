@@ -98,9 +98,23 @@ def test_안_물어본_항목을_따로_센다():
 
 
 def test_대체_자료가_있으면_붙인다():
-    note = _note_of([Row(KNOWN)], "이미 있는 자료: pilgi.pdf — 자료 구조 (0.83)")
+    """확정 화면이 구조를 쓰므로 히트는 dict다. note는 그걸 한 줄로 편다."""
+    note = _note_of(
+        [Row(KNOWN)],
+        {
+            "document_id": "d",
+            "filename": "pilgi.pdf",
+            "concept": "자료 구조",
+            "similarity": 0.83,
+        },
+    )
     assert note.endswith("(0.83)")
+    assert "pilgi.pdf" in note
     assert "진단:" in note
+
+
+def test_대체_자료가_없으면_진단만_적는다():
+    assert _note_of([Row(KNOWN)], None).startswith("진단:")
 
 
 # ── ④ LLM 응답 방어 ─────────────────────────────────────────────
