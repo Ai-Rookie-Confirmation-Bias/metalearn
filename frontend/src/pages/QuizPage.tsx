@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "react-router-dom";
 
 import { CourseSelect } from "@/pages/quiz/CourseSelect";
 import { ScopeSelect } from "@/pages/quiz/ScopeSelect";
@@ -19,6 +20,8 @@ import type { CourseBank, QuizStyle, SessionItem } from "@/pages/quiz/mock";
 type Step = "course" | "scope" | "solve" | "result";
 
 export function QuizPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const deepCourseId = searchParams.get("course");
   const [step, setStep] = useState<Step>("course");
   const [course, setCourse] = useState<CourseBank | null>(null);
   const [style, setStyle] = useState<QuizStyle>("standard"); // 기출 올린 과목만 exam 선택 가능
@@ -82,6 +85,28 @@ export function QuizPage() {
     // 다른 과목으로 갈아타면 이전 과목의 리필 결과 안내는 접는다
     if (refillOutcome && refillOutcome.courseId !== c.course_id) setRefillOutcome(null);
     setStep("scope");
+  };
+
+  // ?course=<id> 로 들어오면 과목 선택을 건너뛴다 — **책장에서 이미 고른
+  // 자료다.** 같은 걸 두 번 고르게 하지 않는다.
+  //
+  // 한 번만 튄다(`jumped`). 안 그러면 범위 화면에서 "뒤로"를 눌러도 URL이
+  // 그대로라 곧장 다시 튕겨서 과목을 못 바꾼다. 그래서 뒤로 갈 때 쿼리도 지운다.
+  const jumped = useRef(false);
+  useEffect(() => {
+    if (jumped.current || !banks || !deepCourseId) return;
+    jumped.current = true;
+    const found = banks.find((b) => b.course_id === deepCourseId);
+    // 못 찾으면 아무것도 안 한다 — 과목 선택 화면이 그대로 뜬다(문제은행이
+    // 아직 없는 코스는 `fetchCourseBanks`가 목록에서 빼기 때문에 여기 온다).
+    if (found) pickCourse(found, "standard");
+    // pickCourse는 매 렌더 새 함수라 deps에 넣으면 루프가 된다. jumped가 가드다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [banks, deepCourseId]);
+
+  const backToCourses = () => {
+    if (deepCourseId) setSearchParams({}, { replace: true });
+    setStep("course");
   };
 
   const start = async (tocIndexes: number[], count: number) => {
@@ -191,7 +216,7 @@ export function QuizPage() {
             refillOutcome?.courseId === course.course_id ? refillOutcome.saved : null
           }
           onStart={(t, c) => void start(t, c)}
-          onBack={() => setStep("course")}
+          onBack={backToCourses}
         />
       </div>
     );

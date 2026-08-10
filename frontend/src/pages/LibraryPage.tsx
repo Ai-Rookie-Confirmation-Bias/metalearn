@@ -26,7 +26,8 @@ import {
   useDocuments,
 } from "@/features/curriculum/queries/useCurriculum";
 import { saveConfig } from "@/features/diagnostic/api";
-import { requestGeneration } from "@/pages/quiz/api";
+import { fetchCourseBanks, requestGeneration } from "@/pages/quiz/api";
+import type { CourseBank } from "@/pages/quiz/mock";
 import {
   PARSE_LABEL,
   parseProgress,
@@ -112,12 +113,15 @@ function BookCard({
   doc,
   cover,
   needsDiagnostic,
+  bank,
 }: {
   doc: DocumentOut;
   cover: Cover;
   /** 수업인데 진단을 아직 안 했다. **학습보다 먼저** 보낸다 — 진단이 목차 앞에
    *  보강 단원을 끼우므로, 나중에 하면 이미 읽은 단원 앞에 끼워진다. */
   needsDiagnostic?: boolean;
+  /** 이 수업의 문제은행. 없으면 아직 안 만들어졌거나 만드는 중. */
+  bank?: CourseBank;
 }) {
   const done = sectionsDone(doc);
   const progress = Math.round(doc.readiness * 100);
@@ -126,11 +130,21 @@ function BookCard({
     ? "진단하고 시작하기"
     : started
       ? "이어서 학습하기"
-      : "학습 시작하기";
+      : "바로 학습하기";
   const to = needsDiagnostic
     ? `/diagnostic/${encodeURIComponent(doc.docId)}`
     : learnPath(doc.docId);
   const CoverIcon = cover.icon;
+
+  // 문제집은 **같은 자료의 다른 갈래**다. 전에는 `/quiz` 탭에 따로 있어서,
+  // 책장에서 자료를 고른 사람이 거기서 같은 자료를 또 골라야 했다.
+  const items = bank?.summary?.total ?? 0;
+  const quizReady = items > 0;
+  const quizLabel = quizReady
+    ? `문제 풀기 · ${items}문항`
+    : bank?.status === "generating"
+      ? "문제 만드는 중…"
+      : "문제집 없음";
 
   return (
     <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm transition-all hover:-translate-y-1 hover:border-text-tertiary hover:shadow-lg">
@@ -147,8 +161,10 @@ function BookCard({
         <h4 className="mb-1 text-[1.125rem] font-bold leading-snug text-text-primary">
           {doc.title}
         </h4>
+        {/* 소요 시간은 안 쓴다 — 사람마다 다른 값을 단정해서 보여주면
+            그만큼 안 걸렸을 때 그 뒤 숫자를 아무도 안 믿는다. */}
         <p className="mb-6 flex-1 text-[0.9rem] text-text-secondary">
-          목차 {doc.chapters.length}개 · 약 {doc.estimatedMinutes}분
+          목차 {doc.chapters.length}개
           {doc.sectionsDue > 0 ? ` · 🔁 ${doc.sectionsDue}` : ""}
         </p>
 
@@ -172,12 +188,30 @@ function BookCard({
           <div className="mb-4 text-[0.85rem] text-text-tertiary">아직 시작하지 않았어요</div>
         )}
 
-        <Link
-          to={to}
-          className="mt-auto inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
-        >
-          {cta}
-        </Link>
+        <div className="mt-auto flex flex-col gap-2">
+          <Link
+            to={to}
+            className="inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
+          >
+            {cta}
+          </Link>
+
+          {quizReady ? (
+            <Link
+              to={`/quiz?course=${encodeURIComponent(doc.docId)}`}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:border-accent hover:bg-accent/5 hover:text-accent"
+            >
+              {quizLabel}
+            </Link>
+          ) : (
+            // 눌러도 갈 데가 없으면 **누를 수 없게 보여야 한다.** 문제은행이
+            // 없는 코스는 `/quiz` 목록에서도 빠져서, 눌러 보내면 과목 선택
+            // 화면만 뜨고 왜 안 열리는지 알 수 없다.
+            <span className="inline-flex w-full items-center justify-center rounded-xl border border-dashed border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
+              {quizLabel}
+            </span>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -393,6 +427,22 @@ export function LibraryPage() {
     (courses ?? []).filter((c) => !c.diagnosed_at).map((c) => c.id),
   );
 
+  // 카드에 문항 수를 실으려면 코스별 문제은행 요약이 필요하다. `fetchCourseBanks`가
+  // 코스 목록 + 코스별 요약을 한 번에 모아 준다 — 카드마다 따로 묻지 않는다.
+  //
+  // 생성 중인 게 있으면 폴링한다. 업로드 직후 접수한 배치가 **분 단위**라
+  // (실측 888초), 한 번만 물으면 "문제 만드는 중…"에서 영원히 안 바뀐다.
+  const { data: banks } = useQuery({
+    queryKey: ["quiz", "banks"],
+    queryFn: fetchCourseBanks,
+    staleTime: 30_000,
+    refetchInterval: (q) =>
+      (q.state.data ?? []).some((b) => b.status === "generating" || b.refilling)
+        ? 15_000
+        : false,
+  });
+  const bankByCourse = new Map((banks ?? []).map((b) => [b.course_id, b]));
+
   const parsing = useParsingDocuments(pending.map((p) => p.docId));
   const parsingById = new Map(
     parsing
@@ -597,6 +647,7 @@ export function LibraryPage() {
                   doc={doc}
                   cover={coverById.get(doc.docId) ?? COVERS[0]}
                   needsDiagnostic={undiagnosed.has(doc.docId)}
+                  bank={bankByCourse.get(doc.docId)}
                 />
               ))}
             </div>
