@@ -142,7 +142,7 @@ export function CurriculumPage() {
                             : "ml-2 rounded bg-accent/10 px-1.5 py-0.5 align-middle text-[0.68rem] font-bold text-accent"
                         }
                       >
-                        {ch.coveredBy ? "📚 책장에 있음" : "✚ 먼저 채우기"}
+                        {ch.coveredBy ? "📚 책장에 있음" : "✚ 보강 개념"}
                       </span>
                     )}
                   </p>

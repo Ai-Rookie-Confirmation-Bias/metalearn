@@ -51,7 +51,7 @@ export function ChapterPage() {
             </p>
           ) : (
             <p className="mt-2 rounded-lg bg-accent/5 px-4 py-2.5 text-[0.83rem] text-text-secondary">
-              <strong className="text-accent">✚ 먼저 채우는 단원</strong> — 진단에서
+              <strong className="text-accent">✚ 보강 개념</strong> — 진단에서
               모른다고 하신 내용이라 <strong>교재에는 없습니다.</strong> 여기 설명은
               교재 원문이 아니라 새로 쓴 것이라 📎 원문이 붙지 않습니다.
             </p>
