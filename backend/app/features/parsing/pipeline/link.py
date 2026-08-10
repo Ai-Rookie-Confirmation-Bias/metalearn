@@ -29,6 +29,7 @@ import uuid
 from dataclasses import dataclass
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -116,7 +117,7 @@ class ConceptLinker:
             seen.add(key)
             rows.append(self._row(key, similarity, "same", "llm"))
 
-        self.db.add_all(rows)
+        self._insert(rows)
         self._mark_done(first, second, len(rows))
         _log.info(
             "개념 연결: %d쌍 검토 → same %d · related %d · LLM확정 %d (호출 %d)",
@@ -202,6 +203,39 @@ class ConceptLinker:
                     confirmed.append(item)
         result.judged = len(confirmed)
         return confirmed
+
+    def _insert(self, rows: list[ConceptLink]) -> None:
+        """이미 있는 연결은 조용히 건너뛴다.
+
+        **같은 문서쌍을 두 곳이 동시에 계산할 수 있다.** 책장 목록 한 번이
+        코스를 전부 조립하는데, 그 요청이 겹치면 서로 다른 세션이 같은 쌍을
+        나란히 넣는다. `seen`은 한 호출 안에서만 막아 준다.
+
+        실측: 자료 6개짜리 수업(문서쌍 15개)에서 9쌍째에
+        `duplicate key ... uq_concept_link`로 죽었고, 그 수업이 책장에서
+        통째로 사라졌다(`sync_courses`가 예외를 삼키고 건너뛴다).
+
+        연결은 무방향이라 두 번 넣어 봐야 얻을 게 없다. DB가 거르게 둔다.
+        """
+        if not rows:
+            return
+        self.db.execute(
+            pg_insert(ConceptLink.__table__)
+            .values(
+                [
+                    {
+                        "id": uuid.uuid4(),
+                        "concept_a_id": r.concept_a_id,
+                        "concept_b_id": r.concept_b_id,
+                        "similarity": r.similarity,
+                        "kind": r.kind,
+                        "verified_by": r.verified_by,
+                    }
+                    for r in rows
+                ]
+            )
+            .on_conflict_do_nothing(constraint="uq_concept_link")
+        )
 
     @staticmethod
     def _row(
