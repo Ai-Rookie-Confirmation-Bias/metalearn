@@ -16,6 +16,9 @@ class CourseCreate(BaseModel):
     title: str | None = None
     # 비우면 밀도로 제안한다. {document_id: skeleton|body|reference}
     roles: dict[uuid.UUID, str] | None = None
+    # 위저드의 자료 유형 선택 최종값. {document_id: textbook|slide|notes|exam}
+    # 드롭다운은 업로드 뒤에도 바뀔 수 있어 코스 확정 시점 값이 진실이다.
+    kinds: dict[uuid.UUID, str] | None = None
 
 
 class CourseDocumentOut(BaseModel):

@@ -18,6 +18,7 @@ from fastapi import (
     Response,
     UploadFile,
 )
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, get_db
@@ -70,6 +71,38 @@ async def upload_document(
         background.add_task(_run_pipeline, document_id, file_bytes)
 
     document = service.repo.get_document(document_id)
+    return DocumentOut.model_validate(document)
+
+
+DOCUMENT_KINDS = {"textbook", "slide", "notes", "exam"}
+
+
+class DocumentKindIn(BaseModel):
+    kind: str
+
+
+@router.patch("/documents/{document_id}/kind", response_model=DocumentOut)
+def set_document_kind(
+    document_id: uuid.UUID,
+    body: DocumentKindIn,
+    db: Session = Depends(get_db),
+) -> DocumentOut:
+    """위저드의 자료 유형 선택(교재/슬라이드/필기/기출)을 저장한다.
+
+    지금까지 이 선택은 프론트 상태에만 있고 서버로 오지 않았다 — 기출(exam)
+    구분이 서버에 없으면 기출 제외·스타일 프로파일(QUIZ.md §2-③)이 성립하지
+    않는다. 드롭다운을 바꿀 때마다 호출된다 (업로드는 파일 추가 즉시 시작되어
+    업로드 시점엔 유형이 미확정이라 별도 문으로 받는다).
+    """
+    if body.kind not in DOCUMENT_KINDS:
+        raise HTTPException(
+            status_code=422, detail=f"kind는 {sorted(DOCUMENT_KINDS)} 중 하나"
+        )
+    document = ParsingService(db).repo.get_document(document_id)
+    if document is None:
+        raise HTTPException(status_code=404, detail="문서가 없습니다.")
+    document.kind = body.kind
+    db.commit()
     return DocumentOut.model_validate(document)
 
 

@@ -33,7 +33,11 @@ import type {
   Material,
   Purpose,
 } from "@/features/course-create/types";
-import { ACCEPT_EXTENSIONS, uploadDocument } from "@/features/parsing/api/documents";
+import {
+  ACCEPT_EXTENSIONS,
+  setDocumentKind,
+  uploadDocument,
+} from "@/features/parsing/api/documents";
 import { usePendingUploads } from "@/features/parsing/store";
 
 // 링크·텍스트는 뺐다 — 서버에 그걸 받는 문이 없다. 고를 수 있게 두면
@@ -284,6 +288,12 @@ export function CreateCoursePage() {
   const setKind = (which: "p" | "s", id: string, kind: DocumentKind) => {
     const upd = (arr: Material[]) => arr.map((m) => (m.id === id ? { ...m, kind } : m));
     (which === "p" ? setPrimaries : setSupps)(upd);
+    // 서버에도 즉시 반영 — 파싱 완료 시점의 자동 트리거가 기출(exam)을
+    // 은행 생성에서 빼려면 그 전에 서버가 알아야 한다. 업로드가 아직이면
+    // 건너뛴다 (제출 시 kinds로 한 번 더 확정 전달).
+    const docId = [...primaries, ...supps].find((m) => m.id === id)?.docId;
+    if (docId && kind !== "link" && kind !== "text")
+      void setDocumentKind(docId, kind).catch(() => {});
   };
   // 서버에서 지우지는 않는다. 문서는 공용이고 지문이 같으면 재사용되므로
   // 지웠다 다시 올려도 파싱이 다시 돌지 않는다.
@@ -332,9 +342,12 @@ export function CreateCoursePage() {
     const filenames = Object.fromEntries(
       accepted.map((m) => [m.docId as string, m.name]),
     );
+    const kinds = Object.fromEntries(
+      accepted.map((m) => [m.docId as string, m.kind]),
+    );
     const title = titleFrom(primaries.find((m) => m.docId)?.name ?? accepted[0].name);
 
-    setPendingCourse({ documentIds, filenames, title, purpose });
+    setPendingCourse({ documentIds, filenames, title, purpose, kinds });
     addPending(accepted.map((m) => ({ docId: m.docId as string, filename: m.name })));
     navigate("/library");
   };

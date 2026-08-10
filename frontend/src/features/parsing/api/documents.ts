@@ -77,6 +77,19 @@ export const ACCEPT_EXTENSIONS = ".pdf,.png,.jpg,.jpeg,.tiff,.bmp,.heic";
  * `role`은 안 보낸다. 서버의 역할은 뼈대/본문/참고인데 위저드가 묻는 건
  * 메인/추가라 축이 다르다. 임의로 짝지으면 사용자가 고르지 않은 값이 저장된다.
  */
+/** 위저드의 자료 유형 선택(교재/슬라이드/필기/기출)을 서버에 저장.
+ *
+ * 업로드는 파일 추가 즉시 시작돼 그 시점엔 유형이 미확정 — 드롭다운을 바꿀
+ * 때마다 여기로 확정값을 보낸다. exam(기출)은 문제은행 생성에서 제외되므로
+ * 이 값이 서버에 없으면 기출 PDF로도 문제은행이 만들어져 버린다.
+ */
+export async function setDocumentKind(
+  documentId: string,
+  kind: "textbook" | "slide" | "notes" | "exam",
+): Promise<void> {
+  await apiClient.patch(`/api/parsing/documents/${documentId}/kind`, { kind });
+}
+
 export async function uploadDocument(file: File): Promise<ParsingDocumentOut> {
   const form = new FormData();
   form.append("file", file);

@@ -105,6 +105,11 @@ class Document(Base):
     visibility: Mapped[str] = mapped_column(
         String(16), nullable=False, server_default="private"
     )
+    # textbook | slide | notes | exam — 위저드의 자료 유형 선택 (QUIZ.md §0).
+    # exam(기출)은 문제은행 생성에서 제외되고 스타일 프로파일 재료로만 쓰인다.
+    kind: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="textbook"
+    )
 
     status: Mapped[str] = mapped_column(
         String(32), nullable=False, server_default=DocStatus.PENDING.value, index=True

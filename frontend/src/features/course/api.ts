@@ -41,6 +41,8 @@ export type CreateCourseBody = {
   title?: string | null;
   // 비우면 서버가 밀도·형식으로 제안한다.
   roles?: Record<string, MaterialRole> | null;
+  // 위저드의 자료 유형 최종값 (textbook|slide|notes|exam) — 기출 구분의 진실.
+  kinds?: Record<string, string> | null;
 };
 
 export async function createCourse(body: CreateCourseBody): Promise<Course> {

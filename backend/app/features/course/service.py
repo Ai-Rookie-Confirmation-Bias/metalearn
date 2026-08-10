@@ -53,10 +53,12 @@ class CourseService:
         document_ids: list[uuid.UUID],
         title: str | None = None,
         roles: dict[uuid.UUID, str] | None = None,
+        kinds: dict[uuid.UUID, str] | None = None,
     ) -> Course:
         """자료들을 한 수업으로 묶는다.
 
         roles를 주면 그대로 쓰고, 없으면 밀도로 제안한다.
+        kinds는 위저드의 자료 유형 최종값 — 문서에 도장 찍는다 (기출 구분의 진실).
         """
         documents = list(
             self.db.scalars(select(Document).where(Document.id.in_(document_ids)))
@@ -66,6 +68,13 @@ class CourseService:
         missing = set(document_ids) - {d.id for d in documents}
         if missing:
             raise ValueError(f"자료를 찾을 수 없습니다: {missing}")
+
+        if kinds:
+            valid = {"textbook", "slide", "notes", "exam"}
+            for document in documents:
+                kind = kinds.get(document.id)
+                if kind in valid:
+                    document.kind = kind
 
         assigned = roles or self.suggest_roles(documents)
         skeleton = self._pick_skeleton(documents, assigned)

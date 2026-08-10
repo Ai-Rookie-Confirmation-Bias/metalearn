@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.core.database import SessionLocal, get_db
+from app.core.deps import get_current_user_id
 from app.core.llm.exaone import exaone_client
 from app.core.llm.solar import solar_client
 from app.features.quiz import bridge, jobs
@@ -88,7 +89,11 @@ class GenStatusResponse(BaseModel):
 
 
 async def _run_generation(
-    course_id: uuid.UUID, document_id: uuid.UUID, config, append: bool = False
+    course_id: uuid.UUID,
+    document_id: uuid.UUID,
+    config,
+    append: bool = False,
+    style: str = "standard",
 ) -> None:
     """백그라운드 생성 본체. 요청 세션은 응답과 함께 닫히므로 새 세션을 연다."""
     db = SessionLocal()
@@ -101,6 +106,7 @@ async def _run_generation(
             verify_llm=_verify_llm(),
             config=config,
             append=append,
+            style=style,
         )
         if not result.report.ok:
             jobs.fail(course_id, document_id, "파싱 산출물 계약 위반: " + " / ".join(result.report.errors))
@@ -138,6 +144,11 @@ async def generate_bank_from_parsing(
         pattern="^(replace|append)$",
         description="replace=기존 은행 교체(기본) / append=리필 — 기존 유지 + 새 문항 추가",
     ),
+    style: str = Query(
+        "standard",
+        pattern="^(standard|exam)$",
+        description="exam=기출 스타일 배치 — 기존 은행 유지, exam 표시 문항 추가",
+    ),
 ) -> GenStatusResponse:
     """파싱이 끝난 문서로 문제은행 생성을 **접수**한다 (202).
 
@@ -158,12 +169,25 @@ async def generate_bank_from_parsing(
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
+    # 기출(kind=exam)은 문제은행 재료가 아니다 — 스타일 프로파일로만 쓰인다
+    from app.features.parsing.models import Document
+
+    doc = db.get(Document, document_id)
+    if doc is not None and doc.kind == "exam":
+        raise HTTPException(
+            status_code=422,
+            detail="기출 자료는 문제은행을 만들지 않습니다 (스타일 참고 전용)",
+        )
+
     if jobs.start(course_id, document_id) is None:
         raise HTTPException(status_code=409, detail="이미 생성 작업이 진행 중입니다")
 
+    # 기출 스타일 배치는 항상 추가(append) — 기존 표준 은행을 건드리지 않는다.
+    # 프로파일 유무는 백그라운드에서 판정 (없으면 failed + 사유가 폴링에 실림).
+    append = mode == "append" or style == "exam"
     config = QuizGenConfig(toc_min=budget, toc_max=budget) if budget else None
     background.add_task(
-        _run_generation, course_id, document_id, config, mode == "append"
+        _run_generation, course_id, document_id, config, append, style
     )
     return GenStatusResponse(status="running")
 
@@ -188,8 +212,13 @@ def generation_status(course_id: uuid.UUID, document_id: uuid.UUID) -> GenStatus
 
 
 @router.get("/courses/{course_id}/quiz", response_model=list[QuizBankSummary])
-def bank_summary(course_id: uuid.UUID, db: Session = Depends(get_db)) -> list[QuizBankSummary]:
-    return QuizService(db, solar_client).bank_summary(course_id)
+def bank_summary(
+    course_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> list[QuizBankSummary]:
+    # user_id는 "학습함" 라벨(사용자별 진도)에만 쓰인다 — 문항 자체는 공용
+    return QuizService(db, solar_client).bank_summary(course_id, user_id=user_id)
 
 
 @router.post("/courses/{course_id}/quiz/session", response_model=SessionResponse)
@@ -205,7 +234,8 @@ def start_session(
         except ValueError:
             continue
     return QuizService(db, solar_client).start_session(
-        course_id, uuid.UUID(req.document_id), req.toc_indexes, req.count, exclude
+        course_id, uuid.UUID(req.document_id), req.toc_indexes, req.count, exclude,
+        style=req.style,
     )
 
 

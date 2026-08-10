@@ -38,6 +38,12 @@ def schedule_bank_generation(document_id: uuid.UUID) -> None:
 
 async def _run(document_id: uuid.UUID) -> None:
     try:
+        if _is_exam(document_id):
+            # 기출은 문제은행 재료가 아니다 (복사 방지, QUIZ.md §0) — 은행도
+            # 자동 코스도 만들지 않는다. 스타일 프로파일은 본문 자료의 생성이
+            # 시작될 때 그 코스에서 추출한다 (exam_style.ensure_profile).
+            logger.info("기출 자료 — 문제은행 자동 생성 제외: doc=%s", document_id)
+            return
         course_id, has_bank = _ensure_course(document_id)
         if course_id is None:
             return
@@ -59,6 +65,17 @@ async def _run(document_id: uuid.UUID) -> None:
         await _run_generation(course_id, document_id, None)
     except Exception:  # noqa: BLE001 — 부가 트리거는 파싱을 깨면 안 된다
         logger.exception("문제은행 자동 생성 실패: doc=%s", document_id)
+
+
+def _is_exam(document_id: uuid.UUID) -> bool:
+    from app.features.parsing.models import Document
+
+    db = SessionLocal()
+    try:
+        doc = db.get(Document, document_id)
+        return doc is not None and doc.kind == "exam"
+    finally:
+        db.close()
 
 
 def _ensure_course(document_id: uuid.UUID) -> tuple[uuid.UUID | None, bool]:

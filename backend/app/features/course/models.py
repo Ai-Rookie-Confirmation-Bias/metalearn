@@ -31,7 +31,7 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.core.database import Base
@@ -86,6 +86,11 @@ class Course(Base):
     diagnosed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+
+    # 기출 스타일 프로파일 (QUIZ.md §2-③) — kind=exam 자료에서 추출.
+    # {"stemPatterns": [...], "conceptFrequency": {...}, "builtFrom": [doc_id...]}
+    # NULL = 기출 없음/미추출. 문제은행 생성이 발문 스타일·예산 가중치로 쓴다.
+    exam_style_profile: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

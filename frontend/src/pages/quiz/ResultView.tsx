@@ -18,6 +18,7 @@ import type { SolveResult } from "./SolveView";
 export function ResultView({
   results,
   tocTitles,
+  documentId,
   poolLow = false,
   refillState = "idle",
   refillOutcome = null,
@@ -27,6 +28,9 @@ export function ResultView({
 }: {
   results: SolveResult[];
   tocTitles: Record<number, string>;
+  // 이 문제집이 속한 자료 — [학습 시작하기]가 그 자료의 학습 화면으로 가는 열쇠.
+  // 없으면(로딩 경합 등) 책장으로 폴백 — 목업(/learning)으로 보내는 것보다 낫다.
+  documentId?: string;
   poolLow?: boolean;
   refillState?: "idle" | "requested";
   // 직전 리필의 결과 — 숫자(추가된 문항 수, 0이면 빈손) 또는 "failed".
@@ -187,7 +191,7 @@ export function ResultView({
             <ListChecksIcon /> 다른 범위
           </button>
           <Link
-            to="/learning"
+            to={documentId ? `/curriculum/${documentId}` : "/library"}
             className="inline-flex items-center gap-2 rounded-xl bg-primary px-5 py-[0.6rem] text-[13.3333px] font-semibold leading-[normal] text-white shadow-sm transition-all hover:-translate-y-0.5 hover:bg-primary-hover hover:shadow-md"
           >
             <BookOpenIcon weight="fill" /> 학습 시작하기

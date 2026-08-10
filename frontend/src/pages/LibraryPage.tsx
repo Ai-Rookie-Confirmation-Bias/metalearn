@@ -523,10 +523,14 @@ export function LibraryPage() {
     if (!statuses.every((d) => d!.status === "ready")) return;
 
     assembling.current = true;
-    const { documentIds, title, purpose } = pendingCourse;
+    const { documentIds, title, purpose, kinds } = pendingCourse;
     void (async () => {
       try {
-        const course = await createCourse({ document_ids: documentIds, title });
+        const course = await createCourse({
+          document_ids: documentIds,
+          title,
+          kinds: kinds ?? null,
+        });
         try {
           await saveConfig(course.id, { goal: purposeToGoal(purpose) });
         } catch {
@@ -546,8 +550,11 @@ export function LibraryPage() {
         //    이 API는 배치를 걸고 즉시 돌아온다(202). 기다려도 체감이 없다.
         //    실패해도 넘어간다 — 문제집은 학습과 별개고 문제집 화면에서 다시
         //    접수할 수 있다(리필). 다만 **조용히 삼키지는 않는다.**
+        // 기출(exam)은 문제은행 재료가 아니다 — 서버도 422로 거절하지만
+        // 애초에 접수하지 않는다 (스타일 프로파일은 생성 시 서버가 알아서 뽑음).
+        const bankDocIds = documentIds.filter((id) => kinds?.[id] !== "exam");
         await Promise.allSettled(
-          documentIds.map((id) =>
+          bankDocIds.map((id) =>
             requestGeneration(course.id, id).catch((e: unknown) => {
               console.warn("[library] 문제은행 접수 실패", id, e);
             }),

@@ -61,11 +61,15 @@ class FakeRepo:
     def list_document_items(self, course_id, document_id):
         return list(self.rows)
 
-    def sample_items(self, course_id, document_id, toc_indexes, count, exclude_ids=None):
+    def sample_items(
+        self, course_id, document_id, toc_indexes, count, exclude_ids=None, style=None
+    ):
         # 실제 repo 계약의 축소판 — 안 푼 것 먼저, 모자라면 exclude 순서(오래된
         # 순)대로 복습 채움. 반환도 동일하게 (items, recycled).
         exclude = exclude_ids or []
         pool = [r for r in self.rows if r.toc_index in toc_indexes]
+        if style:
+            pool = [r for r in pool if getattr(r, "style", "standard") == style]
         fresh = [r for r in pool if r.id not in exclude][:count]
         shortfall = count - len(fresh)
         if shortfall <= 0 or not exclude:

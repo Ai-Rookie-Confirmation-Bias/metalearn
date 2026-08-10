@@ -25,6 +25,7 @@ export function ScopeSelect({
   refilling = false,
   refillOutcome = null,
   onStart,
+  onExamGen,
   onBack,
 }: {
   title: string;
@@ -34,7 +35,9 @@ export function ScopeSelect({
   refilling?: boolean; // 리필 배치 진행 중 — 풀이는 그대로 가능, 안내만
   // 직전 리필 결과 — 추가된 문항 수(0=빈손) 또는 "failed". 진행 중이 우선.
   refillOutcome?: number | "failed" | null;
-  onStart: (tocIndexes: number[], count: number) => void;
+  onStart: (tocIndexes: number[], count: number, style: "all" | "exam") => void;
+  // [기출문제 스타일로 생성] — 기출 자료가 있는 과목에서만 노출
+  onExamGen?: () => void;
   onBack: () => void;
 }) {
   const [checked, setChecked] = useState<Set<number>>(new Set());
@@ -42,6 +45,9 @@ export function ScopeSelect({
   // 시점 일이라 몇 개를 뽑든 충돌 없음 — 서빙은 범위 내 샘플링일 뿐.
   const [countMode, setCountMode] = useState<number | "custom">(10);
   const [customCount, setCustomCount] = useState("15");
+  // 기출 스타일만 풀기 — 은행에 exam 문항이 있을 때만 켤 수 있다
+  const [examOnly, setExamOnly] = useState(false);
+  const examTotal = summary.exam_total ?? 0;
 
   const toggle = (i: number) =>
     setChecked((prev) => {
@@ -57,8 +63,13 @@ export function ScopeSelect({
 
   const requested =
     countMode === "custom" ? Number.parseInt(customCount, 10) || 0 : countMode;
-  // 범위에 있는 것보다 많이 요청하면 있는 만큼으로 — 버튼 라벨이 실제 개수를 보여준다
-  const sessionCount = Math.min(requested, selectedCount);
+  // 범위에 있는 것보다 많이 요청하면 있는 만큼으로 — 버튼 라벨이 실제 개수를 보여준다.
+  // 기출만 모드면 기출 문항 수가 추가 상한 (범위 교집합은 서버 샘플링이 마저 자름)
+  const sessionCount = Math.min(
+    requested,
+    selectedCount,
+    examOnly ? examTotal : Number.POSITIVE_INFINITY,
+  );
   const canStart = checked.size > 0 && sessionCount > 0;
 
   return (
@@ -215,14 +226,61 @@ export function ScopeSelect({
           )}
         </div>
 
+        {/* 기출 스타일 — 기출 자료가 있는 과목만.
+            exam 문항이 아직 없으면 [생성] 버튼, 있으면 "기출만 풀기" 토글 */}
+        {summary.has_exam_style && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/[0.03] p-4">
+            {examTotal > 0 ? (
+              <>
+                <span className="text-[0.9rem] text-text-secondary">
+                  기출 스타일 문항 <b className="text-text-primary">{examTotal}개</b>가 있어요
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setExamOnly((v) => !v)}
+                  className={clsx(
+                    "rounded-xl border px-4 py-2 text-[0.9rem] font-semibold transition-all",
+                    examOnly
+                      ? "border-accent bg-accent text-white"
+                      : "border-accent/50 text-accent hover:bg-accent/10",
+                  )}
+                >
+                  기출 스타일만 풀기{examOnly ? " ✓" : ""}
+                </button>
+              </>
+            ) : (
+              <>
+                <span className="text-[0.9rem] text-text-secondary">
+                  이 과목엔 <b className="text-text-primary">기출 자료</b>가 있어요 —
+                  기출의 발문 방식·출제 비중을 반영한 문제를 추가로 만들 수 있어요
+                </span>
+                <button
+                  type="button"
+                  disabled={refilling || !onExamGen}
+                  onClick={onExamGen}
+                  className={clsx(
+                    "rounded-xl px-4 py-2 text-[0.9rem] font-semibold text-white transition-all",
+                    refilling || !onExamGen
+                      ? "cursor-not-allowed bg-text-tertiary opacity-70"
+                      : "bg-accent hover:-translate-y-0.5 hover:shadow-md",
+                  )}
+                >
+                  {refilling ? "만드는 중…" : "기출문제 스타일로 생성"}
+                </button>
+              </>
+            )}
+          </div>
+        )}
+
         <div className="flex items-center justify-between border-t border-border-primary pt-6">
           <span className="text-[0.9rem] text-text-secondary">
             선택: <b className="text-text-primary">{selectedCount}문항</b>
+            {examOnly && <span className="ml-2 text-accent">· 기출 스타일만</span>}
           </span>
           <button
             type="button"
             disabled={!canStart}
-            onClick={() => onStart([...checked], sessionCount)}
+            onClick={() => onStart([...checked], sessionCount, examOnly ? "exam" : "all")}
             className={clsx(
               "inline-flex items-center gap-2 rounded-xl px-5 py-[0.6rem] text-[13.3333px] font-semibold leading-[normal] text-white shadow-sm transition-all",
               canStart

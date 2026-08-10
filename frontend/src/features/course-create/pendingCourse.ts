@@ -18,6 +18,9 @@ export type PendingCourse = {
   filenames: Record<string, string>;
   title: string;
   purpose: Purpose;
+  // 위저드의 자료 유형 최종값. id → textbook|slide|notes|exam.
+  // exam은 문제은행 생성에서 빠지고 기출 스타일 프로파일 재료가 된다.
+  kinds?: Record<string, string>;
 };
 
 type State = {

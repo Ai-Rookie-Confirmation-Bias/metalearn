@@ -26,6 +26,10 @@ export type QuizBankSummary = {
   document_id: string;
   tocs: TocSummary[];
   total: number;
+  // 이 코스에 기출 자료(또는 추출된 프로파일)가 있는지 — 기출 생성 버튼 노출 조건
+  has_exam_style?: boolean;
+  // 은행 안의 기출 스타일(style=exam) 문항 수 — 0이면 아직 생성 전
+  exam_total?: number;
 };
 
 // 과목(책) 목록 항목 — 책장처럼 과목부터 고르고 들어간다.

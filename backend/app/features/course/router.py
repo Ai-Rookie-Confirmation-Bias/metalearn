@@ -70,6 +70,7 @@ def create_course(
             document_ids=body.document_ids,
             title=body.title,
             roles=body.roles,
+            kinds=body.kinds,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
