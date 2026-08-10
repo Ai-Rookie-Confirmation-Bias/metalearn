@@ -15,18 +15,20 @@
 // 여기가 "내가 쌓아 온 것"이 아니라 "골라 오는 곳"이기 때문이다. 책장(`/library`)
 // 과 생김새가 같으면 두 페이지의 성격 차이가 화면에서 안 보인다.
 import { useState } from "react";
-import { Link } from "react-router-dom";
-import { useQueries } from "@tanstack/react-query";
-import { BooksIcon, MagnifyingGlassIcon } from "@phosphor-icons/react";
+import { Link, useNavigate } from "react-router-dom";
+import {
+  BooksIcon,
+  MagnifyingGlassIcon,
+  BookOpenIcon,
+  PlusCircleIcon,
+} from "@phosphor-icons/react";
 
+import type { DocumentOut } from "@/features/curriculum/api/curriculum";
 import {
-  fetchDocument,
-  type DocumentOut,
-} from "@/features/curriculum/api/curriculum";
-import {
-  curriculumKeys,
-  useDocuments,
-} from "@/features/curriculum/queries/useCurriculum";
+  canBecomeCourse,
+  searchBooks,
+  useSharedLibrary,
+} from "@/features/curriculum/queries/useSharedLibrary";
 import {
   COVERS,
   assignCovers,
@@ -41,16 +43,43 @@ function Plank() {
   );
 }
 
-function Book({ doc, cover }: { doc: DocumentOut; cover: Cover }) {
+/** 책 한 권. **누르면 곧장 열리지 않고 선택지 둘을 편다.**
+ *
+ * 도서관의 책은 쓰임이 둘이다 — 그냥 읽어보는 것과, 내 수업의 재료로 삼는 것.
+ * 표지를 링크로 두면 앞의 하나만 있는 셈이 되고, 버튼 둘을 표지 밑에 늘 펴
+ * 두면 서가가 버튼 밭이 된다. 고른 한 권 위에만 얹는다.
+ */
+function Book({
+  doc,
+  via,
+  cover,
+  open,
+  onToggle,
+}: {
+  doc: DocumentOut;
+  /** 제목이 아니라 목차에서 걸렸을 때 그 목차 제목. 없으면 제목으로 걸린 것. */
+  via: string | null;
+  cover: Cover;
+  open: boolean;
+  onToggle: () => void;
+}) {
+  const navigate = useNavigate();
   const CoverIcon = cover.icon;
+  const buildable = canBecomeCourse(doc.docId);
 
   return (
     <div className="flex flex-col justify-end">
       <div className="px-3">
-        <Link to={`/curriculum/${encodeURIComponent(doc.docId)}`} className="group block">
-          {/* 표지 — 제목을 표지에 얹는다. 책은 등이 아니라 표지로 고른다. */}
+        <div className="group">
+          {/* 표지 — 제목을 표지에 얹는다. 책은 등이 아니라 표지로 고른다.
+              표지 자체는 버튼이 아니다. 안에 진짜 버튼 둘이 들어가는 자리라
+              버튼 안에 버튼이 되면 안 된다 — 표지를 덮는 투명 버튼을 따로 깐다. */}
           <div
-            className={`relative h-[220px] overflow-hidden rounded-l-[3px] rounded-r-lg bg-gradient-to-br text-white shadow-md transition-all duration-200 group-hover:-translate-y-2 group-hover:shadow-xl ${cover.grad}`}
+            className={`relative h-[220px] overflow-hidden rounded-l-[3px] rounded-r-lg bg-gradient-to-br text-white shadow-md transition-all duration-200 ${cover.grad} ${
+              open
+                ? "-translate-y-2 shadow-xl"
+                : "group-hover:-translate-y-2 group-hover:shadow-xl"
+            }`}
           >
             {/* 책등 */}
             <div className="absolute inset-y-0 left-0 w-[14px] bg-black/25" />
@@ -67,12 +96,56 @@ function Book({ doc, cover }: { doc: DocumentOut; cover: Cover }) {
                 </p>
               </div>
             </div>
+
+            <button
+              type="button"
+              onClick={onToggle}
+              aria-expanded={open}
+              aria-label={`${doc.title} — 무엇을 할지 고르기`}
+              className="absolute inset-0 h-full w-full cursor-pointer"
+            />
+
+            {/* 고른 책 위에만 덮개를 얹는다. 표지를 가리되 어떤 책인지는
+                남아야 해서 반투명이다. */}
+            {open && (
+              <div className="absolute inset-0 flex flex-col justify-center gap-2 bg-black/55 px-4 backdrop-blur-[2px]">
+                <Link
+                  to={`/curriculum/${encodeURIComponent(doc.docId)}`}
+                  className="flex items-center justify-center gap-2 rounded-xl bg-white px-3 py-2.5 text-[0.85rem] font-bold text-text-primary transition-colors hover:bg-white/90"
+                >
+                  <BookOpenIcon weight="fill" className="text-[1rem]" />책 보기
+                </Link>
+
+                {buildable ? (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      navigate(`/create?doc=${encodeURIComponent(doc.docId)}`)
+                    }
+                    className="flex items-center justify-center gap-2 rounded-xl bg-accent px-3 py-2.5 text-center text-[0.85rem] font-bold text-white transition-colors hover:brightness-110"
+                  >
+                    <PlusCircleIcon weight="fill" className="flex-shrink-0 text-[1rem]" />
+                    이 책으로 수업 만들기
+                  </button>
+                ) : (
+                  // 픽스처는 `documents` 테이블에 행이 없어 수업 재료가 못 된다.
+                  // 눌리는 버튼을 두고 서버가 거절하게 두면 사용자는 이유를 모른다.
+                  <p className="rounded-xl border border-white/25 px-3 py-2.5 text-center text-[0.75rem] leading-snug text-white/70">
+                    데모 자료라 수업으로는
+                    <br />
+                    만들 수 없어요
+                  </p>
+                )}
+              </div>
+            )}
           </div>
 
-          <p className="mt-2.5 text-[0.8rem] text-text-tertiary transition-colors group-hover:text-accent">
-            진단 없이 바로 열람
+          {/* 제목엔 없는데 서가에 떴으면 왜 떴는지 말해 준다 — 안 그러면
+              사용자가 검색 결과를 의심한다. */}
+          <p className="mt-2.5 truncate text-[0.8rem] text-text-tertiary">
+            {via ? `목차 “${via}”` : open ? "다시 누르면 접혀요" : "눌러서 고르기"}
           </p>
-        </Link>
+        </div>
       </div>
       <Plank />
     </div>
@@ -80,34 +153,18 @@ function Book({ doc, cover }: { doc: DocumentOut; cover: Cover }) {
 }
 
 export function SharedLibraryPage() {
-  const { data: docIds, isLoading, isError } = useDocuments();
+  const { books: shared, isLoading, isError } = useSharedLibrary();
   const [query, setQuery] = useState("");
+  // 펼친 책은 한 권뿐이다. 여러 권이 동시에 덮개를 쓰고 있으면 지금 무엇을
+  // 고르는 중인지 화면이 말해 주지 못한다.
+  const [openId, setOpenId] = useState<string | null>(null);
 
-  const docs = useQueries({
-    queries: (docIds ?? []).map((id) => ({
-      queryKey: curriculumKeys.document(id),
-      queryFn: () => fetchDocument(id),
-    })),
-  });
+  // 찾기는 **화면에서만** 한다. 서버를 왕복할 이유가 없고, 한 글자마다 요청을
+  // 보내면 목록이 깜빡인다. 규칙은 위저드의 도서관 고르기와 같은 것을 쓴다 —
+  // 두 곳에서 다르게 찾으면 같은 검색어에 다른 결과가 나온다.
+  const found = searchBooks(shared, query);
 
-  // 목록 API는 내 자료와 도서관 자료를 함께 준다(`shared` 플래그로 갈린다).
-  // 여기서는 도서관 것만 남긴다 — 책장이 그 반대를 한다.
-  const shared = docs
-    .map((q) => q.data)
-    .filter((d): d is DocumentOut => Boolean(d) && Boolean(d!.shared));
-
-  // 찾기는 **화면에서만** 한다. 자료 수가 수십 권이라 서버를 왕복할 이유가 없고,
-  // 한 글자마다 요청을 보내면 목록이 깜빡인다.
-  const q = query.trim().toLowerCase();
-  const found = q
-    ? shared.filter(
-        (d) =>
-          d.title.toLowerCase().includes(q) ||
-          d.chapters.some((c) => c.title.toLowerCase().includes(q)),
-      )
-    : shared;
-
-  const coverById = assignCovers(found.map((d) => d.docId));
+  const coverById = assignCovers(found.map((h) => h.doc.docId));
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-12 py-12">
@@ -167,11 +224,16 @@ export function SharedLibraryPage() {
       {found.length > 0 && (
         <>
           <div className="grid grid-cols-[repeat(auto-fill,minmax(190px,1fr))] gap-x-0 gap-y-12">
-            {found.map((doc) => (
+            {found.map(({ doc, via }) => (
               <Book
                 key={doc.docId}
                 doc={doc}
+                via={via}
                 cover={coverById.get(doc.docId) ?? COVERS[0]}
+                open={openId === doc.docId}
+                onToggle={() =>
+                  setOpenId((id) => (id === doc.docId ? null : doc.docId))
+                }
               />
             ))}
           </div>

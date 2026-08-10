@@ -10,7 +10,7 @@
  * 파싱이 끝난 뒤 책장이 부른다(역할·목차가 ready 이후에야 채워지므로).
  */
 import { useEffect, useRef, useState, type ReactNode } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { clsx } from "clsx";
 import {
   ArrowLeftIcon,
@@ -21,12 +21,21 @@ import {
   CertificateIcon,
   BriefcaseIcon,
   BookOpenIcon,
+  BookOpenTextIcon,
+  CaretDownIcon,
+  MagnifyingGlassIcon,
   SmileyIcon,
   WarningCircleIcon,
   CheckCircleIcon,
   type Icon,
 } from "@phosphor-icons/react";
 
+import type { DocumentOut } from "@/features/curriculum/api/curriculum";
+import {
+  canBecomeCourse,
+  searchBooks,
+  useSharedLibrary,
+} from "@/features/curriculum/queries/useSharedLibrary";
 import { usePendingCourse } from "@/features/course-create/pendingCourse";
 import type {
   DocumentKind,
@@ -152,6 +161,168 @@ function UploadZone({ label, onFiles }: { label: string; onFiles: (files: FileLi
   );
 }
 
+/** 검색 전에 미리 보여줄 권수. **목록을 길게 만들 바엔 검색을 시킨다.** */
+const PREVIEW = 3;
+/** 결과 상한. 이보다 많으면 스크롤이 아니라 "더 좁혀 보세요"가 답이다. */
+const MAX_HITS = 8;
+
+/** MetaLearn 도서관에서 고르기 — **검색이 먼저, 목록은 나중.**
+ *
+ * 새 창으로 도서관에 보내지 않는다: 위저드는 셸 밖 전체화면이라 나가면 여기
+ * 담아 둔 자료와 순서가 통째로 날아간다. 목록을 여기로 가져온다.
+ *
+ * 이미 분석이 끝난 책이라 **올리는 시간이 0이다.** 자료를 처음 올리는 사람이
+ * 파싱 몇 분을 기다리지 않고 곧장 진단까지 가 볼 수 있는 유일한 길이다.
+ *
+ * ⚠️ **전부 늘어놓지 않는다.** 책이 백 권이면 220px 창에 백 줄이 되고, 뭘
+ *    찾는지 알아도 못 찾는다. 열면 검색창에 커서가 가 있고 목록은 세 권까지만
+ *    맛보기로 보인다. 나머지는 검색으로 좁혀 온다.
+ *
+ * 남은 한계: 목록 API가 id만 줘서 화면이 책 한 권씩 따로 가져온다(N+1).
+ * 백 권이면 요청이 백 번이라, 실제로 그만큼 쌓이기 전에 목록 API가 제목·목차
+ * 수를 함께 주도록 고쳐야 한다. 화면보다 이쪽이 먼저 무너진다.
+ */
+function LibraryPicker({
+  chosen,
+  onPick,
+}: {
+  chosen: Set<string>;
+  onPick: (doc: DocumentOut) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const { books, isLoading, isError } = useSharedLibrary();
+
+  // 픽스처는 `documents` 테이블에 행이 없어 수업 재료가 못 된다. 목록에 두면
+  // 골랐는데 서버가 거절하는 행이 생긴다.
+  const usable = books.filter((b) => canBecomeCourse(b.docId));
+  const searching = query.trim().length > 0;
+  const hits = searchBooks(usable, query);
+  const shown = searching ? hits.slice(0, MAX_HITS) : hits.slice(0, PREVIEW);
+  const hidden = hits.length - shown.length;
+
+  // 펼치면 바로 칠 수 있어야 한다. 검색이 주경로인데 커서를 옮기게 하면
+  // 사람들은 대신 목록을 훑는다 — 그러라고 만든 화면이 아니다.
+  useEffect(() => {
+    if (open) searchRef.current?.focus();
+  }, [open]);
+
+  return (
+    <div className="mb-4">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-3 rounded-xl border border-border-primary bg-bg-secondary px-4 py-3 text-left transition-colors hover:border-accent hover:bg-accent/5"
+      >
+        <BookOpenTextIcon weight="fill" className="shrink-0 text-[1.15rem] text-accent" />
+        <span className="min-w-0 flex-1">
+          <span className="block text-[0.9rem] font-semibold text-text-primary">
+            MetaLearn 도서관에서 찾아보기
+          </span>
+          <span className="block text-[0.78rem] text-text-tertiary">
+            이미 분석해 둔 책이라 기다릴 필요 없어요
+          </span>
+        </span>
+        {usable.length > 0 && (
+          <span className="shrink-0 rounded-full bg-white px-2.5 py-1 text-[0.75rem] font-bold text-text-secondary">
+            {usable.length}권
+          </span>
+        )}
+        <CaretDownIcon
+          className={clsx(
+            "shrink-0 text-text-tertiary transition-transform",
+            open && "rotate-180",
+          )}
+        />
+      </button>
+
+      {open && (
+        <div className="mt-2 overflow-hidden rounded-xl border border-border-primary">
+          <div className="flex items-center gap-2 border-b border-border-primary bg-bg-secondary px-4 py-2.5">
+            <MagnifyingGlassIcon className="shrink-0 text-[1rem] text-text-tertiary" />
+            <input
+              ref={searchRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="책 제목이나 배울 내용으로 찾기"
+              className="w-full bg-transparent text-[0.85rem] text-text-primary placeholder:text-text-tertiary focus:outline-none"
+            />
+          </div>
+
+          {isLoading && (
+            <p className="px-4 py-6 text-center text-[0.85rem] text-text-tertiary">
+              도서관을 여는 중…
+            </p>
+          )}
+          {isError && (
+            <p className="px-4 py-6 text-center text-[0.85rem] text-red-600">
+              도서관을 불러오지 못했어요.
+            </p>
+          )}
+          {!isLoading && !isError && usable.length === 0 && (
+            <p className="px-4 py-6 text-center text-[0.85rem] text-text-tertiary">
+              아직 꽂힌 책이 없어요.
+            </p>
+          )}
+          {!isLoading && !isError && usable.length > 0 && hits.length === 0 && (
+            <p className="px-4 py-6 text-center text-[0.85rem] text-text-tertiary">
+              “{query.trim()}”에 맞는 책이 없어요.
+            </p>
+          )}
+
+          {shown.map(({ doc, via }) => {
+            const already = chosen.has(doc.docId);
+            return (
+              <button
+                key={doc.docId}
+                type="button"
+                disabled={already}
+                onClick={() => onPick(doc)}
+                className={clsx(
+                  "flex w-full items-center gap-3 border-b border-border-primary px-4 py-3 text-left transition-colors last:border-b-0",
+                  already ? "cursor-default bg-bg-secondary" : "hover:bg-accent/5",
+                )}
+              >
+                <BookOpenIcon className="shrink-0 text-[1.05rem] text-text-tertiary" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[0.88rem] font-medium text-text-primary">
+                    {doc.title}
+                  </span>
+                  <span className="block truncate text-[0.75rem] text-text-tertiary">
+                    {/* 제목엔 없는데 목록에 떴으면 왜 떴는지 말해 준다.
+                        안 그러면 사용자가 검색 결과를 의심한다. */}
+                    {via
+                      ? `목차 “${via}”에 있어요`
+                      : `목차 ${doc.chapters.length}개 · 화면 ${doc.sectionsTotal}개`}
+                  </span>
+                </span>
+                <span
+                  className={clsx(
+                    "shrink-0 text-[0.8rem] font-semibold",
+                    already ? "text-text-tertiary" : "text-accent",
+                  )}
+                >
+                  {already ? "담김" : "고르기"}
+                </span>
+              </button>
+            );
+          })}
+
+          {hidden > 0 && (
+            <p className="border-t border-border-primary bg-bg-secondary px-4 py-2.5 text-[0.78rem] text-text-tertiary">
+              {searching
+                ? `${MAX_HITS}권만 보여요 · ${hidden}권 더 있으니 검색어를 좁혀 보세요`
+                : `외 ${hidden}권 · 위에서 찾아보세요`}
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // 자료 한 줄 (파일명 · 크기/상태 · 형태 선택 · [순서] · 삭제)
 function MaterialRow({
   material,
@@ -196,23 +367,29 @@ function MaterialRow({
         >
           {material.error
             ? material.error
-            : busy
-              ? `${formatSize(material.size)} · 올리는 중…`
-              : `${formatSize(material.size)} · 접수됨`}
+            : material.fromLibrary
+              ? "MetaLearn 도서관 · 분석 완료"
+              : busy
+                ? `${formatSize(material.size)} · 올리는 중…`
+                : `${formatSize(material.size)} · 접수됨`}
         </div>
       </div>
 
-      <select
-        value={material.kind}
-        onChange={(e) => onKind(e.target.value as DocumentKind)}
-        className="shrink-0 rounded-lg border border-border-primary bg-bg-secondary px-2 py-1 text-[0.8rem] text-text-secondary focus:outline-none"
-      >
-        {KINDS.map((k) => (
-          <option key={k.value} value={k.value}>
-            {k.label}
-          </option>
-        ))}
-      </select>
+      {/* 도서관 책은 유형을 못 고른다 — 공용 문서라 여기서 바꾸면 같은 책을
+          쓰는 다른 사람의 화면까지 바뀐다. 이미 분류돼 꽂힌 책이기도 하다. */}
+      {!material.fromLibrary && (
+        <select
+          value={material.kind}
+          onChange={(e) => onKind(e.target.value as DocumentKind)}
+          className="shrink-0 rounded-lg border border-border-primary bg-bg-secondary px-2 py-1 text-[0.8rem] text-text-secondary focus:outline-none"
+        >
+          {KINDS.map((k) => (
+            <option key={k.value} value={k.value}>
+              {k.label}
+            </option>
+          ))}
+        </select>
+      )}
 
       {onUp && (
         <div className="flex shrink-0 flex-col text-sm">
@@ -251,6 +428,7 @@ function titleFrom(name: string) {
 
 export function CreateCoursePage() {
   const navigate = useNavigate();
+  const [params] = useSearchParams();
   const addPending = usePendingUploads((s) => s.add);
   const setPendingCourse = usePendingCourse((s) => s.set);
 
@@ -314,6 +492,38 @@ export function CreateCoursePage() {
   const all = [...primaries, ...supps];
   const accepted = all.filter((m) => m.docId);
   const busy = all.some(uploading);
+  const chosen = new Set(accepted.map((m) => m.docId as string));
+
+  /** 도서관 책을 자료 목록에 담는다. **올리지 않는다** — 이미 서버에 있는
+   *  문서를 가리키기만 하므로 docId를 처음부터 들고 시작한다. */
+  const addBook = (doc: DocumentOut, role: "primary" | "supplementary") => {
+    if (chosen.has(doc.docId)) return;
+    const item: Material = {
+      id: nextId(),
+      name: doc.title,
+      size: 0,
+      kind: "textbook",
+      role,
+      docId: doc.docId,
+      fromLibrary: true,
+    };
+    (role === "primary" ? setPrimaries : setSupps)((prev) => [...prev, item]);
+  };
+
+  // 도서관에서 "이 책으로 수업 만들기"로 들어온 경우(`/create?doc=…`).
+  // 제목은 목록이 와야 알 수 있어서 도착하는 대로 한 번만 담는다.
+  const preset = params.get("doc");
+  const presetDone = useRef(false);
+  const { books: libraryBooks } = useSharedLibrary();
+  useEffect(() => {
+    if (presetDone.current || !preset) return;
+    const book = libraryBooks.find((b) => b.docId === preset);
+    if (!book) return;
+    presetDone.current = true;
+    addBook(book, "primary");
+    // addBook은 매 렌더 새로 만들어진다 — presetDone이 한 번만 돌게 막는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preset, libraryBooks]);
 
   const canNext =
     step === 0
@@ -342,10 +552,17 @@ export function CreateCoursePage() {
     const filenames = Object.fromEntries(
       accepted.map((m) => [m.docId as string, m.name]),
     );
+    // ⚠️ 도서관 책은 빼고 보낸다. kinds는 서버에서 `documents.kind`에 도장을
+    //    찍는데, 그 문서는 공용이라 같은 책을 쓰는 다른 사람에게도 그대로 간다.
     const kinds = Object.fromEntries(
-      accepted.map((m) => [m.docId as string, m.kind]),
+      accepted
+        .filter((m) => !m.fromLibrary)
+        .map((m) => [m.docId as string, m.kind]),
     );
-    const title = titleFrom(primaries.find((m) => m.docId)?.name ?? accepted[0].name);
+    // 도서관 책의 이름은 파일명이 아니라 책 제목이다. 확장자를 떼는 정규식이
+    // "1. 인공지능 개론" 같은 제목을 "1"로 잘라 버린다.
+    const head = primaries.find((m) => m.docId) ?? accepted[0];
+    const title = head.fromLibrary ? head.name : titleFrom(head.name);
 
     setPendingCourse({ documentIds, filenames, title, purpose, kinds });
     addPending(accepted.map((m) => ({ docId: m.docId as string, filename: m.name })));
@@ -365,9 +582,10 @@ export function CreateCoursePage() {
               <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-primary">
                 메인이 되는 자료를 올려주세요
               </h2>
-              <p className="mb-8 text-[0.95rem] text-text-secondary">
+              <p className="mb-6 text-[0.95rem] text-text-secondary">
                 이 자료가 학습의 기준(천장)이 돼요. 여러 파일로 나뉘어 있으면 순서대로 올려주세요.
               </p>
+              <LibraryPicker chosen={chosen} onPick={(b) => addBook(b, "primary")} />
               <UploadZone
                 label="클릭하거나 파일을 여기로 드래그하세요 (여러 개 가능)"
                 onFiles={(f) => addFiles(f, "primary")}

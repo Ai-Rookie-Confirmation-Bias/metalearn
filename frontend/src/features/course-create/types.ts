@@ -14,4 +14,8 @@ export type Material = {
   role: "primary" | "supplementary";
   docId?: string; // 업로드 성공 시 서버가 준 파싱 문서 UUID
   error?: string; // 실패 사유. 있으면 이 행은 제출에 못 들어간다
+  // MetaLearn 도서관에서 고른 책인가. 올린 게 아니라 **이미 있는 것을 가리킨** 행이라
+  // 파일 크기도 없고 유형도 못 바꾼다 — 공용 문서라 내 위저드가 남의 책 속성을
+  // 덮어쓰면 그 책을 쓰는 다른 사람에게도 그대로 간다.
+  fromLibrary?: boolean;
 };
