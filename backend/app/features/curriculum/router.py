@@ -134,21 +134,33 @@ def _sections_out(chapter: Chapter, progress: Progress) -> list[SectionOut]:
     return out
 
 
-async def _my_doc_ids(db: Session, user_id: uuid.UUID) -> list[str]:
-    """책장에 뜨는 것 = 분석이 세는 것. **한 곳에서 정한다.**
+async def _my_doc_ids(
+    db: Session, user_id: uuid.UUID, *, include_shared: bool = False
+) -> list[str]:
+    """이 사람의 자료 목록. 고르는 규칙은 **여기 한 곳**에 있다.
 
-    두 군데서 각자 고르면 "책장엔 6권인데 분석은 4권"이 되고, 어느 쪽이 맞는지
-    화면에서 알 수 없다.
+    `include_shared`로 갈리는 두 자리가 있다:
+
+        책장(True)    기본 제공 자료도 보여준다. 화면이 `shared`로 칸을 가른다
+        분석(False)   **내가 올린 것만 센다**
+
+    ⚠️ 분석에서 빼는 이유가 있다. 기본 제공 자료는 주인이 없고 진도도 안
+       세는데, 분모에 들어가면 내 준비도가 남의 책 분량에 희석된다(실측:
+       내 자료 182화면인데 분모가 336이 됐다 — 다 배워도 54%에서 멈춘다).
+       `/shared` 화면도 "진도는 따로 세지 않습니다"라고 말하고 있어서,
+       세면 화면이 거짓말을 하는 셈이 된다.
     """
     mine = set(sync_ready_documents(db, user_id=user_id))
     mine |= set(await sync_courses(db, user_id=user_id))
-    # 기본 제공 자료는 주인이 없다 — 소유로 거르면 안 뜬다. 픽스처와 같은 자리.
-    mine |= set(sync_public_documents(db))
+    shared = set(sync_public_documents(db)) if include_shared else set()
+    # 픽스처도 주인이 없다 — 기본 제공과 같은 취급을 받아야 한다.
+    allowed = mine | shared
     members = course_member_document_ids(db, user_id=user_id)
     return [
         k
         for k in store.documents
-        if (k in store.fixture_ids or k in mine) and k not in members
+        if (k in allowed or (include_shared and k in store.fixture_ids))
+        and k not in members
     ]
 
 
@@ -255,7 +267,7 @@ async def list_documents(
        분석에는 잡히는데 **책장에는 안 뜨는** 상태가 됐다. 그 함수 주석이
        "책장에 뜨는 것 = 분석이 세는 것"이라고 적어 놓고 정작 둘이 갈려 있었다.
     """
-    return await _my_doc_ids(db, user_id)
+    return await _my_doc_ids(db, user_id, include_shared=True)
 
 
 @router.post(

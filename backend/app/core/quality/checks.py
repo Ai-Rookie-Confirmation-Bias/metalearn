@@ -164,6 +164,15 @@ def mechanical_check(item_type: str, d: dict, evidence_text: str) -> str | None:
             return "mcq answerIndex 불량"
         if len(set(map(str, options))) != len(options):
             return "mcq 선지 중복"
+        # 선지 길이 이질성 — 정답만 유독 길거나 짧으면 내용을 몰라도 형태로
+        # 찍힌다 (실측: "NUI의 정의는?" 정답만 설명문 17자, 오답은 용어 3자).
+        # polish_mcq는 후보 중 길이가 비슷한 걸 "고르는" 랭킹이라 후보 풀
+        # 자체가 나쁘면 못 막는다 — 골라진 결과가 그래도 이질적이면 여기서 폐기.
+        ans_len = len(_norm(str(options[idx])))
+        wrong_lens = [len(_norm(str(o))) for i, o in enumerate(options) if i != idx]
+        if ans_len > 0 and wrong_lens:
+            if ans_len > 2.5 * max(wrong_lens) or min(wrong_lens) > 2.5 * ans_len:
+                return "mcq 정답 선지 길이가 오답과 이질적 (형태만으로 정답 노출)"
     elif item_type == "cloze":
         segments = [s for s in d.get("segments", []) if isinstance(s, dict)]
         blanks = [s for s in segments if s.get("kind") == "blank"]
