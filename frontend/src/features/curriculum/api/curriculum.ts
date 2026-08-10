@@ -52,6 +52,9 @@ export interface DocumentOut {
   weakestChapter: number | null;
   byKind: Partial<Record<AttemptKind, number>>; // 누적이 어디서 왔는지
   chapters: ChapterBrief[];
+  // 기본 제공 자료(공개 교재·픽스처)인가. 책장이 이걸로 두 칸을 가른다 —
+  // 내가 올린 적 없는 책이 "내 자료"에 섞여 있으면 안 된다.
+  shared?: boolean;
 }
 
 export interface SectionOut {

@@ -94,6 +94,46 @@ def sync_ready_documents(
     return ids
 
 
+def sync_public_documents(db: Session) -> list[str]:
+    """**기본 제공 자료**를 store에 올리고 그 id 목록을 돌려준다.
+
+    `sync_ready_documents`와 나란하다. 다른 건 소유 조건뿐이다 — 이쪽은
+    `visibility='public'`이라 주인이 없고 **누구 책장에나** 뜬다.
+
+    쓰임새가 둘이다:
+
+        책장   "기본 제공 자료" 칸에 놓인다(내가 올린 것과 갈라 보여준다)
+        보강   `supply._existing_hits`가 선수 개념을 찾을 때 여기서 걸린다.
+               그 조회는 "내 코스 밖 · 실제 교재 · 원문 조각 있음"만 보는데,
+               DB에 남의 교재가 없으면 찾을 게 없다(실측 히트율 28개 중 2개).
+
+    26이 만든 보강 자료도 `visibility='public'`이지만 여기 안 들어온다 —
+    `source_format=GENERATED`라 아래 조건에서 빠진다. 그건 원문 없는 명세라
+    책장에서 골라 읽는 책이 아니다.
+    """
+    stmt = select(ParsingDocument).where(
+        ParsingDocument.status == DocStatus.READY.value,
+        ParsingDocument.visibility == "public",
+        ParsingDocument.source_format != GENERATED,
+    )
+
+    ids: list[str] = []
+    for row in db.scalars(stmt).all():
+        key = str(row.id)
+        store.public_ids.add(key)
+        if key in store.documents:
+            ids.append(key)
+            continue
+        try:
+            ingest_parsing_document(db, row.id)
+            ids.append(key)
+        except LookupError as e:
+            print(f"[curriculum] 기본 자료 주입 건너뜀 {key}: {e}")
+        except Exception as e:  # noqa: BLE001 — 목록이 죽으면 안 된다
+            print(f"[curriculum] 기본 자료 주입 실패 {key}: {type(e).__name__}: {e}")
+    return ids
+
+
 async def ingest_course(
     db: Session,
     course_id: uuid.UUID,

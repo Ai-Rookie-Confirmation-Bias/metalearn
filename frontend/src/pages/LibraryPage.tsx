@@ -460,6 +460,12 @@ export function LibraryPage() {
     .map((q) => q.data)
     .filter((d): d is DocumentOut => Boolean(d) && !courseDocIds.has(d!.docId));
 
+  // 책장을 두 칸으로 가른다. **주인 없는 자료를 "내 자료"에 섞으면 안 된다** —
+  // 올린 적 없는 책이 내 책장에 있는 게 되고, 그러면 진단이 "이건 이미 있는
+  // 자료로 배울 수 있어요"라고 할 때 그 근거가 어디서 왔는지도 흐려진다.
+  const shelfShared = ready.filter((d) => d.shared);
+  const shelfMine = ready.filter((d) => !d.shared);
+
   // 파싱이 끝나도 커리큘럼 목록은 다시 물어봐야 안다 — 그 목록 API가 호출될
   // 때 ready 문서를 학습 store로 끌어오기 때문이다(파싱→학습 이음매).
   // 다만 곧 코스로 묶일 자료는 목록을 당겨도 개별 카드가 되므로, 코스 조립이
@@ -546,10 +552,12 @@ export function LibraryPage() {
     ...ready.map((d) => d.docId),
   ]);
 
+  // **내 자료 기준이다.** 기본 제공 자료는 처음부터 깔려 있으므로, 그걸로
+  // 세면 아직 아무것도 안 올린 사람에게 "첫 학습을 시작해보세요"가 안 뜬다.
   const empty =
     !isLoading &&
     !isError &&
-    ready.length === 0 &&
+    shelfMine.length === 0 &&
     lonePending.length === 0 &&
     !pendingCourse;
 
@@ -641,7 +649,7 @@ export function LibraryPage() {
                 );
               })}
 
-              {ready.map((doc) => (
+              {shelfMine.map((doc) => (
                 <BookCard
                   key={doc.docId}
                   doc={doc}
@@ -654,6 +662,35 @@ export function LibraryPage() {
           )
         )}
       </section>
+
+      {/* 기본 제공 자료 — 주인이 없어 누구 책장에나 뜬다.
+          내가 올린 것 **아래**에 둔다: 위 칸이 이 사람의 자리다. */}
+      {!isLoading && !isError && shelfShared.length > 0 && (
+        <section className="mt-14">
+          <div className="mb-2 flex items-end justify-between">
+            <h3 className="text-xl font-bold text-text-primary">기본 제공 자료</h3>
+            <span className="text-[0.85rem] text-text-tertiary">
+              {shelfShared.length}권
+            </span>
+          </div>
+          <p className="mb-6 text-[0.9rem] text-text-secondary">
+            CS 기초 자료를 미리 넣어 뒀어요. 바로 학습할 수 있고, 올리신 자료에서
+            모르는 선수 개념이 나오면 여기서 찾아 채웁니다.
+          </p>
+
+          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-8">
+            {shelfShared.map((doc) => (
+              <BookCard
+                key={doc.docId}
+                doc={doc}
+                cover={coverById.get(doc.docId) ?? COVERS[0]}
+                needsDiagnostic={undiagnosed.has(doc.docId)}
+                bank={bankByCourse.get(doc.docId)}
+              />
+            ))}
+          </div>
+        </section>
+      )}
     </div>
   );
 }

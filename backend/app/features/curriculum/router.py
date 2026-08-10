@@ -22,6 +22,7 @@ from .bridge import (
     ingest_course_stored,
     ingest_parsing_document,
     sync_courses,
+    sync_public_documents,
     sync_ready_documents,
 )
 from .mastery import DAY, WEIGHT, label
@@ -141,6 +142,8 @@ async def _my_doc_ids(db: Session, user_id: uuid.UUID) -> list[str]:
     """
     mine = set(sync_ready_documents(db, user_id=user_id))
     mine |= set(await sync_courses(db, user_id=user_id))
+    # 기본 제공 자료는 주인이 없다 — 소유로 거르면 안 뜬다. 픽스처와 같은 자리.
+    mine |= set(sync_public_documents(db))
     members = course_member_document_ids(db, user_id=user_id)
     return [
         k
@@ -334,6 +337,8 @@ def get_document(
         estimated_minutes=course.estimated_minutes(),
         weakest_chapter=weakest_index,
         by_kind=course.by_kind,
+        # 주인 없는 자료(공개 교재·픽스처)는 책장의 다른 칸으로 간다.
+        shared=doc.doc_id in store.public_ids or doc.doc_id in store.fixture_ids,
         chapters=[
             ChapterBrief(
                 index=ch.index,

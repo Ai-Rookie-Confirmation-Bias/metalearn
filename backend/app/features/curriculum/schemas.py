@@ -70,6 +70,13 @@ class DocumentOut(_Camel):
     # 누적이 **어디서 왔는지** 화면에 보여주는 값이다.
     by_kind: dict[str, int] = {}
     chapters: list[ChapterBrief]
+    # **기본 제공 자료인가.** 주인이 없어 누구 책장에나 뜨는 것 — 공개 교재
+    # (`visibility='public'`)와 파일 픽스처가 여기 해당한다.
+    #
+    # 책장이 이걸로 두 칸을 가른다. 안 가르면 "내가 올린 적 없는 책이 왜
+    # 내 책장에 있지"가 되고, 그게 촬영에서 그대로 잡힌다(실측: 시연 수업
+    # 셋에 픽스처 셋이 섞여 일곱 권).
+    shared: bool = False
 
 
 class IngestOut(_Camel):
