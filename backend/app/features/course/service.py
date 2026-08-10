@@ -7,6 +7,7 @@ from __future__ import annotations
 import logging
 import uuid
 
+from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -28,6 +29,7 @@ from app.features.parsing.models import (
     Document,
     DocTopic,
     MaterialRole,
+    UserDocument,
 )
 
 _log = logging.getLogger("uvicorn.error")
@@ -210,6 +212,53 @@ class CourseService:
         if course is None:
             raise ValueError(f"코스를 찾을 수 없습니다: {course_id}")
         return course
+
+    # ── 삭제 ──────────────────────────────────────────────────────
+
+    def delete(self, course_id: uuid.UUID, user_id: uuid.UUID) -> list[uuid.UUID]:
+        """수업을 지운다. 반환: **책장에서 같이 뺀 자료 id들.**
+
+        자료(문서)는 안 지운다. 문서는 공용이라 같은 책을 남이 쓰고 있을 수
+        있고, 지우면 그 사람 목차·개념·조각이 함께 날아간다. 대신 **내 책장
+        연결(user_documents)만 끊는다** — 안 끊으면 수업을 지운 자리에 그
+        수업에 들어 있던 PDF들이 낱권으로 되살아난다.
+
+        같은 자료를 쓰는 내 다른 수업이 남아 있으면 연결을 안 끊는다.
+
+        course_documents · course_topics · course_prereqs는 DB의
+        ON DELETE CASCADE가 정리한다.
+        """
+        course = self.db.get(Course, course_id)
+        if course is None or course.user_id != user_id:
+            raise ValueError(f"코스를 찾을 수 없습니다: {course_id}")
+
+        members = [cd.document_id for cd in course.documents]
+        self.db.delete(course)
+        # 아래 조회가 **지운 코스를 세지 않게** 먼저 내보낸다.
+        self.db.flush()
+
+        if not members:
+            return []
+        still_used = set(
+            self.db.scalars(
+                select(CourseDocument.document_id)
+                .join(Course, Course.id == CourseDocument.course_id)
+                .where(
+                    Course.user_id == user_id,
+                    CourseDocument.document_id.in_(members),
+                )
+            )
+        )
+        freed = [d for d in members if d not in still_used]
+        if freed:
+            self.db.execute(
+                sa_delete(UserDocument).where(
+                    UserDocument.user_id == user_id,
+                    UserDocument.document_id.in_(freed),
+                )
+            )
+        _log.info("코스 삭제: %r — 책장에서 자료 %d개 뺌", course.title, len(freed))
+        return freed
 
     def list_courses(self) -> list[Course]:
         """전체 코스, 최신 생성 순 — 책장·문제집 목록 화면용.

@@ -10,15 +10,43 @@
 // ★ 이 셸은 글로벌 사이드바 **밖**이다(`routes.tsx` 참조). 그래서 나가는 길을
 //   여기가 책임진다 — 목차는 `lg` 미만에서 숨으므로 헤더가 없으면 좁은 화면에서
 //   나갈 방법이 하나도 없다. 학습을 막지 않는다는 원칙은 "못 나간다"에도 걸린다.
-import { Link, Outlet, useParams } from "react-router-dom";
+import { Link, Navigate, Outlet, useParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeftIcon } from "@phosphor-icons/react";
 
+import { listCourses } from "@/features/course/api";
 import { OutlinePanel } from "@/features/curriculum/components/OutlinePanel";
 import { useDocument } from "@/features/curriculum/queries/useCurriculum";
 
 export function CurriculumLayout() {
   const { docId = "" } = useParams<{ docId: string }>();
   const { data } = useDocument(docId);
+
+  // **진단 전에는 못 들어온다.** 진단은 목차를 *정하는* 단계다 — 보강 단원이
+  // 목차 앞에 끼워지므로, 먼저 읽고 나서 하면 이미 읽은 단원 앞에 끼워진다
+  // (실측: 목차 5 → 12). 책장 카드는 이미 진단으로 보내지만 뒤로 가기·북마크·
+  // 주소 직접 입력이 그 문을 우회한다. 문은 여기 하나로 잠근다.
+  //
+  // 코스 목록이 답이다 — 픽스처·자료 하나는 이 목록에 없으므로 그대로 통과한다.
+  const { data: courses, isLoading } = useQuery({
+    queryKey: ["courses", "list"],
+    queryFn: listCourses,
+    staleTime: 10_000,
+  });
+  const course = courses?.find((c) => c.id === docId);
+
+  // 목록을 못 받았으면 **막지 않는다.** 서버가 잠깐 흔들렸다는 이유로 학습을
+  // 못 하게 하는 쪽이 진단을 한 번 건너뛰는 것보다 나쁘다.
+  if (isLoading) {
+    return (
+      <div className="flex h-screen items-center justify-center bg-bg-secondary text-text-secondary">
+        불러오는 중…
+      </div>
+    );
+  }
+  if (course && !course.diagnosed_at) {
+    return <Navigate to={`/diagnostic/${encodeURIComponent(docId)}`} replace />;
+  }
 
   return (
     <div className="flex h-screen flex-col overflow-hidden bg-bg-secondary">

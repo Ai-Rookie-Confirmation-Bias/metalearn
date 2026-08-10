@@ -3,6 +3,7 @@
   POST   /courses                        자료 묶어 수업 만들기 (역할 제안 + 목차 복사)
   GET    /courses                        내가 만든 수업 목록
   GET    /courses/{id}                   자료·역할·목차
+  DELETE /courses/{id}                   수업 지우기 (자료는 안 지운다)
   GET    /courses/{id}/tree              뼈대 목차 + 본문 자료 설명
   GET    /courses/{id}/prereqs           선수 판정
   GET    /courses/{id}/gaps              끊긴 고리 (외부 조달 후보)
@@ -15,6 +16,7 @@
   GET    /courses/{id}/diagnostic/probes  ⑤ 확인 문항
   POST   /courses/{id}/diagnostic/probes  ⑤ 채점
 
+  GET    /courses/{id}/supply/preview     ⑥ 확정 화면 — 뭘 앞에 넣을지 (LLM 없음)
   POST   /courses/{id}/supply             26·27 보강 자료 마련 + 목차에 끼우기
 """
 from __future__ import annotations
@@ -22,7 +24,7 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -44,7 +46,9 @@ from app.features.course.schemas import (
     ProbeResultsIn,
     SubjectAnswersIn,
     SubjectAnswersOut,
+    SupplyIn,
     SupplyOut,
+    SupplyPreviewOut,
 )
 from app.features.course.service import CourseService
 from app.features.course.supply import SupplyService
@@ -94,6 +98,34 @@ def get_course(course_id: uuid.UUID, db: Session = Depends(get_db)) -> CourseOut
         return CourseOut.model_validate(CourseService(db).get(course_id))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.delete("/{course_id}", status_code=204)
+def delete_course(
+    course_id: uuid.UUID,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> Response:
+    """수업을 지운다. **내 수업만.**
+
+    자료 자체는 안 지운다(공용) — 책장 연결만 끊는다. 자세한 사정은
+    `CourseService.delete` 참고.
+    """
+    service = CourseService(db)
+    try:
+        freed = service.delete(course_id, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    db.commit()
+
+    # 학습 store는 메모리다. 여기서 안 빼면 DB에 없는 수업을
+    # `/curriculum/{id}`로 그대로 열 수 있다. (지연 import — 순환 방지)
+    from app.features.curriculum.store import store
+
+    store.documents.pop(str(course_id), None)
+    for doc_id in freed:
+        store.documents.pop(str(doc_id), None)
+    return Response(status_code=204)
 
 
 @router.get("/{course_id}/tree", response_model=CourseTree)
@@ -274,9 +306,26 @@ def diagnostic_grade(
     return ProbeGradeOut(**result)
 
 
+@router.get("/{course_id}/supply/preview", response_model=SupplyPreviewOut)
+async def supply_preview(
+    course_id: uuid.UUID, db: Session = Depends(get_db)
+) -> SupplyPreviewOut:
+    """⑥ 확정 화면 — "이렇게 배우면 될까요".
+
+    **LLM을 안 부른다.** 명세 생성은 과목당 몇 초라, 여기서 만들면 사용자가
+    뺄 과목까지 만들어 놓고 기다리게 된다. 드는 건 임베딩 1콜뿐이다.
+
+    각 과목의 `source`가 본론이다 — 원문 있는 책이 가르치면 `book`(그 책 이름을
+    보여준다), 전에 만들어 둔 명세가 있으면 `ready`, 없으면 `generate`.
+    """
+    course = _course(course_id, db)
+    return SupplyPreviewOut(**await SupplyService(db).preview(course))
+
+
 @router.post("/{course_id}/supply", response_model=SupplyOut)
 async def supply(
     course_id: uuid.UUID,
+    body: SupplyIn | None = None,
     refresh: bool = Query(False, description="이미 끼운 단원의 plan을 다시 맞춘다"),
     db: Session = Depends(get_db),
 ) -> SupplyOut:
@@ -285,9 +334,14 @@ async def supply(
     **여러 번 불러도 안전하다.** 자료는 (분야, 과목) 지문으로 한 번만 만들고,
     이미 끼운 단원은 `plan`만 다시 맞춘다 — 진단을 다시 해도 사용자가 고친
     목차 순서가 안 날아간다.
+
+    `exclude`는 확정 화면에서 사용자가 뺀 과목이다. 몸통이 없으면 전부 넣는다
+    — 확정 화면을 안 지나는 옛 경로(스크립트·테스트)가 그대로 돈다.
     """
     course = _course(course_id, db)
-    result = await SupplyService(db).run(course, refresh=refresh)
+    result = await SupplyService(db).run(
+        course, refresh=refresh, exclude=body.exclude if body else None
+    )
     # 조달까지 왔으면 진단은 끝난 것이다. 문항이 하나도 안 나온 경로(정답을 못
     # 세워 건너뛴 경우)는 grade()를 안 지나므로 여기서도 찍어야 한다.
     DiagnosticService(db).finish(course)

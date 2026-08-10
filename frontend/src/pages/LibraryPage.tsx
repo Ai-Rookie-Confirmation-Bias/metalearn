@@ -11,10 +11,11 @@ import {
   GraduationCapIcon,
   BookmarkIcon,
   WarningCircleIcon,
+  TrashIcon,
   type Icon,
 } from "@phosphor-icons/react";
 
-import { createCourse, listCourses } from "@/features/course/api";
+import { createCourse, deleteCourse, listCourses } from "@/features/course/api";
 import {
   purposeToGoal,
   usePendingCourse,
@@ -114,6 +115,8 @@ function BookCard({
   cover,
   needsDiagnostic,
   bank,
+  onDelete,
+  deleting,
 }: {
   doc: DocumentOut;
   cover: Cover;
@@ -122,7 +125,13 @@ function BookCard({
   needsDiagnostic?: boolean;
   /** 이 수업의 문제은행. 없으면 아직 안 만들어졌거나 만드는 중. */
   bank?: CourseBank;
+  /** 수업일 때만 온다. 픽스처·자료 하나짜리는 지울 대상이 아니다. */
+  onDelete?: () => void;
+  deleting?: boolean;
 }) {
+  // 지우기는 되돌릴 수 없다. **한 번 더 묻는다** — 카드가 격자로 촘촘히 붙어
+  // 있어서 오른쪽 위 작은 버튼은 잘못 누르기 딱 좋은 자리다.
+  const [confirming, setConfirming] = useState(false);
   const done = sectionsDone(doc);
   const progress = Math.round(doc.readiness * 100);
   const started = done > 0;
@@ -155,6 +164,17 @@ function BookCard({
         <span className="absolute right-4 top-4 rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur-sm">
           화면 {doc.sectionsTotal}개
         </span>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            aria-label="이 수업 지우기"
+            title="이 수업 지우기"
+            className="absolute left-3 top-3 rounded-lg p-2 text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+          >
+            <TrashIcon className="text-[1.1rem]" />
+          </button>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col p-6">
@@ -188,6 +208,32 @@ function BookCard({
           <div className="mb-4 text-[0.85rem] text-text-tertiary">아직 시작하지 않았어요</div>
         )}
 
+        {confirming ? (
+          <div className="mt-auto flex flex-col gap-2">
+            <p className="text-[0.85rem] text-text-secondary">
+              이 수업을 지울까요? <strong>진도와 목차가 함께 사라져요.</strong>{" "}
+              올린 파일은 다시 올리면 됩니다.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onDelete}
+                disabled={deleting}
+                className="inline-flex flex-1 items-center justify-center rounded-xl bg-red-600 px-5 py-3 text-[0.9rem] font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+              >
+                {deleting ? "지우는 중…" : "지우기"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                disabled={deleting}
+                className="inline-flex flex-1 items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:bg-bg-secondary"
+              >
+                그대로 두기
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="mt-auto flex flex-col gap-2">
           <Link
             to={to}
@@ -212,6 +258,7 @@ function BookCard({
             </span>
           )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -403,6 +450,8 @@ export function LibraryPage() {
   const clearPendingCourse = usePendingCourse((s) => s.clear);
   const { data: docIds, isLoading, isError } = useDocuments();
   const [assembleError, setAssembleError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const assembling = useRef(false);
 
   const courseDocIds = new Set(pendingCourse?.documentIds ?? []);
@@ -426,6 +475,8 @@ export function LibraryPage() {
   const undiagnosed = new Set(
     (courses ?? []).filter((c) => !c.diagnosed_at).map((c) => c.id),
   );
+  // 지울 수 있는 건 **수업뿐이다.** 픽스처와 낱권 자료는 이 목록에 없다.
+  const courseIds = new Set((courses ?? []).map((c) => c.id));
 
   // 카드에 문항 수를 실으려면 코스별 문제은행 요약이 필요하다. `fetchCourseBanks`가
   // 코스 목록 + 코스별 요약을 한 번에 모아 준다 — 카드마다 따로 묻지 않는다.
@@ -535,6 +586,26 @@ export function LibraryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCourse, courseStatusKey, assembleError, dropPending, clearPendingCourse, qc]);
 
+  /** 수업 지우기. 서버가 지운 뒤 **캐시를 통째로 버린다** — 무효화만 하면
+   *  다시 받아오는 사이 방금 지운 카드가 그대로 남아 있다. */
+  async function removeCourse(courseId: string) {
+    setRemoving(courseId);
+    setRemoveError(null);
+    try {
+      await deleteCourse(courseId);
+      qc.removeQueries({ queryKey: curriculumKeys.document(courseId) });
+      qc.removeQueries({ queryKey: ["courses", "list"] });
+      qc.removeQueries({ queryKey: ["quiz", "banks"] });
+      await qc.invalidateQueries({ queryKey: curriculumKeys.documents });
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail;
+      setRemoveError(detail ?? (e as Error)?.message ?? "수업을 지우지 못했어요.");
+    } finally {
+      setRemoving(null);
+    }
+  }
+
   // 이어서 = 한 번이라도 본 자료 중 준비도가 가장 높은 것(아직 미완).
   const continueDoc = ready
     .filter((d) => sectionsDone(d) > 0 && !d.complete)
@@ -568,6 +639,12 @@ export function LibraryPage() {
         <div className="mb-6 flex items-end justify-between">
           <h3 className="text-xl font-bold text-text-primary">나의 책장</h3>
         </div>
+
+        {removeError && (
+          <p className="mb-6 rounded-xl bg-red-50 px-5 py-3 text-[0.9rem] text-red-600">
+            {removeError}
+          </p>
+        )}
 
         {isLoading && (
           <p className="py-12 text-center text-text-secondary">자료를 불러오는 중…</p>
@@ -648,6 +725,12 @@ export function LibraryPage() {
                   cover={coverById.get(doc.docId) ?? COVERS[0]}
                   needsDiagnostic={undiagnosed.has(doc.docId)}
                   bank={bankByCourse.get(doc.docId)}
+                  onDelete={
+                    courseIds.has(doc.docId)
+                      ? () => void removeCourse(doc.docId)
+                      : undefined
+                  }
+                  deleting={removing === doc.docId}
                 />
               ))}
             </div>
