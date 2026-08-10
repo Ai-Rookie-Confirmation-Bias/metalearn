@@ -35,10 +35,16 @@ BASE = "http://localhost:8000/api/curriculum"
 # 로그인 없이 도는 dev 유저. core/deps.py의 DEV_USER_ID와 같아야 한다.
 DEV_USER = "00000000-0000-0000-0000-000000000001"
 
+# ⚠️ **누구로 기록하느냐가 결과를 가른다.** 진도는 사람별이고, 분석은 그
+#    사람이 소유한 자료만 센다. 구글로 로그인해 만든 수업에 dev 유저로
+#    시드하면 답은 들어가는데 **분석에는 하나도 안 잡힌다**(실측: 형성평가
+#    4개까지 풀었는데 시도 0건). `--user`로 그 수업의 주인을 넘겨라.
+_user = DEV_USER
+
 
 def call(method: str, path: str, body: dict | None = None, timeout: int = 600):
     req = urllib.request.Request(f"{BASE}{path}", method=method)
-    req.add_header("X-User-Id", DEV_USER)
+    req.add_header("X-User-Id", _user)
     data = None
     if body is not None:
         data = json.dumps(body).encode()
@@ -104,6 +110,22 @@ def seed(
                 )
                 if not ok and key:
                     missed.append(key)
+            # 틀린 개념은 **그 자리에서 한 번 더** 틀린 것으로 남긴다.
+            #
+            # 약점(`weak_concepts`)은 같은 개념 2회 이상 오답이라야 잡힌다
+            # (`WEAK_THRESHOLD`). 그런데 화면마다 개념이 다르니 한 바퀴 돌면
+            # 개념당 1회뿐이라, 오답률을 아무리 올려도 **약점이 0개로 남는다**
+            # (실측: wrong 0.45로 68건을 풀었는데 약점 0). 그러면 분석 화면의
+            # "자주 걸리는 개념"이 통째로 빈다.
+            #
+            # 실제 학습자도 틀린 문항을 다시 풀다 또 틀린다 — 지어낸 상태가
+            # 아니라 흔한 상태다.
+            for key in missed:
+                call(
+                    "POST",
+                    f"/documents/{q(doc_id)}/sections/{sec['sectionId']}/answer",
+                    {"correct": False, "conceptKey": key, "kind": "retrieval"},
+                )
             learned.append((ch["index"], sec["sectionId"], missed))
             done += 1
             print(f"    {done:2}/{n_sections}  {sec['title'][:26]:28} 문항 {len(asked)} · 틀림 {len(missed)}", flush=True)
@@ -183,7 +205,15 @@ def main() -> int:
     # deep)은 아직 안 배운 목차에만 걸리는데, 시드가 앞부터 채우면 첫 목차가
     # 측정 기반으로 넘어가 A/B 차이가 첫 화면에서 안 보인다(실측: 목차 0만 normal).
     ap.add_argument("--from-chapter", type=int, default=0, help="이 목차부터 학습 (기본 0)")
+    ap.add_argument(
+        "--user",
+        default=DEV_USER,
+        help="누구로 기록할지. **그 수업의 주인이어야 한다** — 아니면 분석에 안 잡힌다",
+    )
     args = ap.parse_args()
+
+    global _user
+    _user = args.user
 
     if args.list or not args.doc:
         for d in call("GET", "/documents"):
