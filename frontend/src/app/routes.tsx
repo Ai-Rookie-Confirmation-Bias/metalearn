@@ -8,6 +8,7 @@ import { AuthCallbackPage } from "@/pages/AuthCallbackPage";
 import { ProfileSetupPage } from "@/pages/ProfileSetupPage";
 import { LearningPage } from "@/pages/LearningPage";
 import { LibraryPage } from "@/pages/LibraryPage";
+import { SharedLibraryPage } from "@/pages/SharedLibraryPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
@@ -47,6 +48,8 @@ export const router = createBrowserRouter([
     element: <AppLayout />,
     children: [
       { path: "library", element: <LibraryPage /> },
+      // 기본 제공 자료 — 내 책장이 아니라 둘러보는 자리라 페이지를 가른다
+      { path: "shared", element: <SharedLibraryPage /> },
       { path: "quiz", element: <QuizPage /> }, // 문제은행 — 학습과 분리된 객관 페이지 (docs/QUIZ.md)
       { path: "analysis", element: <AnalysisPage /> },
       { path: "settings", element: <SettingsPage /> },

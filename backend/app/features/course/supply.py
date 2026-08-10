@@ -98,14 +98,76 @@ class SupplyService:
         self.repo = ParsingRepository(db)
 
     # ── 바깥문 ────────────────────────────────────────────────────
-    async def run(self, course: Course, *, refresh: bool = False) -> dict:
+    async def preview(self, course: Course) -> dict:
+        """확정 화면(⑥)이 쓸 것 전부. **LLM을 안 부른다.**
+
+        조달을 미리보기와 확정으로 가른 이유가 이것이다. 명세 생성은 과목당
+        몇 초라, 미리보기에서 만들면 사용자가 **뺄 과목까지 만들어 놓고**
+        기다리게 된다. 여기서 드는 건 과목 이름 임베딩 1콜뿐이다.
+
+        `source`가 화면의 본론이다:
+
+            book       원문 있는 책이 이걸 가르친다 — 그 책으로 설명한다
+            ready      전에 만들어 둔 명세가 있다 (같은 분야·과목)
+            generate   아무것도 없다 — 확정하면 그때 만든다
+        """
+        field = self._field_of(course)
+        groups = self._groups(course.id)
+        if not groups:
+            return {"field": field, "subjects": [], "topics_before": len(course.topics)}
+
+        hits = await self._existing_hits(course, groups)
+
+        subjects = []
+        for subject, rows in groups.items():
+            hit = hits.get(subject)
+            made = self.db.scalar(
+                select(Document.id).where(
+                    Document.fingerprint == _fingerprint(field, subject)
+                )
+            )
+            plan = _plan_of(rows)
+            subjects.append(
+                {
+                    "subject": subject,
+                    "items": [r.item for r in rows],
+                    "why": next((r.why for r in rows if r.why), None),
+                    "known": sum(1 for r in rows if r.known == KNOWN),
+                    "unknown": sum(1 for r in rows if r.known == UNKNOWN),
+                    "asked": sum(1 for r in rows if r.verified is not None),
+                    "plan": plan,
+                    # 뺐던 과목은 꺼진 채로 보여준다 — 지난번 선택을 기억한다.
+                    "selected": plan != TopicPlan.SKIP.value
+                    and not any(r.excluded for r in rows),
+                    "source": "book" if hit else ("ready" if made else "generate"),
+                    "evidence": hit,
+                }
+            )
+        return {
+            "field": field,
+            "subjects": subjects,
+            "topics_before": len(course.topics),
+        }
+
+    async def run(
+        self,
+        course: Course,
+        *,
+        refresh: bool = False,
+        exclude: list[str] | None = None,
+    ) -> dict:
         """26·27을 한 번에. 이미 끼워진 코스는 `plan`만 다시 맞춘다.
 
         진단을 다시 하면 판정이 바뀐다. 그때 단원을 지웠다 다시 만들면 사용자가
         고친 순서가 날아가므로, **자료는 그대로 두고 `plan`만 고친다.**
+
+        `exclude`는 확정 화면(⑥)에서 사용자가 뺀 과목이다. 뺀 과목은 명세도
+        안 만들고 목차에도 안 넣는다 — **LLM 호출이 그만큼 줄어든다.**
         """
         field = self._field_of(course)
         groups = self._groups(course.id)
+        if exclude is not None:
+            groups = self._exclude(course.id, groups, exclude)
         if not groups:
             return {"subjects": 0, "made": 0, "reused": 0, "inserted": 0, "updated": 0}
 
@@ -165,6 +227,26 @@ class SupplyService:
         for row in rows:
             groups.setdefault(row.subject, []).append(row)
         return groups
+
+    def _exclude(
+        self,
+        course_id: uuid.UUID,
+        groups: dict[str, list[CoursePrereq]],
+        exclude: list[str],
+    ) -> dict[str, list[CoursePrereq]]:
+        """뺀 과목을 도장 찍고 목록에서 뺀다.
+
+        **지우지 않는다.** 선수 판정은 자료에서 나오므로 행을 지우면 다음
+        계산이 같은 과목을 되살린다. 뺐다는 사실만 남긴다.
+        """
+        dropped = set(exclude)
+        for subject, rows in groups.items():
+            for row in rows:
+                row.excluded = subject in dropped
+        self.db.flush()
+        if dropped:
+            _log.info("확정 화면에서 뺀 과목: %s", ", ".join(sorted(dropped)))
+        return {s: rows for s, rows in groups.items() if s not in dropped}
 
     # ── 26 조달 ───────────────────────────────────────────────────
     async def _document_for(
@@ -247,11 +329,24 @@ class SupplyService:
     # ── ② 이미 있는 자료 찾기 — 표시만 한다 ──────────────────────
     async def _existing_hits(
         self, course: Course, groups: dict[str, list[CoursePrereq]]
-    ) -> dict[str, str]:
-        """`{과목: "이미 있는 자료: …"}`. 임베딩 1콜.
+    ) -> dict[str, dict]:
+        """`{과목: {filename, concept, similarity, document_id}}`. 임베딩 1콜.
+
+        **과목 이름이 아니라 하위 항목으로 찾는다.** 과목 이름은 임베딩이 못
+        가른다 — 실측에서 `데이터베이스 기초`의 최근접이 `데이터베이스`인데도
+        0.650이라 문턱 근처에도 못 갔다. 반면 하위 항목은 구체적인 명사구라
+        잘 듣는다:
+
+            데이터베이스 기초        → 데이터베이스        0.650   ✗ 못 걸린다
+            트랜잭션과 ACID 속성     → 트랜잭션 특성       0.765   ✓
+            유선/무선 네트워크 표준   → 무선 LAN 표준      0.789   ✓
+
+        문턱을 낮추는 대신 **묻는 걸 바꿨다.** 항목 하나라도 걸리면 그 책이
+        그 과목을 다룬다고 본다.
 
         **바꿔치지 않는다.** 잘못 걸리면 엉뚱한 단원이 통째로 들어가는데 실측
-        히트율이 28개 중 2개라, 자동화해서 얻는 것보다 잃는 게 크다.
+        히트율이 28개 중 2개라, 자동화해서 얻는 것보다 잃는 게 크다. 확정
+        화면(⑥)이 이걸 보여주고 **사용자가 고른다.**
 
         세 가지는 걸러야 쓸모가 있다.
 
@@ -261,18 +356,20 @@ class SupplyService:
             원문 없는 개념   `ai_prereq`거나 조각이 안 붙은 개념은 이름만 있다.
                             "이 자료로 대신 배우세요"의 근거가 못 된다
         """
-        names = list(groups)
-        if not names:
+        pairs = [(subject, row.item) for subject, rows in groups.items() for row in rows]
+        if not pairs:
             return {}
         try:
-            vectors = await solar_client.embed_batch(names, purpose="query")
+            vectors = await solar_client.embed_batch(
+                [item for _, item in pairs], purpose="query"
+            )
         except Exception as exc:  # noqa: BLE001 — 표시가 없을 뿐이다
             _log.warning("보강 대체 자료 조회 실패: %s", exc)
             return {}
 
         mine = {cd.document_id for cd in course.documents}
-        out: dict[str, str] = {}
-        for name, vector in zip(names, vectors):
+        out: dict[str, dict] = {}
+        for (subject, item), vector in zip(pairs, vectors):
             # 최근접 하나만 보면 거를 것들에 자리를 뺏긴다. 몇 개 보고 고른다.
             for concept, similarity in self.repo.search_concepts(
                 embedding=vector, limit=5, min_sim=_HIT_SIM
@@ -284,10 +381,16 @@ class SupplyService:
                 document = self.repo.get_document(concept.document_id)
                 if document is None or document.source_format == GENERATED:
                     continue
-                out[name] = (
-                    f"{HIT_PREFIX}{document.filename} — "
-                    f"{concept.name} ({similarity:.2f})"
-                )
+                # 과목마다 가장 닮은 항목 하나만 남긴다 — 화면에 한 줄이다.
+                best = out.get(subject)
+                if best is None or similarity > best["similarity"]:
+                    out[subject] = {
+                        "document_id": str(document.id),
+                        "filename": document.filename,
+                        "concept": concept.name,
+                        "item": item,
+                        "similarity": round(float(similarity), 3),
+                    }
                 break
         return out
 
@@ -297,7 +400,7 @@ class SupplyService:
         course: Course,
         groups: dict[str, list[CoursePrereq]],
         documents: dict[str, Document],
-        hits: dict[str, str],
+        hits: dict[str, dict],
         *,
         refresh: bool,
     ) -> tuple[int, int]:
@@ -396,15 +499,24 @@ def covered_by(note: str | None) -> str | None:
     return note.split(HIT_PREFIX, 1)[1].strip() or None
 
 
-def _note_of(rows: list[CoursePrereq], hit: str | None) -> str:
-    """왜 이 단원이 생겼는지 한 줄. 화면이 그대로 보여준다."""
+def _note_of(rows: list[CoursePrereq], hit: dict | None) -> str:
+    """왜 이 단원이 생겼는지 한 줄. 화면이 그대로 보여준다.
+
+    히트는 이제 구조체(확정 화면이 쓴다)지만 **여기서 펴는 문자열 형식은 그대로
+    두어야 한다** — `covered_by()`가 이 문장을 도로 잘라서 학습 화면에 쓴다.
+    """
     known = sum(1 for r in rows if r.known == KNOWN)
     unknown = sum(1 for r in rows if r.known == UNKNOWN)
     asked = sum(1 for r in rows if r.verified is not None)
     note = f"진단: {len(rows)}항목 중 안다 {known} · 모른다 {unknown} · 확인 문항 {asked}"
     if len(rows) - known - unknown:
         note += f" · 미확인 {len(rows) - known - unknown}"
-    return f"{note} · {hit}" if hit else note
+    if not hit:
+        return note
+    return (
+        f"{note} · {HIT_PREFIX}{hit['filename']} — "
+        f"{hit['concept']} ({hit['similarity']:.2f})"
+    )
 
 
 def _as_index(value, size: int) -> int | None:

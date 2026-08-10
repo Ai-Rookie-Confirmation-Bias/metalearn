@@ -57,3 +57,9 @@ export async function getCourse(courseId: string): Promise<Course> {
   const { data } = await apiClient.get<Course>(`/api/courses/${courseId}`);
   return data;
 }
+
+/** 수업을 지운다. **자료 자체는 안 지운다** — 공용이라 남이 같은 책을 쓴다.
+ *  대신 그 자료의 책장 연결이 끊겨서, 지운 자리에 PDF가 낱권으로 되살아나지 않는다. */
+export async function deleteCourse(courseId: string): Promise<void> {
+  await apiClient.delete(`/api/courses/${courseId}`);
+}

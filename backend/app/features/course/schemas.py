@@ -333,6 +333,52 @@ class SupplyOut(BaseModel):
     updated: int = 0
 
 
+class SupplyEvidenceOut(BaseModel):
+    """"이 책이 그 과목을 가르친다"의 근거. 화면이 그대로 보여준다."""
+
+    document_id: str
+    filename: str
+    # 그 책 안에서 걸린 개념과, 우리 쪽에서 물은 항목. 되짚기용이다.
+    concept: str
+    item: str = ""
+    similarity: float
+
+
+class SupplySubjectOut(BaseModel):
+    """확정 화면(⑥)의 한 줄 — 앞에 넣을지 말지를 여기서 고른다."""
+
+    subject: str
+    items: list[str] = []
+    why: str | None = None
+    # 진단이 뭐라고 했나. 화면이 "4항목 중 모른다 3"으로 쓴다.
+    known: int = 0
+    unknown: int = 0
+    asked: int = 0
+    plan: str
+    # 체크박스 기본값. `plan='skip'`(전부 안다)이면 꺼진 채로 뜬다 —
+    # 조용히 숨기지 않고 **보여주고 사용자가 확인**하게 한다. 24의 판정에는
+    # 추정이 섞여 있다.
+    selected: bool = True
+    # book: 원문 있는 책이 가르친다 | ready: 만들어 둔 명세가 있다
+    # generate: 아무것도 없다 — 확정하면 그때 만든다
+    source: str = "generate"
+    evidence: SupplyEvidenceOut | None = None
+
+
+class SupplyPreviewOut(BaseModel):
+    """확정 화면이 쓸 것 전부. **LLM을 안 부른다** (임베딩 1콜)."""
+
+    field: str = ""
+    subjects: list[SupplySubjectOut] = []
+    topics_before: int = 0
+
+
+class SupplyIn(BaseModel):
+    """확정 — 뺀 과목을 알려 준다. 비우면 전부 넣는다(옛 동작)."""
+
+    exclude: list[str] | None = None
+
+
 class ProbeGradeOut(BaseModel):
     """채점 결과. `subjects_left`가 0이면 진단이 끝났다.
 

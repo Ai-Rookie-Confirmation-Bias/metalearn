@@ -99,10 +99,26 @@ def test_안_물어본_항목을_따로_센다():
     assert "미확인 2" in note
 
 
+def hit(filename: str, concept: str, similarity: float) -> dict:
+    """`_existing_hits`가 돌려주는 모양. 확정 화면(⑥)이 구조를 그대로 쓴다."""
+    return {
+        "document_id": "d",
+        "filename": filename,
+        "concept": concept,
+        "item": "아무 항목",
+        "similarity": similarity,
+    }
+
+
 def test_대체_자료가_있으면_붙인다():
-    note = _note_of([Row(KNOWN)], f"{HIT_PREFIX}pilgi.pdf — 자료 구조 (0.83)")
+    note = _note_of([Row(KNOWN)], hit("pilgi.pdf", "자료 구조", 0.83))
     assert note.endswith("(0.83)")
+    assert "pilgi.pdf" in note
     assert "진단:" in note
+
+
+def test_대체_자료가_없으면_진단만_적는다():
+    assert _note_of([Row(KNOWN)], None).startswith("진단:")
 
 
 def test_note에서_책장_히트만_떼어낸다():
@@ -115,9 +131,11 @@ def test_note에서_책장_히트만_떼어낸다():
 
     접두사를 한쪽만 고치면 화면에서 **조용히 사라진다.** 그래서 잠근다.
     """
-    hit = f"{HIT_PREFIX}운영체제_2장.pdf — 인터럽트 (0.82)"
-    note = _note_of([Row(KNOWN), Row(UNKNOWN)], hit)
+    note = _note_of(
+        [Row(KNOWN), Row(UNKNOWN)], hit("운영체제_2장.pdf", "인터럽트", 0.82)
+    )
 
+    assert HIT_PREFIX in note
     assert covered_by(note) == "운영체제_2장.pdf — 인터럽트 (0.82)"
     assert "진단:" in note  # 통계는 note에 그대로 남는다
 

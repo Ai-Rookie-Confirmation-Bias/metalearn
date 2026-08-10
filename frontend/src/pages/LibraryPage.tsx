@@ -4,17 +4,11 @@ import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   PlusIcon,
   PlayIcon,
-  PencilIcon,
-  PenNibIcon,
-  BookOpenIcon,
-  NotebookIcon,
-  GraduationCapIcon,
-  BookmarkIcon,
   WarningCircleIcon,
-  type Icon,
+  TrashIcon,
 } from "@phosphor-icons/react";
 
-import { createCourse, listCourses } from "@/features/course/api";
+import { createCourse, deleteCourse, listCourses } from "@/features/course/api";
 import {
   purposeToGoal,
   usePendingCourse,
@@ -35,35 +29,11 @@ import {
 } from "@/features/parsing/api/documents";
 import { useParsingDocuments } from "@/features/parsing/queries/useParsingDocuments";
 import { usePendingUploads } from "@/features/parsing/store";
-
-// 커버(색+아이콘)는 표현 계층. docId로 파생해 책장 안에서 안 겹치게.
-type Cover = { grad: string; icon: Icon };
-const COVERS: Cover[] = [
-  { grad: "from-[#0f172a] to-[#334155]", icon: PencilIcon },
-  { grad: "from-[#059669] to-[#10b981]", icon: BookOpenIcon },
-  { grad: "from-[#7c3aed] to-[#a855f7]", icon: PenNibIcon },
-  { grad: "from-[#d97706] to-[#f59e0b]", icon: NotebookIcon },
-  { grad: "from-[#e11d48] to-[#fb7185]", icon: GraduationCapIcon },
-  { grad: "from-[#0d9488] to-[#14b8a6]", icon: BookmarkIcon },
-];
-
-function hashIndex(id: string) {
-  return [...id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % COVERS.length;
-}
-
-function assignCovers(ids: string[]): Map<string, Cover> {
-  const used = new Set<number>();
-  const map = new Map<string, Cover>();
-  for (const id of ids) {
-    let idx = hashIndex(id);
-    for (let i = 0; used.has(idx) && i < COVERS.length; i++) {
-      idx = (idx + 1) % COVERS.length;
-    }
-    used.add(idx);
-    map.set(id, COVERS[idx]);
-  }
-  return map;
-}
+import {
+  COVERS,
+  assignCovers,
+  type Cover,
+} from "@/features/curriculum/components/covers";
 
 function learnPath(docId: string) {
   return `/curriculum/${encodeURIComponent(docId)}`;
@@ -114,6 +84,8 @@ function BookCard({
   cover,
   needsDiagnostic,
   bank,
+  onDelete,
+  deleting,
 }: {
   doc: DocumentOut;
   cover: Cover;
@@ -122,26 +94,27 @@ function BookCard({
   needsDiagnostic?: boolean;
   /** 이 수업의 문제은행. 없으면 아직 안 만들어졌거나 만드는 중. */
   bank?: CourseBank;
+  /** 수업일 때만 온다. 픽스처·자료 하나짜리는 지울 대상이 아니다. */
+  onDelete?: () => void;
+  deleting?: boolean;
 }) {
+  // 지우기는 되돌릴 수 없다. **한 번 더 묻는다** — 카드가 격자로 촘촘히 붙어
+  // 있어서 오른쪽 위 작은 버튼은 잘못 누르기 딱 좋은 자리다.
+  const [confirming, setConfirming] = useState(false);
   const done = sectionsDone(doc);
   const progress = Math.round(doc.readiness * 100);
   const started = done > 0;
 
-  // 기본 제공 자료는 **내 학습이 아니라 둘러보는 것**이다. 진단을 요구하지
-  // 않고(진단은 내 목표·성향을 묻는 자리다), 문구도 "학습"이 아니라 "보기"다.
-  // 올린 사람에게는 자기 자료와 구경거리가 한눈에 갈려야 한다.
-  const shared = Boolean(doc.shared);
-  const cta = shared
-    ? "학습 자료 보기"
-    : needsDiagnostic
-      ? "진단하고 시작하기"
-      : started
-        ? "이어서 학습하기"
-        : "바로 학습하기";
-  const to =
-    !shared && needsDiagnostic
-      ? `/diagnostic/${encodeURIComponent(doc.docId)}`
-      : learnPath(doc.docId);
+  // 기본 제공 자료는 여기 안 온다 — `/shared` 페이지가 따로 맡는다.
+  // 이 카드는 **내가 올린 자료 전용**이라 진단·진도·문제집을 다 말할 수 있다.
+  const cta = needsDiagnostic
+    ? "진단하고 시작하기"
+    : started
+      ? "이어서 학습하기"
+      : "바로 학습하기";
+  const to = needsDiagnostic
+    ? `/diagnostic/${encodeURIComponent(doc.docId)}`
+    : learnPath(doc.docId);
   const CoverIcon = cover.icon;
 
   // 문제집은 **같은 자료의 다른 갈래**다. 전에는 `/quiz` 탭에 따로 있어서,
@@ -149,9 +122,7 @@ function BookCard({
   const items = bank?.summary?.total ?? 0;
   const quizReady = items > 0;
   const quizLabel = quizReady
-    ? shared
-      ? `문제집 보기 · ${items}문항`
-      : `문제 풀기 · ${items}문항`
+    ? `문제 풀기 · ${items}문항`
     : bank?.status === "generating"
       ? "문제 만드는 중…"
       : "문제집 없음";
@@ -165,6 +136,17 @@ function BookCard({
         <span className="absolute right-4 top-4 rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur-sm">
           화면 {doc.sectionsTotal}개
         </span>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            aria-label="이 수업 지우기"
+            title="이 수업 지우기"
+            className="absolute left-3 top-3 rounded-lg p-2 text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+          >
+            <TrashIcon className="text-[1.1rem]" />
+          </button>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col p-6">
@@ -195,13 +177,35 @@ function BookCard({
             </p>
           </div>
         ) : (
-          <div className="mb-4 text-[0.85rem] text-text-tertiary">
-            {/* 기본 제공 자료에 "아직 시작하지 않았어요"는 재촉으로 읽힌다.
-                이건 내 학습 목록이 아니라 열어 볼 수 있는 자료다. */}
-            {shared ? "진단 없이 바로 열어볼 수 있어요" : "아직 시작하지 않았어요"}
-          </div>
+          <div className="mb-4 text-[0.85rem] text-text-tertiary">아직 시작하지 않았어요</div>
         )}
 
+        {confirming ? (
+          <div className="mt-auto flex flex-col gap-2">
+            <p className="text-[0.85rem] text-text-secondary">
+              이 수업을 지울까요? <strong>진도와 목차가 함께 사라져요.</strong>{" "}
+              올린 파일은 다시 올리면 됩니다.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onDelete}
+                disabled={deleting}
+                className="inline-flex flex-1 items-center justify-center rounded-xl bg-red-600 px-5 py-3 text-[0.9rem] font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+              >
+                {deleting ? "지우는 중…" : "지우기"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                disabled={deleting}
+                className="inline-flex flex-1 items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:bg-bg-secondary"
+              >
+                그대로 두기
+              </button>
+            </div>
+          </div>
+        ) : (
         <div className="mt-auto flex flex-col gap-2">
           <Link
             to={to}
@@ -226,6 +230,7 @@ function BookCard({
             </span>
           )}
         </div>
+        )}
       </div>
     </div>
   );
@@ -417,6 +422,8 @@ export function LibraryPage() {
   const clearPendingCourse = usePendingCourse((s) => s.clear);
   const { data: docIds, isLoading, isError } = useDocuments();
   const [assembleError, setAssembleError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const assembling = useRef(false);
 
   const courseDocIds = new Set(pendingCourse?.documentIds ?? []);
@@ -440,6 +447,8 @@ export function LibraryPage() {
   const undiagnosed = new Set(
     (courses ?? []).filter((c) => !c.diagnosed_at).map((c) => c.id),
   );
+  // 지울 수 있는 건 **수업뿐이다.** 픽스처와 낱권 자료는 이 목록에 없다.
+  const courseIds = new Set((courses ?? []).map((c) => c.id));
 
   // 카드에 문항 수를 실으려면 코스별 문제은행 요약이 필요하다. `fetchCourseBanks`가
   // 코스 목록 + 코스별 요약을 한 번에 모아 준다 — 카드마다 따로 묻지 않는다.
@@ -474,10 +483,9 @@ export function LibraryPage() {
     .map((q) => q.data)
     .filter((d): d is DocumentOut => Boolean(d) && !courseDocIds.has(d!.docId));
 
-  // 책장을 두 칸으로 가른다. **주인 없는 자료를 "내 자료"에 섞으면 안 된다** —
-  // 올린 적 없는 책이 내 책장에 있는 게 되고, 그러면 진단이 "이건 이미 있는
-  // 자료로 배울 수 있어요"라고 할 때 그 근거가 어디서 왔는지도 흐려진다.
-  const shelfShared = ready.filter((d) => d.shared);
+  // 기본 제공 자료는 **여기 안 놓는다.** 사이드바 `/shared`가 따로 맡는다 —
+  // 올린 적 없는 책이 "나의 책장"에 섞이면 그게 내 것인지 아닌지 흐려지고,
+  // 그 자료들은 진단도 진도도 없어서 카드가 말할 수 있는 것 자체가 다르다.
   const shelfMine = ready.filter((d) => !d.shared);
 
   // 파싱이 끝나도 커리큘럼 목록은 다시 물어봐야 안다 — 그 목록 API가 호출될
@@ -567,6 +575,26 @@ export function LibraryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCourse, courseStatusKey, assembleError, dropPending, clearPendingCourse, qc]);
 
+  /** 수업 지우기. 서버가 지운 뒤 **캐시를 통째로 버린다** — 무효화만 하면
+   *  다시 받아오는 사이 방금 지운 카드가 그대로 남아 있다. */
+  async function removeCourse(courseId: string) {
+    setRemoving(courseId);
+    setRemoveError(null);
+    try {
+      await deleteCourse(courseId);
+      qc.removeQueries({ queryKey: curriculumKeys.document(courseId) });
+      qc.removeQueries({ queryKey: ["courses", "list"] });
+      qc.removeQueries({ queryKey: ["quiz", "banks"] });
+      await qc.invalidateQueries({ queryKey: curriculumKeys.documents });
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail;
+      setRemoveError(detail ?? (e as Error)?.message ?? "수업을 지우지 못했어요.");
+    } finally {
+      setRemoving(null);
+    }
+  }
+
   // 이어서 = 한 번이라도 본 자료 중 준비도가 가장 높은 것(아직 미완).
   const continueDoc = ready
     .filter((d) => sectionsDone(d) > 0 && !d.complete)
@@ -602,6 +630,12 @@ export function LibraryPage() {
         <div className="mb-6 flex items-end justify-between">
           <h3 className="text-xl font-bold text-text-primary">나의 책장</h3>
         </div>
+
+        {removeError && (
+          <p className="mb-6 rounded-xl bg-red-50 px-5 py-3 text-[0.9rem] text-red-600">
+            {removeError}
+          </p>
+        )}
 
         {isLoading && (
           <p className="py-12 text-center text-text-secondary">자료를 불러오는 중…</p>
@@ -682,6 +716,12 @@ export function LibraryPage() {
                   cover={coverById.get(doc.docId) ?? COVERS[0]}
                   needsDiagnostic={undiagnosed.has(doc.docId)}
                   bank={bankByCourse.get(doc.docId)}
+                  onDelete={
+                    courseIds.has(doc.docId)
+                      ? () => void removeCourse(doc.docId)
+                      : undefined
+                  }
+                  deleting={removing === doc.docId}
                 />
               ))}
             </div>
@@ -689,34 +729,6 @@ export function LibraryPage() {
         )}
       </section>
 
-      {/* 기본 제공 자료 — 주인이 없어 누구 책장에나 뜬다.
-          내가 올린 것 **아래**에 둔다: 위 칸이 이 사람의 자리다. */}
-      {!isLoading && !isError && shelfShared.length > 0 && (
-        <section className="mt-14">
-          <div className="mb-2 flex items-end justify-between">
-            <h3 className="text-xl font-bold text-text-primary">기본 제공 자료</h3>
-            <span className="text-[0.85rem] text-text-tertiary">
-              {shelfShared.length}권
-            </span>
-          </div>
-          <p className="mb-6 text-[0.9rem] text-text-secondary">
-            CS 기초 자료를 미리 넣어 뒀어요. 바로 학습할 수 있고, 올리신 자료에서
-            모르는 선수 개념이 나오면 여기서 찾아 채웁니다.
-          </p>
-
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-8">
-            {shelfShared.map((doc) => (
-              <BookCard
-                key={doc.docId}
-                doc={doc}
-                cover={coverById.get(doc.docId) ?? COVERS[0]}
-                needsDiagnostic={undiagnosed.has(doc.docId)}
-                bank={bankByCourse.get(doc.docId)}
-              />
-            ))}
-          </div>
-        </section>
-      )}
     </div>
   );
 }

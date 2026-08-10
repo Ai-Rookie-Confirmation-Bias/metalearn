@@ -25,6 +25,7 @@ import {
   fetchProbes,
   fetchSetup,
   gradeProbes,
+  previewSupply,
   saveConfig,
   supply,
   type DiagnosticCards,
@@ -33,6 +34,8 @@ import {
   type Known,
   type Probe,
   type Style,
+  type SupplyPreview,
+  type SupplySubject,
 } from "@/features/diagnostic/api";
 
 const GOALS: { value: Goal; label: string; hint: string }[] = [
@@ -62,7 +65,23 @@ const KNOWN_CHOICES: { value: Known; label: string }[] = [
   { value: "unknown", label: "모른다" },
 ];
 
-const STEPS = ["왜 배우나", "분야", "설명 방식", "아는 것", "확인", "채우기"];
+const STEPS = [
+  "왜 배우나",
+  "분야",
+  "설명 방식",
+  "아는 것",
+  "확인",
+  "목차 확정",
+  "채우기",
+];
+
+/** ⑥에서 과목 한 줄이 무엇으로 채워질지. 이게 이 화면의 본론이다 —
+ *  **있으면 있는 걸 쓰고, 없을 때만 만든다**를 눈으로 보여주는 자리. */
+const SOURCE: Record<string, { icon: string; label: string; tone: string }> = {
+  book: { icon: "📕", label: "이 책으로 설명해요", tone: "text-accent" },
+  ready: { icon: "✓", label: "이미 준비돼 있어요", tone: "text-accent" },
+  generate: { icon: "✨", label: "AI가 정리해 드려요", tone: "text-text-tertiary" },
+};
 
 /** 셸 밖 전체화면 껍데기. `/create` 위저드와 같은 틀이다 —
  *  진단은 목차를 **정하는** 자리라 목차를 옆에 띄우지 않는다. */
@@ -166,6 +185,10 @@ export function DiagnosticPage() {
   const [itemAns, setItemAns] = useState<Record<string, Known>>({});
   const [probes, setProbes] = useState<Probe[] | null>(null);
   const [picked, setPicked] = useState<Record<string, number>>({});
+  // ⑥ 확정 화면 — 무엇을 앞에 넣을지. `chosen`은 사용자가 건드린 것만 담고,
+  // 안 건드린 과목은 서버가 준 `selected`를 그대로 따른다.
+  const [preview, setPreview] = useState<SupplyPreview | null>(null);
+  const [chosen, setChosen] = useState<Record<string, boolean>>({});
   // 진단이 끝나고 조달까지 마친 결과. null이면 아직 진행 중이다.
   const [done, setDone] = useState<{
     subjects: number;
@@ -218,8 +241,11 @@ export function DiagnosticPage() {
     [expand, subjects],
   );
 
+  // ⚠️ 첫 화면의 "이전"은 **학습으로 가면 안 된다.** 진단은 목차를 정하는
+  //    단계라, 여기서 빠져나가 학습을 시작하면 보강 단원이 이미 읽은 단원
+  //    앞에 끼워진다. 나가는 길은 책장이다 — 카드가 다시 진단으로 부른다.
   const back = () =>
-    step === 0 ? navigate(`/curriculum/${docId}`) : setStep((s) => s - 1);
+    step === 0 ? navigate("/library") : setStep((s) => s - 1);
 
   async function next() {
     setBusy(true);
@@ -261,6 +287,8 @@ export function DiagnosticPage() {
         // **한 라운드로 안 끝난다.** 맞힌 과목은 한 번 더 묻는다 — 4지선다는
         // 찍어서 맞으니 한 번으로는 못 믿는다. 빈 배열이 올 때까지 돈다.
         await toProbes();
+      } else if (step === 5) {
+        await runSupply();
       }
     } catch {
       setError("저장하지 못했습니다. 잠시 후 다시 시도해 주세요.");
@@ -272,10 +300,10 @@ export function DiagnosticPage() {
   async function toProbes() {
     const p = await fetchProbes(docId);
     // ⑤는 **빈 목록일 수 있다** — 다 끝났거나, 정답을 못 세워 문항을 못 냈거나.
-    // 어느 쪽이든 여기서 진단이 끝나고 조달로 넘어간다.
+    // 어느 쪽이든 여기서 진단이 끝나고 확정 화면으로 넘어간다.
     if (p.length === 0) {
       setProbes([]);
-      await runSupply();
+      await toPreview();
       return;
     }
     setProbes(p);
@@ -283,13 +311,36 @@ export function DiagnosticPage() {
     setStep(4);
   }
 
-  /** 26·27 — 모르는 과목의 자료를 마련해 목차 앞에 끼운다.
+  /** ⑥ — 무엇을 앞에 넣을지 **보여주고 묻는다.**
+   *
+   *  조달 전에 끊는 자리다. 여기서 LLM을 부르면 사용자가 뺄 과목까지 만들어
+   *  놓고 기다리게 된다. 실패하면 묻지 않고 예전처럼 전부 넣는다. */
+  async function toPreview() {
+    try {
+      const p = await previewSupply(docId);
+      if (p.subjects.length === 0) {
+        await runSupply();
+        return;
+      }
+      setPreview(p);
+      setStep(5);
+    } catch {
+      await runSupply();
+    }
+  }
+
+  const keep = (s: SupplySubject) => chosen[s.subject] ?? s.selected;
+
+  /** 26·27 — 남긴 과목의 자료를 마련해 목차 앞에 끼운다.
    *
    *  실패해도 진단 결과는 이미 저장돼 있다. 보강만 없는 채로 끝낸다. */
   async function runSupply() {
-    setStep(5);
+    setStep(6);
+    const exclude = (preview?.subjects ?? [])
+      .filter((s) => !keep(s))
+      .map((s) => s.subject);
     try {
-      const out = await supply(docId);
+      const out = await supply(docId, exclude);
       // 책장 카드가 "진단하고 시작하기" → "학습 시작하기"로 바뀌어야 하고,
       // 목차에는 보강 단원이 새로 들어와 있다.
       qc.removeQueries({ queryKey: ["courses", "list"] });
@@ -606,14 +657,96 @@ export function DiagnosticPage() {
         </>
       )}
 
-      {step === 5 && (
+      {step === 5 && preview && (
+        <>
+          <h2 className="mb-2 text-[1.75rem] font-bold tracking-tight text-text-primary">
+            이렇게 배우면 될까요?
+          </h2>
+          <p className="mb-7 text-[0.95rem] text-text-secondary">
+            진단 결과 <strong>먼저 볼 것</strong>을 목차 앞에 넣어요. 빼고
+            싶은 건 체크를 해제하세요.
+          </p>
+
+          <div className="flex flex-col gap-2.5">
+            {preview.subjects.map((s) => {
+              const on = keep(s);
+              const src = SOURCE[s.source] ?? SOURCE.generate;
+              return (
+                <button
+                  key={s.subject}
+                  type="button"
+                  onClick={() =>
+                    setChosen((p) => ({ ...p, [s.subject]: !on }))
+                  }
+                  className={clsx(
+                    "rounded-xl border-2 px-5 py-4 text-left transition-colors",
+                    on
+                      ? "border-accent bg-accent/5"
+                      : "border-border-primary bg-bg-secondary/50",
+                  )}
+                >
+                  <div className="flex items-start gap-3">
+                    <span
+                      className={clsx(
+                        "mt-0.5 flex h-5 w-5 flex-shrink-0 items-center justify-center rounded border-2 text-[0.7rem] font-bold",
+                        on
+                          ? "border-accent bg-accent text-white"
+                          : "border-border-primary text-transparent",
+                      )}
+                    >
+                      ✓
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div
+                        className={clsx(
+                          "font-semibold",
+                          on ? "text-text-primary" : "text-text-tertiary",
+                        )}
+                      >
+                        {s.subject}
+                      </div>
+                      <div className="mt-0.5 text-[0.85rem] text-text-tertiary">
+                        {s.items.length}항목 중 모른다 {s.unknown} · 안다{" "}
+                        {s.known}
+                        {s.asked > 0 && ` · 확인 문항 ${s.asked}`}
+                      </div>
+                      {/* 여기가 이 화면의 본론이다 — 있으면 있는 걸 쓴다. */}
+                      <div className={clsx("mt-2 text-[0.85rem]", src.tone)}>
+                        {src.icon}{" "}
+                        {s.evidence
+                          ? `${s.evidence.filename} 로 설명해요`
+                          : src.label}
+                      </div>
+                      {!on && s.plan === "skip" && (
+                        <div className="mt-1 text-[0.8rem] text-text-tertiary">
+                          이미 아신다고 하셨어요
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+
+          <p className="mt-6 text-[0.85rem] text-text-tertiary">
+            원래 목차 {preview.topics_before}개 앞에{" "}
+            <strong className="text-text-secondary">
+              {preview.subjects.filter(keep).length}개
+            </strong>
+            를 넣습니다. 자료가 없는 과목은 AI가 정리해 드려요.
+          </p>
+        </>
+      )}
+
+      {step === 6 && (
         <div className="flex flex-col items-center gap-4 py-24 text-center">
           <SpinnerGapIcon className="animate-spin text-[2.5rem] text-accent" />
           <p className="font-semibold text-text-primary">
             모자란 부분을 채우는 중…
           </p>
           <p className="text-[0.9rem] text-text-tertiary">
-            모른다고 하신 과목마다 무엇을 가르칠지 정리하고 있어요. 과목당 몇 초
+            고르신 과목마다 무엇을 가르칠지 정리하고 있어요. 과목당 몇 초
             걸려요.
           </p>
         </div>
@@ -628,16 +761,21 @@ export function DiagnosticPage() {
       <div
         className={clsx(
           "mt-10 flex items-center justify-between border-t border-border-primary pt-6",
-          step === 5 && "hidden",
+          step === 6 && "hidden",
         )}
       >
-        <button
-          type="button"
-          onClick={back}
-          className="inline-flex items-center gap-2 text-text-secondary hover:text-text-primary"
-        >
-          <ArrowLeftIcon /> {step === 0 ? "학습으로" : "이전"}
-        </button>
+        {/* ⑥에서는 뒤로 못 간다 — 채점이 이미 끝나 ⑤로 돌아가도 볼 게 없다. */}
+        {step === 5 ? (
+          <span />
+        ) : (
+          <button
+            type="button"
+            onClick={back}
+            className="inline-flex items-center gap-2 text-text-secondary hover:text-text-primary"
+          >
+            <ArrowLeftIcon /> {step === 0 ? "책장으로" : "이전"}
+          </button>
+        )}
         <button
           type="button"
           onClick={next}
@@ -650,7 +788,7 @@ export function DiagnosticPage() {
           )}
         >
           {busy ? <SpinnerGapIcon className="animate-spin" /> : null}
-          {step === 4 ? "채점하기" : "다음"}
+          {step === 4 ? "채점하기" : step === 5 ? "이대로 시작하기" : "다음"}
         </button>
       </div>
     </Shell>
