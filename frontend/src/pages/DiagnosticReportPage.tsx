@@ -70,6 +70,11 @@ export function DiagnosticReportPage() {
     return <p className="p-8 text-red-600">진단 결과를 불러오지 못했습니다.</p>;
 
   const subjects = setup.subjects;
+  const totalItems = subjects.reduce((n, s) => n + s.items.length, 0);
+  const unknownItems = subjects.reduce(
+    (n, s) => n + s.items.filter((i) => i.known === "unknown").length,
+    0,
+  );
   const topics = [...(course?.topics ?? [])].sort((a, b) => a.seq - b.seq);
   const inserted = topics.filter((t) => t.origin === "inserted");
   const original = topics.filter((t) => t.origin !== "inserted");
@@ -102,17 +107,21 @@ export function DiagnosticReportPage() {
 
       {/* ── 확정된 목차. 각 줄이 곧 결과다 ────────────────────────── */}
       <div className="mt-6 overflow-hidden rounded-2xl border border-border-primary bg-white">
-        <div className="border-b border-border-primary bg-bg-secondary px-6 py-4">
-          <h2 className="font-bold text-text-primary">이 순서로 배우게 됩니다</h2>
-          <p className="mt-1 text-[0.83rem] text-text-secondary">
-            먼저 채운 단원 <strong className="text-accent">{inserted.length}개</strong>
-            {skipped.length > 0 && (
-              <>
-                {" "}
-                · 아셔서 넣지 않은 과목 <strong>{skipped.length}개</strong>
-              </>
-            )}{" "}
-            · 교재 목차 {original.length}개
+        {/* 머리말은 **왜 이렇게 됐는지**를 한 문장으로 말한다. 구성만
+            적으면("단원 4개 · 목차 7개") 목록이 갑자기 시작하는 느낌이고,
+            첫 화면(720px)에 이유가 하나도 안 들어온다. */}
+        <div className="border-b border-border-primary bg-bg-secondary px-6 py-5">
+          <p className="text-[0.97rem] leading-relaxed text-text-primary">
+            먼저 알아야 할 <strong>{totalItems}가지</strong>를 확인해서{" "}
+            <strong>{unknownItems}가지</strong>를 모른다고 하셨어요.
+          </p>
+          <p className="mt-1.5 font-bold text-accent">
+            → 그래서 목차 앞에 {inserted.length}개 단원을 채웠습니다.
+          </p>
+          <p className="mt-2.5 border-t border-border-primary pt-2.5 text-[0.8rem] text-text-secondary">
+            이 순서로 배우게 됩니다 — 보강 {inserted.length}개
+            {skipped.length > 0 && <> · 아셔서 넣지 않은 과목 {skipped.length}개</>} ·
+            교재 목차 {original.length}개
           </p>
         </div>
 
@@ -120,12 +129,16 @@ export function DiagnosticReportPage() {
           const s = byName.get(t.title);
           const ev = s && evidenceOf(s);
           return (
+            // 강조는 **보여야 강조다.** 배경 알파 0.03은 흰 바탕에서 사실상
+            // 무색이라, 넣어 놓고도 회색 목록 하나로 읽혔다. 왼쪽 색 막대를
+            // 세우고 배경을 조금 올린다 — 목록을 훑을 때 눈이 걸리는 건
+            // 옅은 면보다 세로 선이다.
             <div
               key={t.id}
-              className="border-b border-border-primary bg-accent/[0.03] px-6 py-4"
+              className="border-b border-border-primary border-l-[3px] border-l-accent bg-accent/[0.06] px-6 py-4"
             >
               <div className="flex items-baseline gap-2">
-                <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[0.68rem] font-bold text-accent">
+                <span className="shrink-0 rounded bg-accent px-2 py-0.5 text-[0.72rem] font-bold text-white">
                   ✚ 먼저 채움
                 </span>
                 <span className="font-bold text-text-primary">{t.title}</span>
