@@ -67,6 +67,13 @@ class ParsingService:
         같은 교재를 N명이 올려도 파싱은 1회다.
         """
         fingerprint = hashlib.sha256(file_bytes).hexdigest()
+        if not settings.REUSE_PARSED_DOCUMENTS:
+            # 재사용을 껐다. 지문에 소금을 쳐서 아무와도 안 겹치게 만든다 —
+            # 조회를 건너뛰기만 하면 unique 제약에 걸린다.
+            fingerprint = hashlib.sha256(
+                file_bytes + uuid.uuid4().bytes
+            ).hexdigest()
+            _log.warning("문서 재사용 꺼짐 — %s를 새로 파싱한다", filename)
         existing = self.repo.find_by_fingerprint(fingerprint)
 
         if existing is not None:
