@@ -9,6 +9,7 @@ import { ProfileSetupPage } from "@/pages/ProfileSetupPage";
 import { LearningPage } from "@/pages/LearningPage";
 import { LibraryPage } from "@/pages/LibraryPage";
 import { SharedLibraryPage } from "@/pages/SharedLibraryPage";
+import { FocusPage } from "@/pages/FocusPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
@@ -77,6 +78,12 @@ export const router = createBrowserRouter([
       { path: "chapters/:index/formative", element: <FormativePage /> },
       { path: "sections/:sectionId", element: <SectionPage /> },
     ],
+  },
+  // 몰입 학습 모드 — **목차 레이아웃 밖이다.** 전체화면으로 한 칸만 보여주는
+  // 게 목적이라 사이드바가 뒤에 남아 있을 이유가 없다.
+  {
+    path: "/curriculum/:docId/sections/:sectionId/focus",
+    element: <FocusPage />,
   },
   // 수업 생성 위저드 — 셸 없는 전체화면 집중 플로우
   { path: "/create", element: <CreateCoursePage /> },
