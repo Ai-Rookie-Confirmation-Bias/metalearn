@@ -14,10 +14,12 @@ from app.features.course.models import TopicPlan  # noqa: E402
 from app.features.course.prompts import supply as supply_prompt  # noqa: E402
 from app.features.course.search import HEARD, KNOWN, UNKNOWN  # noqa: E402
 from app.features.course.supply import (  # noqa: E402
+    HIT_PREFIX,
     _as_index,
     _fingerprint,
     _note_of,
     _plan_of,
+    covered_by,
 )
 
 
@@ -98,9 +100,31 @@ def test_안_물어본_항목을_따로_센다():
 
 
 def test_대체_자료가_있으면_붙인다():
-    note = _note_of([Row(KNOWN)], "이미 있는 자료: pilgi.pdf — 자료 구조 (0.83)")
+    note = _note_of([Row(KNOWN)], f"{HIT_PREFIX}pilgi.pdf — 자료 구조 (0.83)")
     assert note.endswith("(0.83)")
     assert "진단:" in note
+
+
+def test_note에서_책장_히트만_떼어낸다():
+    """★ 만드는 쪽(`_note_of`)과 읽는 쪽(`covered_by`)이 같은 상수를 봐야 한다.
+
+    `note`는 진단 통계와 히트가 한 줄에 붙어 있다. 앞부분은 왜 이 단원이
+    생겼는지 적은 디버그 문장이라 학습자에게 보여줄 것이 아니고, 뒷부분만
+    화면에 값이 있다 — "AI가 새로 썼습니다"와 "그 책 어디에 있습니다"는
+    학습자에게 전혀 다른 말이다.
+
+    접두사를 한쪽만 고치면 화면에서 **조용히 사라진다.** 그래서 잠근다.
+    """
+    hit = f"{HIT_PREFIX}운영체제_2장.pdf — 인터럽트 (0.82)"
+    note = _note_of([Row(KNOWN), Row(UNKNOWN)], hit)
+
+    assert covered_by(note) == "운영체제_2장.pdf — 인터럽트 (0.82)"
+    assert "진단:" in note  # 통계는 note에 그대로 남는다
+
+    # 히트가 없으면 화면도 조용하다 — 그때는 AI가 쓴 단원이다.
+    assert covered_by(_note_of([Row(KNOWN)], None)) is None
+    assert covered_by(None) is None
+    assert covered_by("") is None
 
 
 # ── ④ LLM 응답 방어 ─────────────────────────────────────────────

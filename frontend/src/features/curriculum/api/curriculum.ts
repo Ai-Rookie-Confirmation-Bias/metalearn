@@ -34,6 +34,9 @@ export interface ChapterBrief {
   mode: PlanMode;
   // ✚ 진단이 끼운 보강 단원 — 교재에 없던 내용이라 구분해 보여준다
   inserted: boolean;
+  // 📚 그 내용을 이미 가르치는 자료가 책장에 있으면 그 한 줄.
+  // 비어 있으면 AI가 쓴 것이다 — 화면이 두 경우를 다르게 말한다.
+  coveredBy?: string;
   reason: string; // ⚡ 비어 있으면 아직 판단 근거가 없다는 뜻
 }
 
@@ -85,6 +88,8 @@ export interface ChapterOut {
   title: string;
   pages: string;
   inserted: boolean; // ✚ 진단이 끼운 보강 단원
+  // 📚 그 내용을 이미 가르치는 자료가 책장에 있으면 그 한 줄.
+  coveredBy?: string;
   readiness: number;
   ratio: number;
   progress: number;

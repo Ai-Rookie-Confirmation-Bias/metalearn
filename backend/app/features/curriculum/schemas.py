@@ -47,6 +47,9 @@ class ChapterBrief(_Camel):
     # ✚ 진단이 끼운 보강 단원인가. **교재에 없던 내용**이라 화면이 구분해
     # 보여야 한다 — 원문(📎)도 없다.
     inserted: bool = False
+    # 📚 이 보강 단원을 이미 가르치는 자료가 **책장에 있다**면 그 한 줄.
+    # 예: "운영체제_2장.pdf — 인터럽트 (0.82)". 비어 있으면 AI가 쓴 것이다.
+    covered_by: str = ""
     # ⚡ 왜 분량이 늘거나 줄었는지. 아직 근거가 없으면 빈 문자열
     reason: str = ""
 
@@ -126,6 +129,8 @@ class ChapterOut(_Camel):
     pages: str = ""
     # ✚ 진단이 끼운 보강 단원 (교재에 없던 내용)
     inserted: bool = False
+    # 📚 그 내용을 이미 가르치는 자료가 책장에 있으면 그 한 줄.
+    covered_by: str = ""
     readiness: float  # 문서 전체 준비도(머리에 계속 보인다)
     ratio: float
     progress: float

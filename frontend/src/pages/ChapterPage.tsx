@@ -34,14 +34,28 @@ export function ChapterPage() {
           </h1>
           <ModeBadge mode={data.mode} />
         </div>
-        {/* 교재에 없던 단원이면 먼저 밝힌다. 원문(📎)이 없는 이유이기도 하다. */}
-        {data.inserted && (
-          <p className="mt-2 rounded-lg bg-accent/5 px-4 py-2.5 text-[0.83rem] text-text-secondary">
-            <strong className="text-accent">✚ 먼저 채우는 단원</strong> — 진단에서
-            모른다고 하신 내용이라 <strong>교재에는 없습니다.</strong> 여기 설명은
-            교재 원문이 아니라 새로 쓴 것이라 📎 원문이 붙지 않습니다.
-          </p>
-        )}
+        {/* 교재에 없던 단원이면 먼저 밝힌다. 원문(📎)이 없는 이유이기도 하다.
+
+            책장에 그 내용을 이미 가르치는 자료가 있으면 **말이 달라진다** —
+            "AI가 새로 썼습니다"가 아니라 "그 책 어디에 있습니다"다. 그 차이가
+            학습자에게 크고, 그래서 문구를 통째로 가른다. */}
+        {data.inserted &&
+          (data.coveredBy ? (
+            <p className="mt-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-[0.83rem] text-text-secondary">
+              <strong className="text-emerald-700">📚 책장에 있는 내용</strong> —
+              진단에서 모른다고 하신 내용인데, <strong>이미 가지고 계신 자료</strong>에
+              같은 개념이 있어 먼저 짚어 드립니다.
+              <span className="mt-1 block font-medium text-emerald-800">
+                {data.coveredBy}
+              </span>
+            </p>
+          ) : (
+            <p className="mt-2 rounded-lg bg-accent/5 px-4 py-2.5 text-[0.83rem] text-text-secondary">
+              <strong className="text-accent">✚ 먼저 채우는 단원</strong> — 진단에서
+              모른다고 하신 내용이라 <strong>교재에는 없습니다.</strong> 여기 설명은
+              교재 원문이 아니라 새로 쓴 것이라 📎 원문이 붙지 않습니다.
+            </p>
+          ))}
         <p className="mt-1 text-[0.8rem] text-text-tertiary">
           화면 {data.sections.length}개{data.pages && <> · 📖 {data.pages}</>}
         </p>

@@ -166,6 +166,12 @@ class CourseTopicNode(BaseModel):
     # 보강 단원은 원본이 없으므로 둘 다 NULL이다.
     page_from: int | None = None
     page_to: int | None = None
+    # 이 보강 단원을 **이미 가르치는 자료가 DB에 있다**면 그 한 줄.
+    # 예: "운영체제_2장.pdf — 인터럽트 (0.82)". 없으면 NULL.
+    #
+    # AI가 명세를 쓴 것과 실제 교재가 있는 것은 학습자에게 전혀 다른 값이다.
+    # 그 차이가 화면까지 가야 "자료가 쌓일수록 좋아진다"가 말이 된다.
+    covered_by: str | None = None
     concepts: list[CourseConceptOut] = Field(default_factory=list)
     segments: list[BodySegmentOut] = Field(default_factory=list)
 

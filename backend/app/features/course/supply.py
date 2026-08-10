@@ -82,6 +82,10 @@ _FINGERPRINT_VERSION = "v1"
 # 여기는 지우는 게 아니라 표시만 하는 자리라 더 보수적일 이유가 없다.
 _HIT_SIM = 0.75
 
+# 히트를 `note` 안에서 도로 찾아내는 표식. **만드는 쪽과 읽는 쪽이 같은 상수를
+# 봐야 한다** — 한쪽 문구만 고치면 화면에서 조용히 사라진다(`covered_by`).
+HIT_PREFIX = "이미 있는 자료: "
+
 
 def _fingerprint(field: str, subject: str) -> str:
     raw = f"prereq:{_FINGERPRINT_VERSION}:{field}:{subject}"
@@ -281,7 +285,7 @@ class SupplyService:
                 if document is None or document.source_format == GENERATED:
                     continue
                 out[name] = (
-                    f"이미 있는 자료: {document.filename} — "
+                    f"{HIT_PREFIX}{document.filename} — "
                     f"{concept.name} ({similarity:.2f})"
                 )
                 break
@@ -374,6 +378,22 @@ def _plan_of(rows: list[CoursePrereq]) -> str:
     if rows and all(r.known == KNOWN for r in rows):
         return TopicPlan.SKIP.value
     return TopicPlan.BRIEF.value
+
+
+def covered_by(note: str | None) -> str | None:
+    """`note`에서 **"이 선수 개념은 이미 있는 자료에 있다"** 부분만 떼어낸다.
+
+    `note`는 진단 통계와 히트가 한 줄에 붙어 있다. 앞부분("진단: 5항목 중
+    안다 3…")은 왜 이 단원이 생겼는지를 적은 디버그 문장이라 학습자에게
+    보여줄 것이 아니고, 뒷부분만 화면에 값이 있다.
+
+    문자열을 자르는 게 마음에 안 들지만 컬럼을 쪼개려면 마이그레이션이 필요하고,
+    형식을 아는 곳이 여기(`_note_of`가 만든다)라 여기 둔다. 접두사를 상수로
+    묶어 둔 이유도 그것이다 — 한쪽만 고치면 조용히 안 잡힌다.
+    """
+    if not note or HIT_PREFIX not in note:
+        return None
+    return note.split(HIT_PREFIX, 1)[1].strip() or None
 
 
 def _note_of(rows: list[CoursePrereq], hit: str | None) -> str:
