@@ -325,12 +325,15 @@ function PendingCourseCard({
   course,
   docs,
   error,
+  unreachable,
   cover,
   onDismiss,
 }: {
   course: PendingCourse;
   docs: (ParsingDocumentOut | undefined)[];
   error: string | null;
+  /** 서버가 이 자료들을 모른다(404). 기다려도 오지 않으므로 치울 길을 준다. */
+  unreachable?: boolean;
   cover: Cover;
   onDismiss: () => void;
 }) {
@@ -342,7 +345,7 @@ function PendingCourseCard({
         (docs.reduce((sum, d) => sum + (d ? parseProgress(d.status) : 0), 0) / total) * 100,
       )
     : 0;
-  const broken = failed || Boolean(error);
+  const broken = failed || unreachable || Boolean(error);
   const names = course.documentIds
     .map((id) => course.filenames[id])
     .filter(Boolean)
@@ -376,7 +379,9 @@ function PendingCourseCard({
         >
           {error
             ? error
-            : failed
+            : unreachable
+              ? "서버에 이 자료가 없어요. 치우고 다시 올려 주세요."
+              : failed
               ? "자료 분석에 실패한 파일이 있어요."
               : readyCount === total
                 ? "수업을 묶는 중…"
@@ -466,12 +471,27 @@ export function LibraryPage() {
   });
   const bankByCourse = new Map((banks ?? []).map((b) => [b.course_id, b]));
 
-  const parsing = useParsingDocuments(pending.map((p) => p.docId));
+  // 위저드가 남긴 코스 후보의 자료도 같이 묻는다. 대기 목록(`pending`)과
+  // 코스 후보(`pendingCourse`)는 따로 저장돼서 한쪽만 남을 수 있는데, 그때
+  // **상태를 물어볼 곳이 없어져 카드가 영원히 "준비 중"에 갇힌다.**
+  const watchIds = [
+    ...new Set([
+      ...pending.map((p) => p.docId),
+      ...(pendingCourse?.documentIds ?? []),
+    ]),
+  ];
+  const parsing = useParsingDocuments(watchIds);
   const parsingById = new Map(
     parsing
       .map((q) => q.data)
       .filter((d): d is ParsingDocumentOut => Boolean(d))
       .map((d) => [d.id, d]),
+  );
+  // 서버가 모르는 접수증. **404도 여기 들어온다** — DB를 비웠거나 남의 기기에서
+  // 올린 것을 이 브라우저가 기억하고 있으면 그렇다. 이걸 안 세면 화면이
+  // 오지 않을 자료를 무한히 기다린다(실측: DB 초기화 뒤 "자료 0/10"에서 멈춤).
+  const unreachableIds = new Set(
+    watchIds.filter((_, i) => parsing[i]?.isError),
   );
   // effect 의존성용 — Map은 매 렌더 새 객체라 키가 바뀌는 문자열로 본다.
   const courseStatusKey = (pendingCourse?.documentIds ?? [])
@@ -693,6 +713,9 @@ export function LibraryPage() {
                   course={pendingCourse}
                   docs={pendingCourse.documentIds.map((id) => parsingById.get(id))}
                   error={assembleError}
+                  unreachable={pendingCourse.documentIds.some((id) =>
+                    unreachableIds.has(id),
+                  )}
                   cover={coverById.get(pendingCourse.title) ?? COVERS[0]}
                   onDismiss={() => {
                     for (const id of pendingCourse.documentIds) dropPending(id);
@@ -702,19 +725,19 @@ export function LibraryPage() {
                 />
               )}
 
-              {lonePending.map((p) => {
-                const q = parsing.find((row) => row.data?.id === p.docId);
-                return (
-                  <PendingCard
-                    key={p.docId}
-                    filename={p.filename}
-                    doc={parsingById.get(p.docId) ?? q?.data}
-                    unreachable={Boolean(q?.isError)}
-                    cover={coverById.get(p.docId) ?? COVERS[0]}
-                    onDismiss={() => dropPending(p.docId)}
-                  />
-                );
-              })}
+              {/* ⚠️ 실패한 조회는 `data`가 없다. 전에는 `parsing.find(row =>
+                  row.data?.id === …)`로 찾아서 **404가 난 자료를 영영 못 찾았고**,
+                  그래서 치우기 버튼이 안 떴다. 인덱스로 맞춘 집합을 쓴다. */}
+              {lonePending.map((p) => (
+                <PendingCard
+                  key={p.docId}
+                  filename={p.filename}
+                  doc={parsingById.get(p.docId)}
+                  unreachable={unreachableIds.has(p.docId)}
+                  cover={coverById.get(p.docId) ?? COVERS[0]}
+                  onDismiss={() => dropPending(p.docId)}
+                />
+              ))}
 
               {shelfMine.map((doc) => (
                 <BookCard

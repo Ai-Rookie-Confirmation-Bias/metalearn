@@ -77,6 +77,11 @@ export const ACCEPT_EXTENSIONS = ".pdf,.png,.jpg,.jpeg,.tiff,.bmp,.heic";
  * `role`은 안 보낸다. 서버의 역할은 뼈대/본문/참고인데 위저드가 묻는 건
  * 메인/추가라 축이 다르다. 임의로 짝지으면 사용자가 고르지 않은 값이 저장된다.
  */
+/** 서버 상한(`MAX_UPLOAD_MB`)과 같은 값. 여기서 먼저 막는 이유는 **기다림을
+ *  아끼기 위해서다** — 서버까지 다 올려야 413을 받는데, 큰 파일은 그게 몇
+ *  분이고 그 사이 다른 자료 업로드까지 같이 느려진다. */
+export const MAX_UPLOAD_MB = 50;
+
 /** 위저드의 자료 유형 선택(교재/슬라이드/필기/기출)을 서버에 저장.
  *
  * 업로드는 파일 추가 즉시 시작돼 그 시점엔 유형이 미확정 — 드롭다운을 바꿀
@@ -91,6 +96,12 @@ export async function setDocumentKind(
 }
 
 export async function uploadDocument(file: File): Promise<ParsingDocumentOut> {
+  if (file.size > MAX_UPLOAD_MB * 1024 * 1024) {
+    throw new Error(
+      `파일이 너무 큽니다 (${Math.round(file.size / 1024 / 1024)}MB). ` +
+        `${MAX_UPLOAD_MB}MB 이하로 올려 주세요.`,
+    );
+  }
   const form = new FormData();
   form.append("file", file);
   // 파싱은 백그라운드지만 서버가 파일을 다 읽은 뒤에 응답한다. 공통 30초로는

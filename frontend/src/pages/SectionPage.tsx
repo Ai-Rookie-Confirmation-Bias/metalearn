@@ -97,7 +97,17 @@ export function SectionPage() {
   if (isError || !data)
     return <p className="p-8 text-red-600">학습 내용을 불러오지 못했습니다.</p>;
 
-  const explanation = data.blocks.find((b) => b.type === "concept");
+  // 설명은 이제 **개념마다 한 블록**이다(백엔드 `sections` 스키마).
+  // 옛 응답이나 이름이 안 맞은 덩이는 concept_keys가 여럿이라 여기서 안 잡히고,
+  // 아래 `looseText`로 빠져 맨 앞에 그대로 나온다 — 설명을 잃지 않는다.
+  const explainByConcept = new Map<string, BlockOut>();
+  const looseExplain: BlockOut[] = [];
+  for (const b of data.blocks) {
+    if (b.type !== "concept") continue;
+    const key = b.conceptKeys.length === 1 ? b.conceptKeys[0] : null;
+    if (key && data.concepts.includes(key)) explainByConcept.set(key, b);
+    else looseExplain.push(b);
+  }
   const analogy = data.blocks.find((b) => b.type === "analogy");
   // ⚡ 최근 틀린 개념을 엮은 문단. tiedIn이 비면 블록도 없다(백엔드가 버린다) —
   // "AI가 나를 보고 바꿨다"고 말하려면 바뀐 본문이 실제로 있어야 하기 때문이다.
@@ -117,15 +127,39 @@ export function SectionPage() {
       rest.push(b);
     }
   }
+  // 그림도 개념에 배정돼 온다. 자리를 못 정한 것(conceptKey 빈 값)은 맨 뒤로.
+  const figs = data.figures ?? [];
+  const figByConcept = new Map<string, typeof figs>();
+  for (const f of figs) {
+    const key = f.conceptKey;
+    if (!key || !data.concepts.includes(key)) continue;
+    figByConcept.set(key, [...(figByConcept.get(key) ?? []), f]);
+  }
+  const looseFigs = figs.filter(
+    (f) => !f.conceptKey || !data.concepts.includes(f.conceptKey),
+  );
+
+  // ★ 개념 하나 = [설명 · 그림 · 그 개념 빈칸] 한 덩이.
+  // 셋 중 하나라도 있으면 덩이를 만든다 — **그림이 없으면 그냥 안 넣는다.**
   let n = 0;
-  const steps: { key: string | null; blocks: BlockOut[]; offset: number }[] = [];
+  const steps: {
+    key: string | null;
+    explain?: BlockOut;
+    figures: typeof figs;
+    blocks: BlockOut[];
+    offset: number;
+  }[] = [];
   for (const key of data.concepts) {
-    const blocks = byConcept.get(key);
-    if (!blocks?.length) continue;
-    steps.push({ key, blocks, offset: n });
+    const blocks = byConcept.get(key) ?? [];
+    const explain = explainByConcept.get(key);
+    const figures = figByConcept.get(key) ?? [];
+    if (!blocks.length && !explain && !figures.length) continue;
+    steps.push({ key, explain, figures, blocks, offset: n });
     n += blocks.length;
   }
-  if (rest.length) steps.push({ key: null, blocks: rest, offset: n });
+  if (rest.length || looseFigs.length) {
+    steps.push({ key: null, figures: looseFigs, blocks: rest, offset: n });
+  }
 
   const grade = (correct: boolean, conceptKey?: string) =>
     answer.mutate({ sectionId, correct, conceptKey });
@@ -176,11 +210,10 @@ export function SectionPage() {
         </div>
       )}
 
-      {explanation && <Explanation text={String(explanation.content.text ?? "")} />}
-
-      {/* 교재 그림. 설명 바로 뒤에 둔다 — 글을 읽고 그림을 보는 순서가
-          교재를 읽는 순서와 같다. */}
-      <Figures figures={data.figures ?? []} />
+      {/* 개념에 못 붙은 설명(옛 응답 · 이름 불일치). 앞에 그대로 둔다. */}
+      {looseExplain.map((b, i) => (
+        <Explanation key={`loose-${i}`} text={String(b.content.text ?? "")} />
+      ))}
 
       {tieIn && <TieIn block={tieIn} tiedIn={data.tiedIn} onGraded={grade} />}
 
@@ -194,32 +227,40 @@ export function SectionPage() {
           임의로 배정하면 학습자가 엉뚱한 순서로 읽는다. */}
       {steps.length > 0 && (
         <section className="mb-8">
-          <h2 className="mb-1 text-sm font-bold text-text-primary">꺼내보기</h2>
-          <p className="mb-4 text-[0.8rem] text-text-tertiary">
-            설명을 덮고 답해보세요. 읽는 것보다 꺼내는 게 훨씬 오래 남습니다.
-          </p>
-
-          <div className="space-y-6">
+          <div className="space-y-10">
             {steps.map((step, si) => (
-              <div
-                key={step.key ?? `rest-${si}`}
-                className="rounded-xl border border-border-primary bg-white p-4"
-              >
+              <div key={step.key ?? `rest-${si}`}>
                 {step.key && (
-                  <p className="mb-2.5 text-[0.78rem] font-bold text-accent">
+                  <h2 className="mb-2 border-b border-border-primary pb-1.5 text-[0.95rem] font-bold text-text-primary">
                     {step.key}
-                  </p>
+                  </h2>
                 )}
-                <ul className="space-y-3">
-                  {step.blocks.map((b, i) => (
-                    <Cloze
-                      key={`${b.conceptKeys.join()}-${i}`}
-                      block={b}
-                      index={step.offset + i + 1}
-                      onGraded={grade}
-                    />
-                  ))}
-                </ul>
+
+                {step.explain && (
+                  <Explanation text={String(step.explain.content.text ?? "")} />
+                )}
+
+                {/* 그림은 **있을 때만** 자리를 차지한다. 개념마다 빈 칸을
+                    남겨 두면 화면이 성기게 보인다. */}
+                {step.figures.length > 0 && <Figures figures={step.figures} />}
+
+                {step.blocks.length > 0 && (
+                  <div className="rounded-xl border border-border-primary bg-white p-4">
+                    <p className="mb-2.5 text-[0.78rem] font-bold text-accent">
+                      꺼내보기 — 설명을 덮고 답해보세요
+                    </p>
+                    <ul className="space-y-3">
+                      {step.blocks.map((b, i) => (
+                        <Cloze
+                          key={`${b.conceptKeys.join()}-${i}`}
+                          block={b}
+                          index={step.offset + i + 1}
+                          onGraded={grade}
+                        />
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
             ))}
 

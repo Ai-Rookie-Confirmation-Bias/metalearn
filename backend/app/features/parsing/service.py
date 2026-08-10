@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import time
 import uuid
 
 from sqlalchemy.orm import Session
@@ -115,12 +116,34 @@ class ParsingService:
         if document is None:
             raise ValueError(f"문서를 찾을 수 없습니다: {document_id}")
 
+        # 단계마다 걸린 시간을 남긴다. **자료 여러 개를 한꺼번에 올리면 어디가
+        # 천장인지 알 방법이 이것뿐이다** — 전에는 상태만 바꾸고 시간을 안 남겨서,
+        # 느리다는 것만 알고 어느 단계인지는 몰랐다. 이름 옆의 짧은 이름은 문서
+        # 여러 개가 뒤섞인 로그에서 어느 파일 것인지 가르려고 붙인다.
+        short = document.filename[:24]
+        started = time.monotonic()
+        marks: list[tuple[str, float]] = []
+
         def stage(name: DocStatus) -> None:
+            now = time.monotonic()
+            if marks:
+                prev, at = marks[-1]
+                _log.info("⏱ %s · %s %.1fs", short, prev, now - at)
+            marks.append((name.value, now))
             document.status = name.value
             self.db.commit()
 
         try:
             await self._run_stages(document, file_bytes, stage)
+            if marks:
+                prev, at = marks[-1]
+                _log.info("⏱ %s · %s %.1fs", short, prev, time.monotonic() - at)
+            _log.info(
+                "⏱ %s · 전체 %.1fs — %s",
+                short,
+                time.monotonic() - started,
+                " → ".join(n for n, _ in marks),
+            )
         except Exception as exc:  # noqa: BLE001 — 실패 사유를 남기고 다시 던진다
             self.db.rollback()
             document = self.repo.get_document(document_id)

@@ -174,6 +174,9 @@ class FigureOut(_Camel):
     # 파싱이 "텍스트만으로 불완전"이라 본 그림. 화면이 더 크게 보여줄 근거.
     needs_vision: bool = False
     url: str = ""
+    # 화면 **안에서** 어느 개념 옆에 놓을 것인가. 빈 값이면 자리를 못 정한
+    # 그림이라 화면이 맨 뒤에 모아 놓는다 — 버리지 않는다.
+    concept_key: str = ""
 
 
 class LessonOut(_Camel):

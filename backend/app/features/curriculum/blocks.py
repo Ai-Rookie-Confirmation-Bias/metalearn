@@ -373,6 +373,55 @@ def _answer_concept(answer: str, concepts: list[ConceptBrief]) -> str | None:
     return None
 
 
+def _concept_blocks(
+    data: dict, concepts: list[ConceptBrief], all_keys: tuple[str, ...]
+) -> list[Block]:
+    """설명을 **개념마다 한 블록씩** 만든다.
+
+    화면이 [설명 → 그림 → 그 개념 빈칸]을 개념 단위로 반복하려면 본문이
+    개념별로 갈려 있어야 한다. 통짜 문자열은 어디서 끊을지 알 수 없다.
+
+    ## 세 가지를 방어한다
+
+    ① **옛 모양(`explanation` 문자열)** — 캐시에 남아 있거나 모델이 예전처럼
+       답할 수 있다. 그때는 블록 하나로 두되 `concept_keys`는 전부 붙인다.
+    ② **이름이 안 맞는 덩이** — 모델이 개념 이름을 바꿔 쓰면 어디에도 못 붙는다.
+       버리지 않고 **맨 뒤에** 모아 둔다(설명을 잃는 게 더 손해다).
+    ③ **순서** — 목록 순서를 따른다. 모델이 쓴 순서가 아니라 우리가 정한
+       개념 순서여야 빈칸 묶음(`data.concepts` 순회)과 어긋나지 않는다.
+    """
+    rows = data.get("sections")
+    if not isinstance(rows, list):
+        text = _clean_optional(data.get("explanation"))
+        return [Block("concept", {"text": text}, concept_keys=all_keys)] if text else []
+
+    valid = {c.key for c in concepts}
+    by_key: dict[str, str] = {}
+    orphan: list[str] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        text = _clean_optional(row.get("text"))
+        if not text:
+            continue
+        key = str(row.get("concept") or "").strip()
+        if key in valid and key not in by_key:
+            by_key[key] = text
+        else:
+            orphan.append(text)
+
+    out = [
+        Block("concept", {"text": by_key[c.key]}, concept_keys=(c.key,))
+        for c in concepts
+        if c.key in by_key
+    ]
+    if orphan:
+        out.append(
+            Block("concept", {"text": "\n\n".join(orphan)}, concept_keys=all_keys)
+        )
+    return out
+
+
 def parse_response(
     raw: str, concepts: list[ConceptBrief], source: str = ""
 ) -> list[Block]:
@@ -390,11 +439,7 @@ def parse_response(
     all_keys = tuple(c.key for c in concepts)
     blocks: list[Block] = []
 
-    explanation = _clean_optional(data.get("explanation"))
-    if explanation:
-        blocks.append(
-            Block("concept", {"text": explanation}, concept_keys=all_keys)
-        )
+    blocks += _concept_blocks(data, concepts, all_keys)
 
     analogy = _clean_optional(data.get("analogy"))
     if analogy:
