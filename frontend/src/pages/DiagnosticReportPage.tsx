@@ -1,17 +1,18 @@
-// 진단 리포트 — **왜 이 목차가 됐는지**를 한 화면에 편다.
+// 진단 리포트 — **확정된 목차가 주인공**이다.
 //
-// 진단을 막 끝낸 사람이 보고 싶은 건 진도 0%짜리 목차 목록이 아니라 "내가 뭘
-// 답했고 그래서 뭐가 바뀌었나"다. 그래서 진단 직후 자리를 이 화면이 받는다.
+// 진단을 막 끝낸 사람이 알고 싶은 건 "무슨 순서로 배우게 되나"이고, 그 다음이
+// "왜 그렇게 됐나"다. 그래서 목차를 그대로 세워 놓고 **각 줄에 근거를 붙인다.**
 //
-// ## 한 박스에 몰아 넣는다
+//     ✚ 데이터베이스 기초
+//          배열과 리스트를 문항에서 틀리셨고, 9가지를 모른다고 하셨어요
+//     ── 여기부터 교재 목차 ──
+//     1. 소프트웨어 구축
 //
-// 처음엔 과목마다 카드를 나눴는데, 그러면 **인과가 끊긴다.** "이걸 틀렸다"와
-// "그래서 이 단원이 생겼다"가 다른 상자에 있으면 두 사실이 이어져 보이지 않는다.
-// 한 박스 안에서 줄만 그어 나누고, 과목마다 마지막 줄이 결과(→ ✚)가 되게 했다.
+// 과목별 결과를 먼저 늘어놓고 목차를 따로 그리면 같은 것을 두 번 읽게 된다.
+// 목차 줄 자체가 결과가 되도록 합쳤다.
 //
-// 자기 신고와 확인된 오답은 갈라 쓴다. "모른다고 답하셨어요"와 "문항에서
-// 틀리셨어요"는 근거의 무게가 다르고, 그 차이가 보여야 ✚ 배지가 임의로 붙은
-// 게 아니라는 게 드러난다.
+// 성향은 **맨 아래 따로** 뗀다. 목차는 여기서 확정되고 끝이지만 설명 방식은
+// 앞으로 계속 적용되는 것이라, 같은 상자에 두면 둘의 수명이 뒤섞인다.
 import { Link, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 
@@ -31,13 +32,32 @@ const STYLE_LABEL: Record<string, { name: string; effect: string }> = {
   why: { name: "왜부터", effect: "왜 그런지·어디서 나왔는지까지 씁니다" },
 };
 
-function counts(s: PrereqSubject) {
-  return {
-    known: s.items.filter((i) => i.known === "known").length,
-    unknown: s.items.filter((i) => i.known === "unknown").length,
-    asked: s.items.filter((i) => i.verified !== null).length,
-    wrong: s.items.filter((i) => i.verified === false).length,
-  };
+/** 목적격 조사. 받침이 있으면 "을", 없으면 "를".
+ *
+ * `을(를)`로 두면 개념 이름이 화면에 그대로 나오는 자리마다 괄호가 붙어
+ * 읽기가 거칠어진다. 한글 음절이 아니면(영문·숫자로 끝나면) "를"로 둔다 —
+ * "TCP/IP 모델"처럼 섞인 이름이 흔하다.
+ */
+function objectParticle(word: string): string {
+  const last = word.trim().slice(-1);
+  const code = last.charCodeAt(0);
+  if (code < 0xac00 || code > 0xd7a3) return "를";
+  return (code - 0xac00) % 28 ? "을" : "를";
+}
+
+/** 이 과목이 왜 단원이 됐는지 한 문장. 확인된 오답을 앞에 둔다. */
+function reasonOf(s: PrereqSubject): string {
+  const failed = s.items.filter((i) => i.verified === false).map((i) => i.item);
+  const unknown = s.items.filter((i) => i.known === "unknown").length;
+  const names = failed.join(" · ");
+  const wrong = names && `${names}${objectParticle(names)} 문항에서 틀리셨`;
+
+  if (failed.length && unknown) {
+    return `${wrong}고, ${unknown}가지를 모른다고 하셨어요.`;
+  }
+  if (failed.length) return `${wrong}어요.`;
+  if (unknown) return `${unknown}가지를 모른다고 하셨어요.`;
+  return "확인이 더 필요해서 먼저 짚고 갑니다.";
 }
 
 export function DiagnosticReportPage() {
@@ -60,15 +80,17 @@ export function DiagnosticReportPage() {
     return <p className="p-8 text-red-600">진단 결과를 불러오지 못했습니다.</p>;
 
   const subjects = setup.subjects;
-  const total = subjects.reduce((n, s) => n + s.items.length, 0);
-  const unknown = subjects.reduce((n, s) => n + counts(s).unknown, 0);
-  const asked = subjects.reduce((n, s) => n + counts(s).asked, 0);
-  const wrong = subjects.reduce((n, s) => n + counts(s).wrong, 0);
-
-  const topics = course?.topics ?? [];
+  const topics = [...(course?.topics ?? [])].sort((a, b) => a.seq - b.seq);
   const inserted = topics.filter((t) => t.origin === "inserted");
-  // 보강 단원 제목 = 과목명. 어느 과목이 어느 단원이 됐는지 이걸로 잇는다.
-  const insertedTitles = new Set(inserted.map((t) => t.title));
+  const original = topics.filter((t) => t.origin !== "inserted");
+
+  // 보강 단원 제목 = 과목명. 이걸로 목차 줄과 진단 결과를 잇는다.
+  const byName = new Map(subjects.map((s) => [s.subject, s]));
+  // 물어봤지만 단원이 안 된 과목 = 충분히 안다고 나온 것. **뺀 것도 보여준다** —
+  // 무엇을 넣었는지만 보이면 "왜 이것만?"이 남는다.
+  const addedNames = new Set(inserted.map((t) => t.title));
+  const skipped = subjects.filter((s) => !addedNames.has(s.subject));
+
   const style = setup.style ? STYLE_LABEL[setup.style] : undefined;
 
   return (
@@ -85,121 +107,123 @@ export function DiagnosticReportPage() {
         {setup.documents.join(" · ")}
       </p>
 
-      {/* ── 한 박스. 위에서 아래로 읽으면 인과가 이어진다 ───────────── */}
+      {/* ── 확정된 목차. 각 줄이 곧 결과다 ────────────────────────── */}
       <div className="mt-6 overflow-hidden rounded-2xl border border-border-primary bg-white">
-        {/* 머리 — 전체 결과 한 줄 */}
-        <div className="border-b border-border-primary bg-bg-secondary px-6 py-5">
-          <p className="text-[1.02rem] leading-relaxed text-text-primary">
-            먼저 알아야 할 <strong>{total}가지</strong>를 확인해서{" "}
-            <strong>{unknown}가지</strong>를 모른다고 하셨어요.
-            {asked > 0 && (
+        <div className="border-b border-border-primary bg-bg-secondary px-6 py-4">
+          <h2 className="font-bold text-text-primary">이 순서로 배우게 됩니다</h2>
+          <p className="mt-1 text-[0.83rem] text-text-secondary">
+            먼저 채운 단원 <strong className="text-accent">{inserted.length}개</strong>
+            {skipped.length > 0 && (
               <>
                 {" "}
-                그중 <strong>{asked}개</strong>는 문항으로 확인했고{" "}
-                <strong>{wrong}개</strong>를 틀리셨습니다.
+                · 아셔서 넣지 않은 과목 <strong>{skipped.length}개</strong>
               </>
-            )}
-          </p>
-          <p className="mt-2 text-[0.88rem] font-semibold text-accent">
-            → 그래서 목차 앞에 {inserted.length}개 단원을 채웠습니다.
+            )}{" "}
+            · 교재 목차 {original.length}개
           </p>
         </div>
 
-        {/* 과목마다 한 줄기. 마지막 줄이 결과가 되도록 */}
-        {subjects.map((s) => {
-          const c = counts(s);
-          const failed = s.items.filter((i) => i.verified === false);
-          const declared = s.items.filter(
-            (i) => i.known === "unknown" && i.verified !== false,
-          );
-          const knew = s.items.filter((i) => i.known === "known");
-          const added = insertedTitles.has(s.subject);
-
+        {inserted.map((t) => {
+          const s = byName.get(t.title);
           return (
             <div
-              key={s.subject}
-              className="border-b border-border-primary px-6 py-5 last:border-b-0"
+              key={t.id}
+              className="border-b border-border-primary bg-accent/[0.03] px-6 py-4"
             >
-              <div className="mb-2.5 flex items-baseline justify-between gap-3">
-                <h3 className="font-bold text-text-primary">{s.subject}</h3>
-                <span className="shrink-0 text-[0.75rem] text-text-tertiary">
-                  안다 {c.known} · 모른다 {c.unknown}
-                  {c.asked > 0 && <> · 확인 문항 {c.asked}</>}
+              <div className="flex items-baseline gap-2">
+                <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[0.68rem] font-bold text-accent">
+                  ✚ 먼저 채움
                 </span>
+                <span className="font-bold text-text-primary">{t.title}</span>
               </div>
-
-              <div className="space-y-1.5 text-[0.82rem] leading-relaxed">
-                {failed.length > 0 && (
-                  <p className="text-text-secondary">
-                    <span className="font-semibold text-red-700">🔴 문항에서 틀림</span>{" "}
-                    — {failed.map((i) => i.item).join(" · ")}
-                  </p>
-                )}
-                {declared.length > 0 && (
-                  <p className="text-text-secondary">
-                    <span className="font-semibold">모른다고 답함</span> —{" "}
-                    {declared.map((i) => i.item).join(" · ")}
-                  </p>
-                )}
-                {knew.length > 0 && (
-                  <p className="text-text-tertiary">
-                    이미 아는 것 — {knew.map((i) => i.item).join(" · ")}
-                  </p>
-                )}
-              </div>
-
-              {/* 이 과목의 결론. **바로 위 문장들의 결과**로 읽히도록 붙여 둔다 */}
-              {added ? (
-                <p className="mt-3 rounded-lg bg-accent/5 px-3.5 py-2 text-[0.83rem] text-text-secondary">
-                  <span className="font-bold text-accent">✚ 「{s.subject}」 단원</span>이
-                  목차 맨 앞에 추가되었습니다.
-                </p>
-              ) : (
-                <p className="mt-3 text-[0.8rem] text-text-tertiary">
-                  충분히 알고 계셔서 단원을 따로 넣지 않았습니다.
+              {s && (
+                <p className="mt-1.5 text-[0.82rem] leading-relaxed text-text-secondary">
+                  {reasonOf(s)}
                 </p>
               )}
             </div>
           );
         })}
 
-        {/* 꼬리 — 설명을 어떻게 쓸지. 목차와 달리 이건 계속 적용된다 */}
-        <div className="border-t-2 border-border-primary bg-bg-secondary px-6 py-5">
-          <p className="mb-2 text-[0.75rem] font-bold text-text-tertiary">
-            설명은 이렇게 씁니다
+        {original.length > 0 && (
+          <p className="border-b border-border-primary bg-bg-secondary px-6 py-2 text-[0.72rem] font-semibold tracking-wide text-text-tertiary">
+            여기부터 교재 목차
           </p>
-          <p className="text-[0.9rem] text-text-primary">
-            <strong>{setup.goal ? GOAL_LABEL[setup.goal] : "목표 미선택"}</strong>
-            {setup.deadline_weeks != null && <> · {setup.deadline_weeks}주 남음</>}
-            {style && (
-              <>
-                {" · "}
-                <strong>{style.name}</strong>
-              </>
-            )}
+        )}
+        {original.map((t) => (
+          <div
+            key={t.id}
+            className="border-b border-border-primary px-6 py-3 text-[0.9rem] text-text-secondary last:border-b-0"
+          >
+            {t.title}
+          </div>
+        ))}
+      </div>
+
+      {/* 뺀 것 — 넣은 것만 보이면 "왜 이것만?"이 남는다 */}
+      {skipped.length > 0 && (
+        <div className="mt-4 rounded-xl border border-border-primary px-5 py-4">
+          <p className="text-[0.8rem] font-semibold text-text-secondary">
+            이건 아셔서 넣지 않았어요
           </p>
-          {/* ⚠️ 문턱(2주)이 백엔드 `planner.URGENT_WEEKS`에도 있다. 거기를
-              고치면 여기도 같이 고쳐야 한다. "시험인데 왜 안 줄이지"가
-              화면에서 바로 풀리도록 이유까지 적는다. */}
-          <p className="mt-1.5 text-[0.82rem] leading-relaxed text-text-secondary">
-            {setup.goal === "exam"
-              ? setup.deadline_weeks != null && setup.deadline_weeks <= 2
-                ? "시간이 얼마 없어 핵심만 짧게 씁니다."
-                : "기한이 넉넉해서 범위를 빠뜨리지 않도록 표준 분량으로 씁니다."
-              : setup.goal === "work"
-                ? "실무에 쓰시려는 자료라 왜 그런지까지 함께 씁니다."
-                : setup.goal === "interest"
-                  ? "부담 없이 훑는 자료라 핵심만 보여드립니다."
-                  : "표준 분량으로 씁니다."}
-            {style && <> {style.effect}.</>}
-          </p>
-          <p className="mt-3 text-[0.8rem] leading-relaxed text-text-tertiary">
-            ⚡ 여기서부터{" "}
-            <strong className="text-text-secondary">목차는 바뀌지 않습니다.</strong>{" "}
-            학습하며 약한 곳이 드러나면 단원을 새로 끼우는 대신 그 목차의 설명을
-            늘리거나 줄입니다.
+          <p className="mt-1.5 text-[0.82rem] leading-relaxed text-text-tertiary">
+            {skipped.map((s) => s.subject).join(" · ")}
           </p>
         </div>
+      )}
+
+      {/* ── 성향은 따로. 목차와 수명이 다르다 ─────────────────────── */}
+      <div className="mt-6 rounded-2xl border border-border-primary bg-white px-6 py-5">
+        <h2 className="font-bold text-text-primary">설명은 이렇게 씁니다</h2>
+        <p className="mt-0.5 text-[0.83rem] text-text-secondary">
+          목차와 달리 이건 <strong>앞으로 계속</strong> 적용됩니다.
+        </p>
+
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-xl bg-bg-secondary px-4 py-3.5">
+            <p className="text-[0.72rem] font-semibold text-text-tertiary">왜 배우나</p>
+            <p className="mt-1 font-bold text-text-primary">
+              {setup.goal ? GOAL_LABEL[setup.goal] : "고르지 않음"}
+              {setup.deadline_weeks != null && (
+                <span className="ml-1.5 text-[0.85rem] font-medium text-text-secondary">
+                  · {setup.deadline_weeks}주 남음
+                </span>
+              )}
+            </p>
+            {/* ⚠️ 문턱(2주)이 백엔드 `planner.URGENT_WEEKS`에도 있다. 거기를
+                고치면 여기도 같이 고쳐야 한다. "시험인데 왜 안 줄이지"가
+                화면에서 바로 풀리도록 이유까지 적는다. */}
+            <p className="mt-1.5 text-[0.8rem] leading-relaxed text-text-secondary">
+              {setup.goal === "exam"
+                ? setup.deadline_weeks != null && setup.deadline_weeks <= 2
+                  ? "시간이 얼마 없어 핵심만 짧게 씁니다."
+                  : "기한이 넉넉해서 범위를 빠뜨리지 않도록 표준 분량으로 씁니다."
+                : setup.goal === "work"
+                  ? "실무에 쓰시려는 자료라 왜 그런지까지 함께 씁니다."
+                  : setup.goal === "interest"
+                    ? "부담 없이 훑는 자료라 핵심만 보여드립니다."
+                    : "표준 분량으로 씁니다."}
+            </p>
+          </div>
+
+          <div className="rounded-xl bg-bg-secondary px-4 py-3.5">
+            <p className="text-[0.72rem] font-semibold text-text-tertiary">
+              어떤 설명이 편한가
+            </p>
+            <p className="mt-1 font-bold text-text-primary">
+              {style?.name ?? "고르지 않음"}
+            </p>
+            <p className="mt-1.5 text-[0.8rem] leading-relaxed text-text-secondary">
+              {style?.effect ?? "기본 형식으로 씁니다."}
+            </p>
+          </div>
+        </div>
+
+        <p className="mt-4 text-[0.8rem] leading-relaxed text-text-tertiary">
+          ⚡ 목차는 여기서 확정됐고 <strong className="text-text-secondary">더
+          바뀌지 않습니다.</strong> 학습하며 약한 곳이 드러나면 단원을 새로 끼우는
+          대신 그 목차의 설명을 늘리거나 줄입니다.
+        </p>
       </div>
 
       <Link
