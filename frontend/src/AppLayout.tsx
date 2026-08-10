@@ -5,7 +5,7 @@ import { clsx } from "clsx";
 import {
   HexagonIcon,
   BooksIcon,
-  BookOpenIcon,
+  BookOpenTextIcon,
   ChartLineUpIcon,
   GearIcon,
   LightningIcon,
@@ -27,10 +27,6 @@ import { isLoggedIn } from "@/shared/api/client";
 //    `/quiz` 라우트 자체는 살아 있다 — 카드의 딥링크와 "다른 과목"이 쓴다.
 const NAV: { to: string; label: string; icon: Icon }[] = [
   { to: "/library", label: "나의 책장", icon: BooksIcon },
-  // 미리 분석해 둔 CS 기초 자료. 내 책장과 **가른다** — 올린 적 없는 책이
-  // "나의 책장"에 섞이면 그게 내 것인지 아닌지 흐려지고, 그 자료들은 진단도
-  // 진도도 없어서 카드가 말할 수 있는 것 자체가 다르다.
-  { to: "/shared", label: "기본 제공 자료", icon: BookOpenIcon },
   { to: "/analysis", label: "메타인지 분석", icon: ChartLineUpIcon },
   { to: "/settings", label: "설정", icon: GearIcon },
 ];
@@ -150,7 +146,56 @@ export default function AppLayout() {
           ))}
         </nav>
 
-        <div className="p-6">
+        {/* 탐색 — 내 것이 아닌 자료를 둘러보는 자리.
+            위 내비와 **가른다.** 위는 전부 "내 것"(내 책장·내 분석·내 설정)이고
+            도서관은 남이 넣어 둔 책이라, 같은 목록에 섞이면 올린 적 없는 책이
+            내 것처럼 읽힌다. 그래서 구분선 아래 별도 블록으로 내린다. */}
+        <div className="mt-6 border-t border-border-primary px-6 pt-5">
+          <p className="mb-2 px-1 text-[0.7rem] font-bold uppercase tracking-wider text-text-tertiary">
+            탐색
+          </p>
+          <NavLink
+            to="/shared"
+            className={({ isActive }) =>
+              clsx(
+                "flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors",
+                isActive
+                  ? "border-accent/30 bg-accent/10"
+                  : "border-transparent hover:border-border-primary hover:bg-bg-secondary",
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <span
+                  className={clsx(
+                    "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-colors",
+                    isActive
+                      ? "bg-accent text-white"
+                      : "bg-bg-secondary text-text-secondary",
+                  )}
+                >
+                  <BookOpenTextIcon className="text-[1.15rem]" weight="fill" />
+                </span>
+                <span className="min-w-0">
+                  <span
+                    className={clsx(
+                      "block truncate text-[0.9rem] font-bold",
+                      isActive ? "text-accent" : "text-text-primary",
+                    )}
+                  >
+                    MetaLearn 도서관
+                  </span>
+                  <span className="block text-[0.75rem] text-text-tertiary">
+                    자료 찾아보기
+                  </span>
+                </span>
+              </>
+            )}
+          </NavLink>
+        </div>
+
+        <div className="p-6 pt-4">
           <div className="rounded-2xl border border-border-primary bg-bg-secondary p-5">
             <LightningIcon weight="fill" className="mb-2 block text-[1.5rem] text-accent" />
             <h5 className="mb-1 text-[0.95rem] font-bold text-text-primary">Pro로 업그레이드</h5>
