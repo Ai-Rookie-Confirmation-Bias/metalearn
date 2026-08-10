@@ -78,6 +78,14 @@ def build_cloze_segments(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
 
     anchor = chunk.sentences[sid]
     sentence = chunk.raw_text[anchor.start : anchor.end].strip()
+    # 표 블록이 문장 하나로 앵커링된 경우(파서 실데이터) — 표 위에 빈칸을 뚫으면
+    # 지문이 "| 폭포수 | … | --- |"처럼 나온다. 계획 단계(classify_form)가 막지만
+    # LLM이 계획 밖 문장을 고를 수 있어 조립에서도 차단한다.
+    if sentence.count("|") >= 2:
+        return "cloze 지문이 표 텍스트 (빈칸 지문 부적합)"
+    # 요약노트의 개조식 불릿(■·▶ 등)·마크다운 머리표(#)는 지문 앞에서 떼어낸다 —
+    # 지문에 그대로 노출되던 실측("■ UML → 구성요소 : …") 대응.
+    sentence = sentence.lstrip("#■□▪▫●○◦•▶▷►※-—–ㆍ* ").strip()
     count = sentence.count(answer)
     if count == 0:
         return f"cloze 정답 '{answer}'이 지정 문장에 글자 그대로 없음"
@@ -85,6 +93,14 @@ def build_cloze_segments(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
         return f"cloze 정답 '{answer}'이 문장에 {count}번 등장 (빈칸 위치 모호)"
 
     before, _, after = sentence.partition(answer)
+    # 쉼표 나열·콜론 나열의 한 자리를 비우면 "남은 항목 찾기" 퍼즐이 된다 —
+    # 사람은 나열을 순서 무관 집합으로 읽어 체감 정답이 여럿이 되는데, AI
+    # 풀이자는 소거법으로 정확히 맞혀 검증이 못 잡는다 (UML 구성요소 실측).
+    # 절차 나열(→)은 순서가 정답을 유일하게 만들므로 허용.
+    if before.rstrip().endswith((",", "·", "ㆍ", "、", ":", "：")):
+        return "cloze 빈칸이 나열·콜론 자리 (남은 항목 찾기 퍼즐이 됨)"
+    if after.lstrip().startswith((",", "·", "ㆍ", "、")):
+        return "cloze 빈칸이 쉼표 나열 자리 (남은 항목 찾기 퍼즐이 됨)"
     aliases = [str(a) for a in d.get("aliases", []) if str(a).strip()]
     segments: list[dict] = []
     if before.strip():
@@ -100,6 +116,50 @@ def build_cloze_segments(item: GeneratedItem, chunk: ParsedChunk) -> str | None:
     if sid not in item.evidence_sentence_ids:
         item.evidence_sentence_ids = sorted({*item.evidence_sentence_ids, sid})
     return None
+
+
+_PAREN_NAME = re.compile(r"^\s*(.+?)\s*[(（]\s*([^)）]{2,})\s*[)）]\s*$")
+
+
+def _norm_token(s: str) -> str:
+    return re.sub(r"\s+", "", s).lower()
+
+
+def augment_notations(item: GeneratedItem, chunk: ParsedChunk) -> None:
+    """개념 이름의 괄호 병기("팬아웃(Fan-out)")로 정답 인정 표기를 자동 보강.
+
+    생성 LLM이 accepted 규칙을 안 지키는 실측(단답 63개 중 59개 단일 표기 —
+    "Dispatch"만 인정돼 "디스패치"가 오답) 대응. LLM 재호출 없이, 파싱이 이미
+    가진 병기에서 확실한 것만 코드로 추가한다.
+    """
+    pairs: list[tuple[str, str]] = []
+    for name in [item.concept, *(c.name for c in chunk.concepts)]:
+        if name and (m := _PAREN_NAME.match(name)):
+            pairs.append((m.group(1), m.group(2)))
+
+    def _extend(existing: list[str]) -> list[str]:
+        seen = {_norm_token(e) for e in existing}
+        out = list(existing)
+        for base, inner in pairs:
+            if any(_norm_token(v) in seen for v in (base, inner)):
+                for v in (base, inner):
+                    if _norm_token(v) not in seen:
+                        out.append(v)
+                        seen.add(_norm_token(v))
+        return out
+
+    if item.type == "shortAnswer":
+        acc = [str(a) for a in item.data.get("accepted", []) if str(a).strip()]
+        if acc:
+            item.data["accepted"] = _extend(acc)
+    elif item.type == "cloze":
+        for seg in item.data.get("segments", []):
+            if isinstance(seg, dict) and seg.get("kind") == "blank":
+                answer = str(seg.get("answer", ""))
+                aliases = [str(a) for a in seg.get("aliases", []) if str(a).strip()]
+                seg["aliases"] = [
+                    v for v in _extend([answer, *aliases]) if v != answer
+                ]
 
 
 def evidence_ids_reason(item: GeneratedItem, chunk: ParsedChunk) -> str | None:

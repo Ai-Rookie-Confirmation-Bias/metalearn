@@ -21,7 +21,8 @@ _TYPE_GUIDE = {
     "shortAnswer": '단답. data={"prompt":str,"accepted":[str],"explanation":str}\n'
     "  · 정답은 용어·명사구여야 한다 (공백 포함 25자 이내). 문장 전체를 정답으로 요구하지 마라\n"
     '  · "~의 정의를 쓰시오"가 아니라, 설명을 주고 그 용어를 묻는 방향으로 출제하라\n'
-    "  · accepted에 정답 표기 변형(약어·한/영·괄호 유무) 포함",
+    "  · accepted는 **최소 2개**: 한글 용어면 영문 표기를, 영문 용어면 한글 표기를\n"
+    "    반드시 함께 넣어라 (채점이 표기 대조라, 없으면 맞은 답이 오답 처리된다)",
     "trueFalse": '참거짓. data={"statement":str,"answer":bool,"explanation":str}\n'
     "  · statement는 한 가지 사실만 진술한다 (두 사실을 묶으면 판정이 모호해진다)",
 }
@@ -84,7 +85,7 @@ def build_generation_prompt(
 
 [모범 예시 — **형식만** 따라 하라. 예시의 내용·개념을 출력에 복사하면 안 된다]
 {{"items":[
-{{"type":"shortAnswer","concept":"HTTP","data":{{"prompt":"요청-응답 구조로 웹 자원을 주고받는 프로토콜은 무엇인가?","accepted":["HTTP"],"explanation":"HTTP는 클라이언트의 요청에 서버가 응답하는 구조의 웹 프로토콜이다."}},"evidence":["s2"],"difficulty":2}},
+{{"type":"shortAnswer","concept":"HTTP","data":{{"prompt":"요청-응답 구조로 웹 자원을 주고받는 프로토콜은 무엇인가?","accepted":["HTTP","HyperText Transfer Protocol","하이퍼텍스트 전송 프로토콜"],"explanation":"HTTP는 클라이언트의 요청에 서버가 응답하는 구조의 웹 프로토콜이다."}},"evidence":["s2"],"difficulty":2}},
 {{"type":"cloze","concept":"라우터","data":{{"sentence":"s5","answer":"라우터","aliases":["router"]}},"evidence":["s5"],"difficulty":1}}
 ]}}
 
