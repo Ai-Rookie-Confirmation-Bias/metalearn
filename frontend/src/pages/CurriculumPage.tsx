@@ -75,12 +75,11 @@ export function CurriculumPage() {
 
   return (
     <div className="mx-auto max-w-3xl p-8">
-      <Link to="/library" className="text-[0.8rem] text-text-tertiary hover:underline">
-        ← 나의 책장
-      </Link>
+      {/* 책장으로 나가는 문은 **사이드바에만** 둔다. 여기에도 두면 같은 일을
+          하는 링크가 한 화면에 둘이 되고, 왼쪽에 늘 떠 있는 쪽이 더 잘 보인다. */}
 
       {/* 코스면 진단 안내가 뜬다. 자료 하나면 아무것도 안 그린다. */}
-      <div className="mt-4">
+      <div>
         <DiagnosticBanner docId={docId ?? ""} />
       </div>
 
