@@ -25,11 +25,6 @@ class QuizItem(Base):
     data: Mapped[dict] = mapped_column(JSONB, nullable=False)
     evidence: Mapped[dict] = mapped_column(JSONB, nullable=False)
     difficulty: Mapped[int | None] = mapped_column(SmallInteger)
-    # standard | exam — 기출 스타일 배치로 만들어진 문항 표시. 같은 은행에
-    # 섞여 있고, "기출만 풀기"는 세션 샘플링이 이 값으로 거른다.
-    style: Mapped[str] = mapped_column(
-        String(16), nullable=False, server_default="standard", default="standard"
-    )
     verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()

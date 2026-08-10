@@ -80,40 +80,14 @@ async def generate_from_parsing(
     verify_llm: LLMClient | None = None,
     config: QuizGenConfig | None = None,
     append: bool = False,
-    style: str = "standard",
 ) -> QuizGenerationResult:
     """파싱 문서 하나로 문제은행을 만든다. 같은 문서를 다시 부르면 교체된다.
 
     append=True는 리필 — 문제를 다 푼 사용자를 위해 기존 은행을 유지한 채
     새 문항만 추가한다 (발문 중복은 서비스가 걸러냄).
-
-    style="exam"은 [기출문제 스타일로 생성] — 기본 흐름은 건드리지 않고,
-    기출 프로파일(발문 말투·출제 가중치, QUIZ.md §2-③)을 반영한 문항을
-    exam 표시를 달아 **추가**한다. 프로파일이 없으면(기출 자료 없음) 실패.
     """
-    from app.features.quiz import exam_style
-
     parsed = parsed_document_of(db, document_id)
-
-    exam_frequency = None
-    stem_patterns = None
-    if style == "exam":
-        profile = await exam_style.ensure_profile(db, llm, course_id)
-        if not profile:
-            raise LookupError(
-                "기출 자료가 없거나 아직 파싱 중이라 기출 스타일을 만들 수 없습니다"
-            )
-        exam_frequency = profile.get("conceptFrequency") or None
-        stem_patterns = (profile.get("stemPatterns") or [])[:5] or None
-
     service = QuizService(db, llm, verify_llm=verify_llm)
     return await service.generate_bank(
-        course_id,
-        document_id,
-        parsed,
-        config=config,
-        append=append,
-        style=style,
-        exam_frequency=exam_frequency,
-        stem_patterns=stem_patterns,
+        course_id, document_id, parsed, config=config, append=append
     )

@@ -68,7 +68,6 @@ class QuizRepository:
         toc_indexes: list[int],
         count: int,
         exclude_ids: list[uuid.UUID] | None = None,
-        style: str | None = None,
     ) -> tuple[list[QuizItem], int]:
         """범위 내 무작위 샘플 — **안 푼 문항 우선.**
 
@@ -84,9 +83,6 @@ class QuizRepository:
             QuizItem.toc_index.in_(toc_indexes),
             QuizItem.verified.is_(True),
         )
-        # "기출만 풀기" 필터 — None이면 전체 (표준+기출 섞임)
-        if style:
-            base = (*base, QuizItem.style == style)
         stmt = select(QuizItem).where(*base)
         if exclude:
             stmt = stmt.where(QuizItem.id.not_in(exclude))

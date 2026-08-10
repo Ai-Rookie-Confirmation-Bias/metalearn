@@ -166,18 +166,12 @@ class QuizBankSummary(BaseModel):
     document_id: str
     tocs: list[TocSummary]
     total: int
-    # 이 코스에 기출 자료(또는 추출된 프로파일)가 있는가 — [기출 스타일로 생성] 버튼 노출 조건
-    has_exam_style: bool = False
-    # 은행 안의 기출 스타일(style=exam) 문항 수 — 0이면 아직 생성 전
-    exam_total: int = 0
 
 
 class SessionRequest(BaseModel):
     document_id: str
     toc_indexes: list[int]
     count: int = Field(default=10, ge=1, le=50)
-    # all(기본) = 표준+기출 전체 / exam = 기출 스타일만 / standard = 표준만
-    style: str = Field(default="all", pattern="^(all|standard|exam)$")
     # 클라이언트가 이미 푼 문항 id (푼 지 오래된 순). 안 푼 것 우선 샘플링에 쓰고,
     # 모자라면 이 순서대로 복습으로 채운다. 학습 페이지 데이터가 아니라 문제
     # 페이지 자기 풀이 기록(localStorage)이라 격리 원칙(§7-③)과 무관하다.

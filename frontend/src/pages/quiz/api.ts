@@ -43,8 +43,7 @@ export async function fetchCourseBanks(): Promise<CourseBank[]> {
         title: c.title,
         category: `자료 ${c.documents.length}개`,
         last_activity_at: null,
-        // 서버가 기출(kind=exam) 자료에서 프로파일을 추출한 코스만 true
-        has_exam_style: summary?.has_exam_style ?? false,
+        has_exam_style: false,
       };
 
       // 생성 배치 상태 — 은행이 없으면 "생성 중" 카드의 근거, 은행이 있으면
@@ -77,7 +76,6 @@ export async function fetchSession(
   tocIndexes: number[],
   count: number,
   excludeIds: string[] = [],
-  style: "all" | "standard" | "exam" = "all",
 ): Promise<SessionData> {
   const { data } = await apiClient.post<SessionData>(
     `/api/courses/${courseId}/quiz/session`,
@@ -86,8 +84,6 @@ export async function fetchSession(
       toc_indexes: tocIndexes,
       count,
       exclude_ids: excludeIds,
-      // "기출 스타일만 풀기" 필터 — 서버 샘플링이 style 표시로 거른다
-      style,
     },
   );
   return data;
@@ -134,18 +130,6 @@ export async function requestRefill(
 ): Promise<void> {
   await apiClient.post(
     `/api/courses/${courseId}/quiz/from-parsing/${documentId}?mode=append`,
-  );
-}
-
-// POST …/from-parsing/:docId?style=exam — 기출 스타일 배치 접수 (202).
-// 기존 표준 문항은 그대로 두고, 기출 프로파일(발문 말투·출제 가중치)을 반영한
-// 문항이 exam 표시를 달고 추가된다. 서버가 항상 append로 돌린다.
-export async function requestExamGeneration(
-  courseId: string,
-  documentId: string,
-): Promise<void> {
-  await apiClient.post(
-    `/api/courses/${courseId}/quiz/from-parsing/${documentId}?style=exam`,
   );
 }
 

@@ -4,13 +4,12 @@ import {
   ArrowLeftIcon,
   BookOpenIcon,
   CheckSquareIcon,
-  ExamIcon,
   SquareIcon,
   LightningIcon,
   PlayIcon,
 } from "@phosphor-icons/react";
 
-import type { QuizBankSummary, QuizStyle } from "./mock";
+import type { QuizBankSummary } from "./mock";
 
 const COUNT_PRESETS = [10, 20, 30] as const;
 
@@ -19,25 +18,20 @@ const COUNT_PRESETS = [10, 20, 30] as const;
 // 표시용. 풀이 기록이 있는 목차만 표기가 달라진다.
 export function ScopeSelect({
   title,
-  style,
   summary,
   solvedByToc = {},
   refilling = false,
   refillOutcome = null,
   onStart,
-  onExamGen,
   onBack,
 }: {
   title: string;
-  style: QuizStyle;
   summary: QuizBankSummary;
   solvedByToc?: Record<number, number>;
   refilling?: boolean; // 리필 배치 진행 중 — 풀이는 그대로 가능, 안내만
   // 직전 리필 결과 — 추가된 문항 수(0=빈손) 또는 "failed". 진행 중이 우선.
   refillOutcome?: number | "failed" | null;
-  onStart: (tocIndexes: number[], count: number, style: "all" | "exam") => void;
-  // [기출문제 스타일로 생성] — 기출 자료가 있는 과목에서만 노출
-  onExamGen?: () => void;
+  onStart: (tocIndexes: number[], count: number) => void;
   onBack: () => void;
 }) {
   const [checked, setChecked] = useState<Set<number>>(new Set());
@@ -45,9 +39,6 @@ export function ScopeSelect({
   // 시점 일이라 몇 개를 뽑든 충돌 없음 — 서빙은 범위 내 샘플링일 뿐.
   const [countMode, setCountMode] = useState<number | "custom">(10);
   const [customCount, setCustomCount] = useState("15");
-  // 기출 스타일만 풀기 — 은행에 exam 문항이 있을 때만 켤 수 있다
-  const [examOnly, setExamOnly] = useState(false);
-  const examTotal = summary.exam_total ?? 0;
 
   const toggle = (i: number) =>
     setChecked((prev) => {
@@ -63,13 +54,8 @@ export function ScopeSelect({
 
   const requested =
     countMode === "custom" ? Number.parseInt(customCount, 10) || 0 : countMode;
-  // 범위에 있는 것보다 많이 요청하면 있는 만큼으로 — 버튼 라벨이 실제 개수를 보여준다.
-  // 기출만 모드면 기출 문항 수가 추가 상한 (범위 교집합은 서버 샘플링이 마저 자름)
-  const sessionCount = Math.min(
-    requested,
-    selectedCount,
-    examOnly ? examTotal : Number.POSITIVE_INFINITY,
-  );
+  // 범위에 있는 것보다 많이 요청하면 있는 만큼으로 — 버튼 라벨이 실제 개수를 보여준다
+  const sessionCount = Math.min(requested, selectedCount);
   const canStart = checked.size > 0 && sessionCount > 0;
 
   return (
@@ -84,13 +70,12 @@ export function ScopeSelect({
 
       <div className="rounded-2xl border border-border-primary bg-white p-8 shadow-sm">
         <div className="mb-6 flex items-center justify-between">
+          {/* "기출 스타일" 뱃지를 여기 달지 않는다 — 기출 자료가 있다는 것과
+              은행이 기출풍이라는 것은 다른 말이라, 상단에 붙이면 문제집 전체가
+              기출 스타일인 줄 알게 된다 (실사용 혼동 실측). 기출 관련 표시는
+              아래 카드(생성 버튼/기출만 토글)가 전담한다. */}
           <h2 className="flex items-center gap-2 text-xl font-bold text-primary">
             📝 {title} — 문제은행
-            {style === "exam" && (
-              <span className="flex items-center gap-1 rounded-full bg-accent/10 px-2.5 py-1 text-xs font-bold text-accent">
-                <ExamIcon weight="fill" /> 기출 스타일
-              </span>
-            )}
           </h2>
           <span className="text-[0.9rem] font-semibold text-text-secondary">
             총 {summary.total}문항
@@ -226,61 +211,14 @@ export function ScopeSelect({
           )}
         </div>
 
-        {/* 기출 스타일 — 기출 자료가 있는 과목만.
-            exam 문항이 아직 없으면 [생성] 버튼, 있으면 "기출만 풀기" 토글 */}
-        {summary.has_exam_style && (
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/[0.03] p-4">
-            {examTotal > 0 ? (
-              <>
-                <span className="text-[0.9rem] text-text-secondary">
-                  기출 스타일 문항 <b className="text-text-primary">{examTotal}개</b>가 있어요
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setExamOnly((v) => !v)}
-                  className={clsx(
-                    "rounded-xl border px-4 py-2 text-[0.9rem] font-semibold transition-all",
-                    examOnly
-                      ? "border-accent bg-accent text-white"
-                      : "border-accent/50 text-accent hover:bg-accent/10",
-                  )}
-                >
-                  기출 스타일만 풀기{examOnly ? " ✓" : ""}
-                </button>
-              </>
-            ) : (
-              <>
-                <span className="text-[0.9rem] text-text-secondary">
-                  이 과목엔 <b className="text-text-primary">기출 자료</b>가 있어요 —
-                  기출의 발문 방식·출제 비중을 반영한 문제를 추가로 만들 수 있어요
-                </span>
-                <button
-                  type="button"
-                  disabled={refilling || !onExamGen}
-                  onClick={onExamGen}
-                  className={clsx(
-                    "rounded-xl px-4 py-2 text-[0.9rem] font-semibold text-white transition-all",
-                    refilling || !onExamGen
-                      ? "cursor-not-allowed bg-text-tertiary opacity-70"
-                      : "bg-accent hover:-translate-y-0.5 hover:shadow-md",
-                  )}
-                >
-                  {refilling ? "만드는 중…" : "기출문제 스타일로 생성"}
-                </button>
-              </>
-            )}
-          </div>
-        )}
-
         <div className="flex items-center justify-between border-t border-border-primary pt-6">
           <span className="text-[0.9rem] text-text-secondary">
             선택: <b className="text-text-primary">{selectedCount}문항</b>
-            {examOnly && <span className="ml-2 text-accent">· 기출 스타일만</span>}
           </span>
           <button
             type="button"
             disabled={!canStart}
-            onClick={() => onStart([...checked], sessionCount, examOnly ? "exam" : "all")}
+            onClick={() => onStart([...checked], sessionCount)}
             className={clsx(
               "inline-flex items-center gap-2 rounded-xl px-5 py-[0.6rem] text-[13.3333px] font-semibold leading-[normal] text-white shadow-sm transition-all",
               canStart
@@ -293,23 +231,14 @@ export function ScopeSelect({
         </div>
       </div>
 
-      {/* ⚡ 안내 — 확정안 §4 시각 언어 (회색 배경, 한 화면에 하나).
-          기출 스타일 모드면 격리 안내 대신 "복제가 아님"을 설명 (그 순간의 질문에 답) */}
+      {/* ⚡ 안내 — 확정안 §4 시각 언어 (회색 배경, 한 화면에 하나) */}
       <div className="mt-4 flex items-start gap-3 rounded-xl bg-bg-secondary p-4 text-[0.85rem] leading-relaxed text-text-secondary">
         <LightningIcon weight="fill" className="mt-0.5 shrink-0 text-base text-text-tertiary" />
-        {style === "exam" ? (
-          <span>
-            올리신 기출의 문제 유형과 발문 방식을 학습해 만든 문제입니다.
-            <br />
-            기출 문항을 그대로 내지 않으며, 내용과 근거는 전부 교재 원문에서 나옵니다.
-          </span>
-        ) : (
-          <span>
-            문제는 학습 기록과 무관하게 모든 사용자에게 같습니다.
-            <br />
-            학습 기록은 추천과 <b>학습함</b> 표시에만 쓰여요.
-          </span>
-        )}
+        <span>
+          문제는 학습 기록과 무관하게 모든 사용자에게 같습니다.
+          <br />
+          학습 기록은 추천과 <b>학습함</b> 표시에만 쓰여요.
+        </span>
       </div>
     </div>
   );

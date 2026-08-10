@@ -9,7 +9,6 @@ import {
   fetchCourseBanks,
   fetchGenStatus,
   fetchSession,
-  requestExamGeneration,
   requestRefill,
 } from "@/pages/quiz/api";
 import { loadSolved, recordSolved, solvedCountByToc } from "@/pages/quiz/solved";
@@ -25,7 +24,6 @@ export function QuizPage() {
   const deepCourseId = searchParams.get("course");
   const [step, setStep] = useState<Step>("course");
   const [course, setCourse] = useState<CourseBank | null>(null);
-  const [style, setStyle] = useState<QuizStyle>("standard"); // 기출 올린 과목만 exam 선택 가능
   const [items, setItems] = useState<SessionItem[]>([]);
   const [recycled, setRecycled] = useState(0); // items 뒤쪽 recycled개 = 복습 재등장
   const [results, setResults] = useState<SolveResult[]>([]);
@@ -78,9 +76,10 @@ export function QuizPage() {
     [course],
   );
 
-  const pickCourse = (c: CourseBank, s: QuizStyle) => {
+  // 두 번째 인자(QuizStyle)는 CourseSelect의 mock 시절 계약 잔재 — 기출 여부
+  // 표시는 이제 범위 화면의 카드(생성 버튼/기출만 토글)가 전담해서 안 쓴다.
+  const pickCourse = (c: CourseBank, _s: QuizStyle) => {
     setCourse(c);
-    setStyle(s);
     setRefillState("idle");
     sawRefillRunning.current = false;
     // 다른 과목으로 갈아타면 이전 과목의 리필 결과 안내는 접는다
@@ -100,9 +99,7 @@ export function QuizPage() {
     const found = banks.find((b) => b.course_id === deepCourseId);
     // 못 찾으면 아무것도 안 한다 — 과목 선택 화면이 그대로 뜬다(문제은행이
     // 아직 없는 코스는 `fetchCourseBanks`가 목록에서 빼기 때문에 여기 온다).
-    // 기출 스타일은 별도 모드가 아니라 은행에 이미 스며든 속성 — 프로파일이
-    // 있는 코스는 뱃지·안내도 기출 기준으로 보여준다.
-    if (found) pickCourse(found, found.has_exam_style ? "exam" : "standard");
+    if (found) pickCourse(found, "standard");
     // pickCourse는 매 렌더 새 함수라 deps에 넣으면 루프가 된다. jumped가 가드다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [banks, deepCourseId]);
@@ -112,15 +109,11 @@ export function QuizPage() {
     setStep("course");
   };
 
-  const start = async (
-    tocIndexes: number[],
-    count: number,
-    sessionStyle: "all" | "exam" = "all",
-  ) => {
+  const start = async (tocIndexes: number[], count: number) => {
     if (!course?.summary) return;
     setLoading(true);
     try {
-      // 정답 없는 문항만 도착. sessionStyle="exam"이면 기출 스타일 문항만 샘플링.
+      // 정답 없는 문항만 도착.
       // 푼 문항 기록(localStorage)을 함께 보내 안 푼 문제를 먼저 받는다.
       const solvedIds = loadSolved(course.course_id, course.summary.document_id)
         .map((e) => e.id);
@@ -130,7 +123,6 @@ export function QuizPage() {
         tocIndexes,
         count,
         solvedIds,
-        sessionStyle,
       );
       setLastScope({ tocIndexes, count });
       setItems(session.items);
@@ -165,19 +157,6 @@ export function QuizPage() {
     } catch {
       // 409(이미 생성 중)는 requested 유지가 맞고, 그 외 실패도 재시도 여지를
       // 남기기보다 다음 방문 때 자연스럽게 다시 시도하게 둔다.
-    }
-  };
-
-  // [기출문제 스타일로 생성] — 리필과 같은 접수·폴링 흐름을 그대로 탄다.
-  // 기존 표준 문항은 유지되고, exam 표시 문항이 추가된다.
-  const examGen = async () => {
-    if (!course?.summary || refillState === "requested") return;
-    setRefillState("requested");
-    setRefillOutcome(null);
-    try {
-      await requestExamGeneration(course.course_id, course.summary.document_id);
-    } catch {
-      // refill과 같은 원칙 — 409는 진행 중과 동의어
     }
   };
 
@@ -227,7 +206,6 @@ export function QuizPage() {
       <div className={loading ? "pointer-events-none opacity-60" : undefined}>
         <ScopeSelect
           title={course.title}
-          style={style}
           summary={liveBank?.summary ?? course.summary}
           solvedByToc={solvedCountByToc(
             loadSolved(course.course_id, course.summary.document_id),
@@ -236,8 +214,7 @@ export function QuizPage() {
           refillOutcome={
             refillOutcome?.courseId === course.course_id ? refillOutcome.saved : null
           }
-          onStart={(t, c, s) => void start(t, c, s)}
-          onExamGen={() => void examGen()}
+          onStart={(t, c) => void start(t, c)}
           onBack={backToCourses}
         />
       </div>

@@ -9,7 +9,6 @@ import logging
 import re
 import uuid
 
-from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.core.config import settings
@@ -93,7 +92,6 @@ class QuizService:
         exam_frequency: dict[str, int] | None = None,
         stem_patterns: list[str] | None = None,
         append: bool = False,
-        style: str = "standard",
     ) -> QuizGenerationResult:
         """append=False(기본)는 이 문서의 은행을 통째로 교체, append=True는
         리필 — 기존 은행을 유지한 채 새 문항만 추가한다 (발문 중복은 폐기).
@@ -136,7 +134,6 @@ class QuizService:
                     data=item.data,
                     evidence=generation.resolve_evidence(item, chunk),
                     difficulty=item.difficulty,
-                    style=style,
                     verified=True,
                 )
                 for item in verified_items
@@ -273,30 +270,6 @@ class QuizService:
                 TocSummary(toc_index=toc_index, title=toc_title or "", item_count=count)
             )
 
-        # 기출 버튼 노출 조건 — 프로파일이 이미 있거나, 추출 가능한 기출 자료가
-        # 코스에 붙어 있으면 참 (프로파일은 첫 기출 스타일 생성 때 뽑는다)
-        from app.features.course.models import Course
-        from app.features.quiz import exam_style
-        from app.features.quiz.models import QuizItem
-
-        course = self.repo.db.get(Course, course_id)
-        has_style = bool(
-            (course is not None and course.exam_style_profile)
-            or exam_style.exam_documents_of(self.repo.db, course_id)
-        )
-
-        # 문서별 기출 스타일 문항 수 — 0이면 [기출 스타일로 생성] 버튼, 있으면 필터
-        exam_counts = dict(
-            self.repo.db.query(QuizItem.document_id, func.count(QuizItem.id))
-            .filter(
-                QuizItem.course_id == course_id,
-                QuizItem.style == "exam",
-                QuizItem.verified.is_(True),
-            )
-            .group_by(QuizItem.document_id)
-            .all()
-        )
-
         # 학습함 라벨 — 사용자별 진도에서 단원 제목 매칭 (실패 시 빈 집합)
         from app.features.quiz import bridge as _bridge
 
@@ -316,8 +289,6 @@ class QuizService:
                 document_id=str(doc_id),
                 tocs=tocs,
                 total=sum(t.item_count for t in tocs),
-                has_exam_style=has_style,
-                exam_total=exam_counts.get(doc_id, 0),
             )
             for doc_id, tocs in by_doc.items()
         ]
@@ -329,11 +300,9 @@ class QuizService:
         toc_indexes: list[int],
         count: int,
         exclude_ids: list[uuid.UUID] | None = None,
-        style: str = "all",
     ) -> SessionResponse:
         items, recycled = self.repo.sample_items(
-            course_id, document_id, toc_indexes, count, exclude_ids,
-            style=None if style == "all" else style,
+            course_id, document_id, toc_indexes, count, exclude_ids
         )
         return SessionResponse(
             items=[
