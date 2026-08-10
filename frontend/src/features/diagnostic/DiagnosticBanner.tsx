@@ -20,13 +20,16 @@ export function DiagnosticBanner({ docId }: { docId: string }) {
 
   if (!data) return null;
 
+  // 이미 진단을 마쳤으면 **다시 하는 문을 안 준다.** 진단은 목차를 정하는
+  // 단계라, 이미 배우기 시작한 뒤에 다시 돌리면 읽던 단원 앞뒤가 바뀐다.
+  // 대신 결과를 언제든 다시 볼 수 있게 한다.
   if (data.diagnosed_at) {
     return (
       <Link
-        to={`/diagnostic/${encodeURIComponent(docId)}`}
+        to={`/curriculum/${encodeURIComponent(docId)}/diagnostic-report`}
         className="mb-4 inline-block text-[0.8rem] text-text-tertiary hover:underline"
       >
-        🔎 진단 다시 하기
+        📋 진단 리포트 보기
       </Link>
     );
   }

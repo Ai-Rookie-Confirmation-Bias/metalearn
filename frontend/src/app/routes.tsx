@@ -10,6 +10,7 @@ import { LearningPage } from "@/pages/LearningPage";
 import { LibraryPage } from "@/pages/LibraryPage";
 import { SharedLibraryPage } from "@/pages/SharedLibraryPage";
 import { FocusPage } from "@/pages/FocusPage";
+import { DiagnosticReportPage } from "@/pages/DiagnosticReportPage";
 import { AnalysisPage } from "@/pages/AnalysisPage";
 import { SettingsPage } from "@/pages/SettingsPage";
 import { CreateCoursePage } from "@/pages/CreateCoursePage";
@@ -77,6 +78,8 @@ export const router = createBrowserRouter([
       { path: "review", element: <ReviewPage /> },
       { path: "chapters/:index/formative", element: <FormativePage /> },
       { path: "sections/:sectionId", element: <SectionPage /> },
+      // 진단 결과 — 왜 이 목차가 됐는지. 진단 직후에 오고, 그 뒤에도 계속 본다.
+      { path: "diagnostic-report", element: <DiagnosticReportPage /> },
     ],
   },
   // 몰입 학습 모드 — **목차 레이아웃 밖이다.** 전체화면으로 한 칸만 보여주는

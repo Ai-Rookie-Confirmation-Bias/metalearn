@@ -234,7 +234,14 @@ class PrereqItemOut(BaseModel):
     why: str | None = None
     # pass | gray — rejected는 애초에 안 내려간다(자료가 이미 가르친다).
     status: str
+    # 24 진단이 채운다: known | heard | unknown — **사용자가 답한 것**
     known: str | None = None
+    # 문항으로 **확인한** 결과. True 맞힘 / False 틀림 / None 안 물어봄.
+    #
+    # `known`과 갈라 둔다. 자기 신고와 확인된 오답은 근거의 무게가 다르고,
+    # 진단 리포트가 "모른다고 답하셨다"와 "문항에서 틀리셨다"를 다르게 써야
+    # ✚ 보강 단원이 임의로 붙은 게 아니라는 게 드러난다.
+    verified: bool | None = None
 
 
 class PrereqSubjectOut(BaseModel):

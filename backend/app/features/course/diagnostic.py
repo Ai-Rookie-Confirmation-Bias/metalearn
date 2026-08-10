@@ -167,6 +167,7 @@ class DiagnosticService:
                             "why": r.why,
                             "status": r.status,
                             "known": r.known,
+                            "verified": r.verified,
                         }
                         for r in sorted(items, key=lambda r: r.seq)
                     ],

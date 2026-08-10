@@ -17,7 +17,11 @@ export interface PrereqItem {
   item: string;
   why: string | null;
   status: "pass" | "gray";
+  // 사용자가 답한 것
   known: Known | null;
+  // 문항으로 **확인한** 결과. true 맞힘 / false 틀림 / null 안 물어봄.
+  // 자기 신고와 확인된 오답은 근거의 무게가 다르다 — 리포트가 갈라 쓴다.
+  verified: boolean | null;
 }
 
 export interface PrereqSubject {

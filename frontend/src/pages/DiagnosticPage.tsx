@@ -203,6 +203,13 @@ export function DiagnosticPage() {
     fetchSetup(docId)
       .then((s) => {
         if (!alive) return;
+        // **이미 끝낸 진단은 다시 못 한다.** 진단은 목차를 정하는 단계라,
+        // 배우기 시작한 뒤에 다시 돌리면 읽던 단원의 앞뒤가 바뀐다. URL을
+        // 직접 쳐도 막히도록 여기서 되돌린다 — 대신 결과는 언제든 본다.
+        if (s.diagnosed_at) {
+          navigate(`/curriculum/${docId}/diagnostic-report`, { replace: true });
+          return;
+        }
         setSetup(s);
         setGoal(s.goal);
         setWeeks(s.deadline_weeks);
@@ -402,12 +409,17 @@ export function DiagnosticPage() {
               {asked > 0 && ` (확인 문항 ${asked}개)`}.
             </p>
           )}
+          {/* 진단 직후에는 **결과부터** 보여준다. 목차가 왜 이렇게 됐는지
+              모른 채 진도 0%짜리 목록을 먼저 보면 ✚ 배지가 임의로 붙은
+              것처럼 읽힌다. */}
           <button
             type="button"
-            onClick={() => navigate(`/curriculum/${docId}`)}
+            onClick={() =>
+              navigate(`/curriculum/${docId}/diagnostic-report`, { replace: true })
+            }
             className="mt-8 inline-flex items-center gap-2 rounded-xl bg-accent px-7 py-3 font-semibold text-white"
           >
-            학습 시작하기 <ArrowRightIcon />
+            결과 보기 <ArrowRightIcon />
           </button>
         </div>
       </Shell>
