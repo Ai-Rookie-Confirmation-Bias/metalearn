@@ -4,6 +4,7 @@
       (기계검사 → 심판 → 풀이 왕복 → 불합격 수정 1회) → verified만 저장(전체 교체).
 서빙: DB 조회만 — LLM 호출 없음.
 """
+import asyncio
 import logging
 import re
 import uuid
@@ -111,27 +112,38 @@ class QuizService:
         chunk_by_index = {c.index: c for c in doc.chunks}
         toc_title = {t.index: t.title for t in doc.tocs}
 
-        rows: list[QuizItem] = []
-        for order in orders:
+        # 조각 사이에는 의존성이 없어 동시에 돌린다 (실측 888초 → 직렬이 병목).
+        # 동시 폭은 LLM 분당 제한을 넘지 않게 세마포어로 묶고, gather가 orders
+        # 순서를 보존하므로 저장 순서는 직렬 때와 동일하다.
+        sem = asyncio.Semaphore(config.gen_concurrency)
+
+        async def _run_chunk(order: ChunkWorkOrder) -> list[QuizItem]:
             chunk = chunk_by_index[order.chunk_index]
-            verified_items = await self._generate_and_verify(
-                order, chunk, stem_patterns, result
-            )
-            for item in verified_items:
-                rows.append(
-                    QuizItem(
-                        course_id=course_id,
-                        document_id=document_id,
-                        toc_index=order.toc_index,
-                        toc_title=toc_title.get(order.toc_index, ""),
-                        type=item.type,
-                        concept_name=item.concept,
-                        data=item.data,
-                        evidence=generation.resolve_evidence(item, chunk),
-                        difficulty=item.difficulty,
-                        verified=True,
-                    )
+            async with sem:
+                verified_items = await self._generate_and_verify(
+                    order, chunk, stem_patterns, result
                 )
+            return [
+                QuizItem(
+                    course_id=course_id,
+                    document_id=document_id,
+                    toc_index=order.toc_index,
+                    toc_title=toc_title.get(order.toc_index, ""),
+                    type=item.type,
+                    concept_name=item.concept,
+                    data=item.data,
+                    evidence=generation.resolve_evidence(item, chunk),
+                    difficulty=item.difficulty,
+                    verified=True,
+                )
+                for item in verified_items
+            ]
+
+        rows: list[QuizItem] = [
+            row
+            for chunk_rows in await asyncio.gather(*(_run_chunk(o) for o in orders))
+            for row in chunk_rows
+        ]
 
         # 발문 중복 제거 — 리필(append)은 기존 은행까지, 교체는 이번 배치 안에서.
         # 같은 개념 풀에서 생성하므로 중복이 나오는 게 정상 경로다 (교체 모드도
@@ -230,6 +242,7 @@ class QuizService:
         for item, verdict in zip(checked, verdicts):
             if verdict.ok:
                 item.data = verdict.item.data  # polish·수정 반영본
+                generation.augment_notations(item, chunk)  # 한/영 병기 인정 표기 보강
                 passed.append(item)
             else:
                 result.discarded.append(
