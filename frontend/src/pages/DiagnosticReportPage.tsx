@@ -129,17 +129,16 @@ export function DiagnosticReportPage() {
           const s = byName.get(t.title);
           const ev = s && evidenceOf(s);
           return (
-            // 강조는 **보여야 강조다.** 배경 알파 0.03은 흰 바탕에서 사실상
-            // 무색이라, 넣어 놓고도 회색 목록 하나로 읽혔다. 왼쪽 색 막대를
-            // 세우고 배경을 조금 올린다 — 목록을 훑을 때 눈이 걸리는 건
-            // 옅은 면보다 세로 선이다.
+            // 강조는 **바탕 하나로** 한다. 처음엔 알파 0.03이라 흰 바탕에서
+            // 무색이었고, 그걸 왼쪽 색 막대로 메우려 했더니 선이 목록을 갈라
+            // 놓아 오히려 답답했다. 선을 빼고 바탕을 읽히는 세기까지 올린다.
             <div
               key={t.id}
-              className="border-b border-border-primary border-l-[3px] border-l-accent bg-accent/[0.06] px-6 py-4"
+              className="border-b border-border-primary bg-accent/[0.09] px-6 py-4"
             >
               <div className="flex items-baseline gap-2">
                 <span className="shrink-0 rounded bg-accent px-2 py-0.5 text-[0.72rem] font-bold text-white">
-                  ✚ 먼저 채움
+                  ✚ 보강 개념
                 </span>
                 <span className="font-bold text-text-primary">{t.title}</span>
               </div>
