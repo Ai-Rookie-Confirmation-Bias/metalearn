@@ -126,14 +126,22 @@ function BookCard({
   const done = sectionsDone(doc);
   const progress = Math.round(doc.readiness * 100);
   const started = done > 0;
-  const cta = needsDiagnostic
-    ? "진단하고 시작하기"
-    : started
-      ? "이어서 학습하기"
-      : "바로 학습하기";
-  const to = needsDiagnostic
-    ? `/diagnostic/${encodeURIComponent(doc.docId)}`
-    : learnPath(doc.docId);
+
+  // 기본 제공 자료는 **내 학습이 아니라 둘러보는 것**이다. 진단을 요구하지
+  // 않고(진단은 내 목표·성향을 묻는 자리다), 문구도 "학습"이 아니라 "보기"다.
+  // 올린 사람에게는 자기 자료와 구경거리가 한눈에 갈려야 한다.
+  const shared = Boolean(doc.shared);
+  const cta = shared
+    ? "학습 자료 보기"
+    : needsDiagnostic
+      ? "진단하고 시작하기"
+      : started
+        ? "이어서 학습하기"
+        : "바로 학습하기";
+  const to =
+    !shared && needsDiagnostic
+      ? `/diagnostic/${encodeURIComponent(doc.docId)}`
+      : learnPath(doc.docId);
   const CoverIcon = cover.icon;
 
   // 문제집은 **같은 자료의 다른 갈래**다. 전에는 `/quiz` 탭에 따로 있어서,
@@ -141,7 +149,9 @@ function BookCard({
   const items = bank?.summary?.total ?? 0;
   const quizReady = items > 0;
   const quizLabel = quizReady
-    ? `문제 풀기 · ${items}문항`
+    ? shared
+      ? `문제집 보기 · ${items}문항`
+      : `문제 풀기 · ${items}문항`
     : bank?.status === "generating"
       ? "문제 만드는 중…"
       : "문제집 없음";
@@ -185,7 +195,11 @@ function BookCard({
             </p>
           </div>
         ) : (
-          <div className="mb-4 text-[0.85rem] text-text-tertiary">아직 시작하지 않았어요</div>
+          <div className="mb-4 text-[0.85rem] text-text-tertiary">
+            {/* 기본 제공 자료에 "아직 시작하지 않았어요"는 재촉으로 읽힌다.
+                이건 내 학습 목록이 아니라 열어 볼 수 있는 자료다. */}
+            {shared ? "진단 없이 바로 열어볼 수 있어요" : "아직 시작하지 않았어요"}
+          </div>
         )}
 
         <div className="mt-auto flex flex-col gap-2">
@@ -514,11 +528,23 @@ export function LibraryPage() {
         // 문제은행 생성을 **여기서** 접수한다. 실데이터 888초짜리라 진단을
         // 하는 동안 서버가 만들게 두는 게 가장 빠르다. 이 문을 아무도 안 불러서
         // 문제집이 계속 비어 있었다.
-        // 실패해도 넘어간다 — 문제집은 학습과 별개고, 문제집 화면에서 다시
-        // 접수할 수 있다(리필).
-        for (const id of documentIds) {
-          void requestGeneration(course.id, id).catch(() => {});
-        }
+        //
+        // ⚠️ **접수까지는 기다린다.** 전에는 `void ...catch(() => {})`로 던져
+        //    놓고 곧장 `navigate`했는데, 요청이 나가기 전에 이 컴포넌트가
+        //    언마운트되면서 취소됐다. 서버 상태가 `idle`이라 접수조차 안 된
+        //    것인데 catch가 삼켜서 아무 흔적도 없었다(실측: 업로드했는데
+        //    문항 0개, 로그에 POST가 아예 없음).
+        //
+        //    이 API는 배치를 걸고 즉시 돌아온다(202). 기다려도 체감이 없다.
+        //    실패해도 넘어간다 — 문제집은 학습과 별개고 문제집 화면에서 다시
+        //    접수할 수 있다(리필). 다만 **조용히 삼키지는 않는다.**
+        await Promise.allSettled(
+          documentIds.map((id) =>
+            requestGeneration(course.id, id).catch((e: unknown) => {
+              console.warn("[library] 문제은행 접수 실패", id, e);
+            }),
+          ),
+        );
 
         for (const id of documentIds) dropPending(id);
         clearPendingCourse();

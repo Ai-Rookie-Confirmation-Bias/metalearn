@@ -48,6 +48,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from sqlalchemy import select  # noqa: E402
 
+# ⚠️ **전 모델을 먼저 로드한다.** parsing 모델만 import하면
+# `user_documents.user_id` → `users` FK를 풀 수 없어 첫 쿼리에서 죽는다
+# (NoReferencedTableError). 앱은 main.py가 같은 줄로 해결하고 있다.
+import app.models_registry  # noqa: F401,E402
 from app.core.database import SessionLocal  # noqa: E402
 from app.features.parsing.models import Document, UserDocument  # noqa: E402
 
@@ -110,10 +114,14 @@ def mark_public(db, document_ids: list[uuid.UUID]) -> int:
     return changed
 
 
-def ingest(db, paths: list[Path], owner: uuid.UUID) -> list[uuid.UUID]:
-    """업로드 + 파싱. 이미 같은 지문이 있으면 파싱을 건너뛴다."""
-    import asyncio
+async def ingest(db, paths: list[Path], owner: uuid.UUID) -> list[uuid.UUID]:
+    """업로드 + 파싱. 이미 같은 지문이 있으면 파싱을 건너뛴다.
 
+    ⚠️ **자료마다 `asyncio.run`을 부르면 안 된다.** `solar_client`는 모듈
+       싱글턴이라 첫 루프에서 만든 연결을 들고 있는데, 그 루프가 닫히면
+       두 번째 자료부터 `RuntimeError: Event loop is closed`로 죽는다
+       (실측: 4개 중 2개만 들어갔다). 루프는 바깥에서 한 번만 연다.
+    """
     service = ParsingService(db)
     done: list[uuid.UUID] = []
 
@@ -132,7 +140,7 @@ def ingest(db, paths: list[Path], owner: uuid.UUID) -> list[uuid.UUID]:
         t0 = time.time()
         print(f"  [{i}/{len(paths)}] {path.name} — 파싱 중…", flush=True)
         try:
-            asyncio.run(ParsingService(db).run(document_id, data))
+            await ParsingService(db).run(document_id, data)
         except Exception as e:  # noqa: BLE001 — 한 자료가 죽어도 나머지는 간다
             print(f"      실패: {type(e).__name__}: {e}")
             continue
@@ -190,9 +198,12 @@ def main() -> int:
 
         ids: list[uuid.UUID] = []
         if args.dir:
+            import asyncio
+
             paths = _files(Path(args.dir))
             print(f"자료 {len(paths)}개 적재\n")
-            ids = ingest(db, paths, uuid.UUID(args.owner))
+            # 루프는 여기서 한 번만 연다(`ingest` 주석 참고).
+            ids = asyncio.run(ingest(db, paths, uuid.UUID(args.owner)))
         if args.mark:
             ids += [uuid.UUID(x) for x in args.mark]
 
