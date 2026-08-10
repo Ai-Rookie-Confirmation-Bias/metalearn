@@ -18,10 +18,52 @@ async def lifespan(_: FastAPI) -> AsyncGenerator[None, None]:
     #    안 돈다 — FastAPI는 `lifespan=`이 주어지면 구형 on_event 핸들러를
     #    **조용히 무시한다.** 병합은 성공했는데 자료가 0개였고, 화면만 비어서
     #    원인이 안 보였다(통합 1단계에서 실제로 겪었다).
+    _strand_orphaned_parses()
     _load_curriculum()
     yield
     # Solar 공유 커넥션 풀 정리
     await solar_client.aclose()
+
+
+def _strand_orphaned_parses() -> None:
+    """죽은 프로세스가 두고 간 파싱을 실패로 도장 찍는다.
+
+    파싱은 `BackgroundTasks`로 **이 프로세스 안에서** 돈다. 서버가 내려가면
+    (docker compose down, --reload 재시작, 크래시) 그 작업은 그냥 사라지는데,
+    문서는 `extracting` 같은 중간 상태로 남는다. 되살릴 사람이 아무도 없다.
+
+    화면은 그 상태를 "아직 진행 중"으로 읽어 **영원히 폴링한다.** 실측:
+    자료 1개가 `extracting`에서 멈춘 채 진행바 80%로 굳었다.
+
+    실패로 바꾸면 두 가지가 풀린다 — 카드가 치우기를 내주고, 같은 파일을 다시
+    올리면 `register()`가 재파싱한다(`needs_parse`가 PENDING·FAILED를 본다).
+
+    ⚠️ 재개가 아니라 **포기**다. 원본 바이트를 안 들고 있어서 이어서 못 한다.
+    """
+    from sqlalchemy import select
+
+    from app.core.database import SessionLocal
+    from app.features.parsing.models import DocStatus, Document
+
+    settled = {DocStatus.READY.value, DocStatus.FAILED.value}
+    db = SessionLocal()
+    try:
+        rows = list(
+            db.scalars(select(Document).where(Document.status.notin_(settled)))
+        )
+        if not rows:
+            return
+        for row in rows:
+            row.status = DocStatus.FAILED.value
+            row.error = "서버가 다시 시작되어 분석이 끊겼습니다. 다시 올려 주세요."
+        db.commit()
+        print(f"[parsing] 끊긴 파싱 {len(rows)}건을 실패로 정리: "
+              + ", ".join(r.filename[:24] for r in rows))
+    except Exception as exc:  # noqa: BLE001 — 부팅을 막지 않는다
+        db.rollback()
+        print(f"[parsing] 끊긴 파싱 정리 실패: {type(exc).__name__}: {exc}")
+    finally:
+        db.close()
 
 
 app = FastAPI(title="MetaLearn API", version="0.1.0", lifespan=lifespan)
