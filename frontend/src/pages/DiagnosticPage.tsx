@@ -717,6 +717,16 @@ export function DiagnosticPage() {
                           ? `${s.evidence.filename} 로 설명해요`
                           : src.label}
                       </div>
+                      {/* **무엇에 걸렸는지 보여준다.** 이름만 같은 다른 것이
+                          섞이기 때문이다(실측: NumPy 브로드캐스팅이 네트워크
+                          브로드캐스트에 0.69). 근거가 안 보이면 사용자가
+                          끌지 말지를 판단할 수 없다. */}
+                      {s.evidence && (
+                        <div className="mt-0.5 text-[0.78rem] text-text-tertiary">
+                          {s.evidence.item} → {s.evidence.concept} (
+                          {s.evidence.similarity.toFixed(2)})
+                        </div>
+                      )}
                       {!on && s.plan === "skip" && (
                         <div className="mt-1 text-[0.8rem] text-text-tertiary">
                           이미 아신다고 하셨어요

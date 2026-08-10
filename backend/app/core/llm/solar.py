@@ -215,20 +215,41 @@ class SolarClient(LLMClient):
     async def embed_batch(
         self, texts: list[str], *, purpose: str = "query"
     ) -> list[list[float]]:
-        """여러 텍스트를 한 호출로 임베딩. 입력 순서대로 반환.
+        """여러 텍스트를 임베딩. **입력 순서대로** 반환.
 
         응답의 index 필드로 정렬해 순서를 보장한다 — 조각/개념과 벡터가
         어긋나면 전혀 다른 내용에 임베딩이 붙는다.
+
+        **여기서 쪼갠다.** 전에는 받은 만큼 한 요청에 넣었고, 부르는 쪽이
+        알아서 나눠 주기를 기대했다. 파싱 파이프라인만 그렇게 하고 있었고
+        (`embed.py`가 EMBED_BATCH_SIZE로 자른다) 선수 판정·보강 조회는
+        전부 통째로 보냈다.
+
+        자료 5개짜리 수업에서 선수 항목이 150개가 되자 400이 떴고, 진단이
+        열리지 않았다. 실측 경계:
+
+            150개  400 Bad Request
+            128개  400 Bad Request
+            100개  통과
+             64개  통과
+
+        상한을 아는 곳은 클라이언트 하나면 된다. 부르는 쪽마다 기억하게 하면
+        새 호출 자리가 생길 때마다 같은 사고가 난다.
         """
         if not texts:
             return []
-        resp = await self._request(
-            "/embeddings",
-            json={"model": self._embed_model(purpose), "input": texts},
-            timeout=_BATCH_TIMEOUT,
-        )
-        data = sorted(resp.json()["data"], key=lambda d: d["index"])
-        return [d["embedding"] for d in data]
+        size = max(1, settings.EMBED_BATCH_SIZE)
+        out: list[list[float]] = []
+        for i in range(0, len(texts), size):
+            chunk = texts[i : i + size]
+            resp = await self._request(
+                "/embeddings",
+                json={"model": self._embed_model(purpose), "input": chunk},
+                timeout=_BATCH_TIMEOUT,
+            )
+            data = sorted(resp.json()["data"], key=lambda d: d["index"])
+            out.extend(d["embedding"] for d in data)
+        return out
 
     # ── 문서 파싱 ─────────────────────────────────────────────────
 

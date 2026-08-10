@@ -15,6 +15,7 @@ import { Explanation } from "@/features/curriculum/components/Explanation";
 import { Figures } from "@/features/curriculum/components/Figures";
 import { Mcq } from "@/features/curriculum/components/Mcq";
 import { Reason, StatusBadge } from "@/features/curriculum/components/bits";
+import { splitLesson } from "@/features/curriculum/lesson/steps";
 import { useAnswer, useLesson } from "@/features/curriculum/queries/useCurriculum";
 
 /** ⚡ 지난 결손을 짚는 자리 — 한 문단은 그냥 보이고, 다시 설명은 **펼쳐야** 보인다.
@@ -97,81 +98,30 @@ export function SectionPage() {
   if (isError || !data)
     return <p className="p-8 text-red-600">학습 내용을 불러오지 못했습니다.</p>;
 
-  // 설명은 이제 **개념마다 한 블록**이다(백엔드 `sections` 스키마).
-  // 옛 응답이나 이름이 안 맞은 덩이는 concept_keys가 여럿이라 여기서 안 잡히고,
-  // 아래 `looseText`로 빠져 맨 앞에 그대로 나온다 — 설명을 잃지 않는다.
-  const explainByConcept = new Map<string, BlockOut>();
-  const looseExplain: BlockOut[] = [];
-  for (const b of data.blocks) {
-    if (b.type !== "concept") continue;
-    const key = b.conceptKeys.length === 1 ? b.conceptKeys[0] : null;
-    if (key && data.concepts.includes(key)) explainByConcept.set(key, b);
-    else looseExplain.push(b);
-  }
-  const analogy = data.blocks.find((b) => b.type === "analogy");
-  // ⚡ 최근 틀린 개념을 엮은 문단. tiedIn이 비면 블록도 없다(백엔드가 버린다) —
-  // "AI가 나를 보고 바꿨다"고 말하려면 바뀐 본문이 실제로 있어야 하기 때문이다.
-  const tieIn = data.blocks.find((b) => b.type === "tie_in");
-  const clozes = data.blocks.filter((b) => b.type === "cloze");
-  const mcq = data.blocks.find((b) => b.type === "mcq");
-
-  // 빈칸을 개념별로 묶는다. 화면 개념 순서를 그대로 따르고, 귀속이 애매한
-  // 것(개념 여럿 / 없음)은 맨 뒤 한 묶음으로 남긴다.
-  const byConcept = new Map<string, BlockOut[]>();
-  const rest: BlockOut[] = [];
-  for (const b of clozes) {
-    const key = b.conceptKeys.length === 1 ? b.conceptKeys[0] : null;
-    if (key && data.concepts.includes(key)) {
-      byConcept.set(key, [...(byConcept.get(key) ?? []), b]);
-    } else {
-      rest.push(b);
-    }
-  }
-  // 그림도 개념에 배정돼 온다. 자리를 못 정한 것(conceptKey 빈 값)은 맨 뒤로.
-  const figs = data.figures ?? [];
-  const figByConcept = new Map<string, typeof figs>();
-  for (const f of figs) {
-    const key = f.conceptKey;
-    if (!key || !data.concepts.includes(key)) continue;
-    figByConcept.set(key, [...(figByConcept.get(key) ?? []), f]);
-  }
-  const looseFigs = figs.filter(
-    (f) => !f.conceptKey || !data.concepts.includes(f.conceptKey),
-  );
-
-  // ★ 개념 하나 = [설명 · 그림 · 그 개념 빈칸] 한 덩이.
-  // 셋 중 하나라도 있으면 덩이를 만든다 — **그림이 없으면 그냥 안 넣는다.**
-  let n = 0;
-  const steps: {
-    key: string | null;
-    explain?: BlockOut;
-    figures: typeof figs;
-    blocks: BlockOut[];
-    offset: number;
-  }[] = [];
-  for (const key of data.concepts) {
-    const blocks = byConcept.get(key) ?? [];
-    const explain = explainByConcept.get(key);
-    const figures = figByConcept.get(key) ?? [];
-    if (!blocks.length && !explain && !figures.length) continue;
-    steps.push({ key, explain, figures, blocks, offset: n });
-    n += blocks.length;
-  }
-  if (rest.length || looseFigs.length) {
-    steps.push({ key: null, figures: looseFigs, blocks: rest, offset: n });
-  }
+  // 개념 단위로 자르는 규칙은  한 곳에 있다 — 몰입 뷰어가
+  // 같은 함수를 쓴다. 두 화면이 각자 자르면 같은 자료인데 순서가 달라진다.
+  const { steps, looseExplain, analogy, tieIn, mcq } = splitLesson(data);
 
   const grade = (correct: boolean, conceptKey?: string) =>
     answer.mutate({ sectionId, correct, conceptKey });
 
   return (
     <div className="mx-auto max-w-2xl p-8">
-      <Link
-        to={`/curriculum/${encodeURIComponent(docId)}/chapters/${data.chapterIndex}`}
-        className="text-[0.8rem] text-text-tertiary hover:underline"
-      >
-        ← {data.chapterTitle}
-      </Link>
+      <div className="flex items-center justify-between gap-3">
+        <Link
+          to={`/curriculum/${encodeURIComponent(docId)}/chapters/${data.chapterIndex}`}
+          className="text-[0.8rem] text-text-tertiary hover:underline"
+        >
+          ← {data.chapterTitle}
+        </Link>
+        {/* 몰입 모드 — 한 번에 개념 하나만. 나머지 UI를 다 걷어낸다. */}
+        <Link
+          to={`/curriculum/${encodeURIComponent(docId)}/sections/${sectionId}/focus`}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border-primary px-3 py-1.5 text-[0.78rem] font-semibold text-text-secondary transition-colors hover:border-accent hover:bg-accent/5 hover:text-accent"
+        >
+          🎧 몰입 모드
+        </Link>
+      </div>
 
       <header className="mt-3 mb-6">
         <div className="flex items-start justify-between gap-3">
