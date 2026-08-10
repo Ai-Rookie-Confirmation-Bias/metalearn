@@ -6,17 +6,28 @@
 // 채점은 여기서 안 한다 — 화면 상세에서 실제로 꺼내보고 그 결과가 올라온다.
 import { Link, useParams } from "react-router-dom";
 import { clsx } from "clsx";
+import { LockSimpleIcon, NotePencilIcon } from "@phosphor-icons/react";
 
-import { Bar, ModeBadge, Reason, StatusBadge, pct } from "@/features/curriculum/components/bits";
+import {
+  Bar,
+  ModeBadge,
+  Reason,
+  StatusBadge,
+  pct,
+} from "@/features/curriculum/components/bits";
 import { useChapter } from "@/features/curriculum/queries/useCurriculum";
 
 export function ChapterPage() {
-  const { docId = "", index = "0" } = useParams<{ docId: string; index: string }>();
+  const { docId = "", index = "0" } = useParams<{
+    docId: string;
+    index: string;
+  }>();
   const chapterIndex = Number(index);
   const { data, isLoading, isError } = useChapter(docId, chapterIndex);
 
   if (isLoading) return <p className="p-8 text-text-secondary">불러오는 중…</p>;
-  if (isError || !data) return <p className="p-8 text-red-600">목차를 불러오지 못했습니다.</p>;
+  if (isError || !data)
+    return <p className="p-8 text-red-600">목차를 불러오지 못했습니다.</p>;
 
   return (
     <div className="mx-auto max-w-3xl p-8">
@@ -29,9 +40,7 @@ export function ChapterPage() {
 
       <header className="mt-3 mb-6 border-b border-border-primary pb-6">
         <div className="flex items-start justify-between gap-3">
-          <h1 className="text-2xl font-bold text-text-primary">
-            {data.inserted ? "✚" : "📘"} {data.title}
-          </h1>
+          <h1 className="text-2xl font-bold text-text-primary">{data.title}</h1>
           <ModeBadge mode={data.mode} />
         </div>
         {/* 교재에 없던 단원이면 먼저 밝힌다. 원문(📎)이 없는 이유이기도 하다.
@@ -42,28 +51,32 @@ export function ChapterPage() {
         {data.inserted &&
           (data.coveredBy ? (
             <p className="mt-2 rounded-lg bg-emerald-50 px-4 py-2.5 text-[0.83rem] text-text-secondary">
-              <strong className="text-emerald-700">📚 책장에 있는 내용</strong> —
-              진단에서 모른다고 하신 내용인데, <strong>이미 가지고 계신 자료</strong>에
-              같은 개념이 있어 먼저 짚어 드립니다.
+              <strong className="text-emerald-700">책장에 있는 내용</strong> —
+              진단에서 모른다고 하신 내용인데,{" "}
+              <strong>이미 가지고 계신 자료</strong>에 같은 개념이 있어 먼저
+              짚어 드립니다.
               <span className="mt-1 block font-medium text-emerald-800">
                 {data.coveredBy}
               </span>
             </p>
           ) : (
             <p className="mt-2 rounded-lg bg-accent/5 px-4 py-2.5 text-[0.83rem] text-text-secondary">
-              <strong className="text-accent">✚ 보강 개념</strong> — 진단에서
-              모른다고 하신 내용이라 <strong>교재에는 없습니다.</strong> 여기 설명은
-              교재 원문이 아니라 새로 쓴 것이라 📎 원문이 붙지 않습니다.
+              <strong className="text-accent">보강 개념</strong> — 진단에서
+              모른다고 하신 내용이라 <strong>교재에는 없습니다.</strong> 여기
+              설명은 교재 원문이 아니라 새로 쓴 것이라 원문 근거가 붙지
+              않습니다.
             </p>
           ))}
         <p className="mt-1 text-[0.8rem] text-text-tertiary">
-          화면 {data.sections.length}개{data.pages && <> · 📖 {data.pages}</>}
+          화면 {data.sections.length}개{data.pages && <> · {data.pages}</>}
         </p>
 
         <div className="mt-4 flex gap-8">
           <div>
             <p className="text-[0.75rem] text-text-tertiary">이 단원 이해도</p>
-            <p className="text-xl font-bold tabular-nums text-text-primary">{pct(data.ratio)}</p>
+            <p className="text-xl font-bold tabular-nums text-text-primary">
+              {pct(data.ratio)}
+            </p>
           </div>
           <div>
             <p className="text-[0.75rem] text-text-tertiary">전체 준비도</p>
@@ -83,7 +96,9 @@ export function ChapterPage() {
         )}
       </header>
 
-      <h2 className="mb-3 text-sm font-bold text-text-secondary">다음 학습 순서</h2>
+      <h2 className="mb-3 text-sm font-bold text-text-secondary">
+        다음 학습 순서
+      </h2>
       <ol className="space-y-3">
         {data.sections.map((s) => (
           <li
@@ -101,14 +116,16 @@ export function ChapterPage() {
               <div className="min-w-0">
                 <p className="text-[0.7rem] font-semibold text-text-tertiary">
                   {s.inserted ? (
-                    <span className="text-violet-700">↻ 보충 화면 · 진도에 안 들어갑니다</span>
+                    <span className="text-violet-700">
+                      ↻ 보충 화면 · 진도에 안 들어갑니다
+                    </span>
                   ) : (
                     <>{s.order + 1}번째 화면</>
                   )}
                 </p>
                 <p className="font-semibold text-text-primary">{s.title}</p>
                 <p className="mt-0.5 text-[0.75rem] text-text-tertiary">
-                  개념 {s.concepts.length}개{s.page && <> · 📖 {s.page}</>}
+                  개념 {s.concepts.length}개{s.page && <> · {s.page}</>}
                   {s.attempts > 0 && <> · {s.attempts}문제 풀이</>}
                 </p>
               </div>
@@ -116,10 +133,14 @@ export function ChapterPage() {
                 {/* 맞힌 적 있는데 잊혀가는 화면. 아직 못 맞힌 건 여기가 아니라
                     상태 배지(약함/학습 중)가 잡는다 — 처방이 다르다. */}
                 {s.needsReview && (
-                  <span className="text-[0.7rem] font-semibold text-amber-700">🔁 복습</span>
+                  <span className="text-[0.7rem] font-semibold text-amber-700">
+                    복습
+                  </span>
                 )}
                 {s.improving && (
-                  <span className="text-[0.7rem] font-semibold text-emerald-600">↗ 나아짐</span>
+                  <span className="text-[0.7rem] font-semibold text-emerald-600">
+                    ↗ 나아짐
+                  </span>
                 )}
                 <StatusBadge status={s.status} label={s.statusLabel} />
               </div>
@@ -135,7 +156,11 @@ export function ChapterPage() {
                 {s.concepts.map((c, i) => (
                   <span key={c}>
                     {i > 0 && " · "}
-                    <span className={c === s.title ? "font-semibold text-text-primary" : ""}>
+                    <span
+                      className={
+                        c === s.title ? "font-semibold text-text-primary" : ""
+                      }
+                    >
                       {c}
                     </span>
                   </span>
@@ -149,7 +174,7 @@ export function ChapterPage() {
 
             {s.weakConcepts.length > 0 && (
               <p className="mt-1 text-[0.8rem] text-red-600">
-                🔴 자주 틀림: {s.weakConcepts.join(", ")}
+                자주 틀림: {s.weakConcepts.join(", ")}
               </p>
             )}
 
@@ -175,7 +200,9 @@ export function ChapterPage() {
         <li
           className={[
             "rounded-lg border-2 border-dashed p-4",
-            data.formativeReady ? "border-accent bg-accent/5" : "border-border-primary",
+            data.formativeReady
+              ? "border-accent bg-accent/5"
+              : "border-border-primary",
           ].join(" ")}
         >
           <div className="flex items-start justify-between gap-3">
@@ -183,8 +210,13 @@ export function ChapterPage() {
               <p className="text-[0.7rem] font-semibold text-text-tertiary">
                 마지막 — 단원 마무리
               </p>
-              <p className="font-semibold text-text-primary">
-                {data.formativeReady ? "📝" : "🔒"} 단원 평가
+              <p className="flex items-center gap-1.5 font-semibold text-text-primary">
+                {data.formativeReady ? (
+                  <NotePencilIcon className="shrink-0 text-[0.95rem]" />
+                ) : (
+                  <LockSimpleIcon className="shrink-0 text-[0.95rem]" />
+                )}
+                단원 평가
               </p>
             </div>
             {!data.formativeReady && (
@@ -195,8 +227,8 @@ export function ChapterPage() {
           </div>
 
           <p className="mt-2 text-[0.8rem] text-text-secondary">
-            여기까지 배운 것들을 <strong>섞어서</strong> 묻습니다. 하나씩은 알아도 같이
-            놓으면 헷갈리는 지점을 찾습니다.
+            여기까지 배운 것들을 <strong>섞어서</strong> 묻습니다. 하나씩은
+            알아도 같이 놓으면 헷갈리는 지점을 찾습니다.
           </p>
 
           <div className="mt-3 border-t border-border-primary pt-3">
@@ -212,7 +244,9 @@ export function ChapterPage() {
               // 보인다. 문장은 백엔드가 만든 것을 그대로 싣는다.
               <p className="text-[0.8rem] text-text-tertiary">
                 {data.formativeReason} · 지금{" "}
-                <strong className="text-text-secondary">{pct(data.progress)}</strong>
+                <strong className="text-text-secondary">
+                  {pct(data.progress)}
+                </strong>
               </p>
             )}
           </div>

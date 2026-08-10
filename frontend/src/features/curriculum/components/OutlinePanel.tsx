@@ -23,10 +23,14 @@ import {
   LockSimpleIcon,
   NotePencilIcon,
   PlayCircleIcon,
+  PlusIcon,
 } from "@phosphor-icons/react";
 
 import type { SectionOut } from "@/features/curriculum/api/curriculum";
-import { useChapter, useDocument } from "@/features/curriculum/queries/useCurriculum";
+import {
+  useChapter,
+  useDocument,
+} from "@/features/curriculum/queries/useCurriculum";
 
 const base = (docId: string) => `/curriculum/${encodeURIComponent(docId)}`;
 
@@ -35,13 +39,30 @@ function SectionIcon({ s }: { s: SectionOut }) {
   // 보충 화면은 상태보다 **출처**가 먼저다 — 왜 여기 있는지가 안 보이면
   // 교재에 원래 있던 화면이라고 오해한다.
   if (s.inserted && s.attempts === 0)
-    return <ArrowUUpLeftIcon weight="bold" className="shrink-0 text-lg text-violet-600" />;
+    return (
+      <ArrowUUpLeftIcon
+        weight="bold"
+        className="shrink-0 text-lg text-violet-600"
+      />
+    );
   if (s.needsReview)
-    return <ArrowsClockwiseIcon weight="bold" className="shrink-0 text-lg text-amber-600" />;
+    return (
+      <ArrowsClockwiseIcon
+        weight="bold"
+        className="shrink-0 text-lg text-amber-600"
+      />
+    );
   if (s.status === "solid")
-    return <CheckCircleIcon weight="fill" className="shrink-0 text-lg text-[#10b981]" />;
+    return (
+      <CheckCircleIcon
+        weight="fill"
+        className="shrink-0 text-lg text-[#10b981]"
+      />
+    );
   if (s.attempts > 0)
-    return <PlayCircleIcon weight="fill" className="shrink-0 text-lg text-accent" />;
+    return (
+      <PlayCircleIcon weight="fill" className="shrink-0 text-lg text-accent" />
+    );
   return <CircleIcon className="shrink-0 text-lg text-text-tertiary" />;
 }
 
@@ -60,7 +81,9 @@ function ChapterBody({
   const { data, isLoading } = useChapter(docId, index);
 
   if (isLoading)
-    return <p className="px-6 py-3 text-[0.8rem] text-text-tertiary">불러오는 중…</p>;
+    return (
+      <p className="px-6 py-3 text-[0.8rem] text-text-tertiary">불러오는 중…</p>
+    );
   if (!data) return null;
 
   return (
@@ -76,7 +99,8 @@ function ChapterBody({
               active && "bg-accent/5",
               // 보충 화면은 살짝 들여 쓴다 — 원래 목차의 한 줄이 아니라
               // **앞 화면을 위해 끼운 것**이라는 게 눈으로 읽혀야 한다.
-              s.inserted && "border-l-2 border-violet-300 bg-violet-50/40 pl-[22px]",
+              s.inserted &&
+                "border-l-2 border-violet-300 bg-violet-50/40 pl-[22px]",
             )}
           >
             <SectionIcon s={s} />
@@ -103,7 +127,10 @@ function ChapterBody({
         )}
       >
         {data.formativeReady ? (
-          <NotePencilIcon weight="fill" className="shrink-0 text-lg text-accent" />
+          <NotePencilIcon
+            weight="fill"
+            className="shrink-0 text-lg text-accent"
+          />
         ) : (
           <LockSimpleIcon className="shrink-0 text-lg text-text-tertiary" />
         )}
@@ -156,7 +183,7 @@ export function OutlinePanel({ docId }: { docId: string }) {
           className="block truncate font-bold text-text-primary hover:text-accent"
           title={data.title}
         >
-          📚 {data.title}
+          {data.title}
         </Link>
         <div className="mt-2 flex items-center gap-2">
           <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-border-primary">
@@ -176,19 +203,23 @@ export function OutlinePanel({ docId }: { docId: string }) {
         <Link
           to={`${base(docId)}/review`}
           className={clsx(
-            "mt-1.5 block text-[0.75rem] font-medium hover:underline",
+            "mt-1.5 flex items-center gap-1 text-[0.75rem] font-medium hover:underline",
             onReview && "font-bold",
             data.sectionsDue > 0 ? "text-amber-700" : "text-text-tertiary",
           )}
         >
-          {data.sectionsDue > 0 ? `🔁 복습할 화면 ${data.sectionsDue}개 →` : "🔁 복습"}
+          <ArrowsClockwiseIcon className="shrink-0 text-[0.85rem]" />
+          {data.sectionsDue > 0
+            ? `복습할 화면 ${data.sectionsDue}개 →`
+            : "복습"}
         </Link>
       </div>
 
       <div className="flex-1 overflow-y-auto">
         {data.chapters.map((ch) => {
           const isOpen = open.has(ch.index);
-          const done = ch.sectionsTotal > 0 && ch.sectionsDone >= ch.sectionsTotal;
+          const done =
+            ch.sectionsTotal > 0 && ch.sectionsDone >= ch.sectionsTotal;
           return (
             <div key={ch.index} className="border-b border-border-primary">
               <button
@@ -196,7 +227,9 @@ export function OutlinePanel({ docId }: { docId: string }) {
                 onClick={() => toggle(ch.index)}
                 className={clsx(
                   "flex w-full items-center justify-between gap-2 px-5 py-3 text-left transition-colors",
-                  isOpen ? "bg-white" : "bg-bg-secondary/60 hover:bg-bg-secondary",
+                  isOpen
+                    ? "bg-white"
+                    : "bg-bg-secondary/60 hover:bg-bg-secondary",
                 )}
               >
                 <span className="min-w-0 flex-1">
@@ -209,13 +242,15 @@ export function OutlinePanel({ docId }: { docId: string }) {
                         title="진단에서 모른다고 하신 내용 — 교재에는 없습니다"
                         className="shrink-0 text-[0.75rem] font-bold text-accent"
                       >
-                        ✚
+                        <PlusIcon weight="bold" className="text-[0.7rem]" />
                       </span>
                     )}
                     <span
                       className={clsx(
                         "truncate text-[0.875rem] font-bold",
-                        currentChapter === ch.index ? "text-accent" : "text-text-primary",
+                        currentChapter === ch.index
+                          ? "text-accent"
+                          : "text-text-primary",
                       )}
                     >
                       {ch.title}
@@ -229,12 +264,13 @@ export function OutlinePanel({ docId }: { docId: string }) {
                   </span>
                   <span className="mt-0.5 block text-[0.7rem] text-text-tertiary">
                     화면 {ch.sectionsDone}/{ch.sectionsTotal}
-                    {ch.sectionsDue > 0 && <> · 🔁 {ch.sectionsDue}</>}
+                    {ch.sectionsDue > 0 && <> · 복습 {ch.sectionsDue}</>}
                     {/* "교재 밖"은 **대신할 자료가 없을 때만** 맞는 말이다.
                         책장에 있으면 그렇게 말한다 — 세 화면(사이드바·목차
                         목록·목차 상세)이 같은 단원을 두고 다른 말을 하면
                         어느 쪽이 맞는지 학습자가 알 수 없다. */}
-                    {ch.inserted && (ch.coveredBy ? <> · 📚 책장에 있음</> : <> · 교재 밖</>)}
+                    {ch.inserted &&
+                      (ch.coveredBy ? <> · 책장에 있음</> : <> · 교재 밖</>)}
                   </span>
                 </span>
                 {isOpen ? (

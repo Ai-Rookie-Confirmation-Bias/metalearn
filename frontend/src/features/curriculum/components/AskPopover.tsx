@@ -22,6 +22,8 @@ import {
   XIcon,
   PaperPlaneRightIcon,
   BookOpenTextIcon,
+  BooksIcon,
+  FileTextIcon,
 } from "@phosphor-icons/react";
 
 import {
@@ -161,8 +163,8 @@ function contextOf(range: Range): string {
 
 /** 근거 — **두 층을 갈라 보여준다.**
  *
- *   📖 이 화면의 교재 원문   그 설명을 만들 때 쓴 바로 그 조각. 주 근거다
- *   📕 다른 자리            같은 개념이 또 있는 곳. 더 볼 곳이다
+ *   이 화면의 교재 원문   그 설명을 만들 때 쓴 바로 그 조각. 주 근거다
+ *   다른 자리            같은 개념이 또 있는 곳. 더 볼 곳이다
  *
  * 섞어 놓으면 "교재 기준으로 답한 것"과 "비슷한 걸 찾아 준 것"이 같은 무게로
  * 읽힌다. 근거가 아예 없을 때도 그렇다고 말한다 — 안 그러면 AI가 아는 대로
@@ -210,7 +212,11 @@ function Grounds({
                 <span className="mt-px shrink-0 text-[0.8rem]">
                   {/* 어느 책인지가 근거의 절반이다. 도서관 책이면 그렇다고
                       말한다 — 내 자료에서 나온 것과 무게가 다르다. */}
-                  {s.shared ? "📕" : "📄"}
+                  {s.shared ? (
+                    <BooksIcon className="text-text-tertiary" />
+                  ) : (
+                    <FileTextIcon className="text-text-tertiary" />
+                  )}
                 </span>
                 <span className="min-w-0 text-[0.75rem] leading-snug text-text-secondary">
                   <span className="font-semibold text-text-primary">

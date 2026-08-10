@@ -8,6 +8,12 @@
 // "AI가 지어낸 해설이 아니라 교재의 그 문장"이라는 근거가 무너진다.
 import { useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import {
+  HeadphonesIcon,
+  LightbulbIcon,
+  LightningIcon,
+  PaperclipIcon,
+} from "@phosphor-icons/react";
 
 import type { BlockOut } from "@/features/curriculum/api/curriculum";
 import { AskPopover } from "@/features/curriculum/components/AskPopover";
@@ -47,7 +53,12 @@ function TieIn({
   return (
     <div className="mb-8 rounded-lg border-l-4 border-accent bg-accent/5 p-4">
       <p className="text-[0.7rem] font-semibold text-accent">
-        ⚡ {String(block.content.label ?? "여기서 잠깐")} — {tiedIn.join(" · ")}
+        <LightningIcon
+          weight="fill"
+          aria-hidden
+          className="mr-1 inline align-[-2px]"
+        />
+        {String(block.content.label ?? "여기서 잠깐")} — {tiedIn.join(" · ")}
         을(를) 최근 틀리셔서 여기에 엮었습니다
       </p>
       <p className="mt-1 leading-relaxed text-text-primary">
@@ -135,7 +146,8 @@ export function SectionPage() {
           to={`/curriculum/${encodeURIComponent(docId)}/sections/${sectionId}/focus`}
           className="inline-flex items-center gap-1.5 rounded-lg border border-border-primary px-3 py-1.5 text-[0.78rem] font-semibold text-text-secondary transition-colors hover:border-accent hover:bg-accent/5 hover:text-accent"
         >
-          🎧 몰입 모드
+          <HeadphonesIcon className="text-[0.95rem]" />
+          몰입 모드
         </Link>
       </div>
 
@@ -153,7 +165,7 @@ export function SectionPage() {
         </div>
         <p className="mt-2 text-[0.75rem] text-text-tertiary">
           이 화면에서 배우는 개념 {data.concepts.length}개
-          {data.page && <> · 📖 {data.page}</>}
+          {data.page && <> · {data.page}</>}
         </p>
         <p className="mt-0.5 text-[0.8rem] text-text-secondary">
           {data.concepts.join(" · ")}
@@ -173,7 +185,12 @@ export function SectionPage() {
         {analogy && (
           <div className="mb-5 rounded-lg bg-amber-50/70 p-4">
             <p className="text-[0.7rem] font-semibold text-amber-700">
-              💡 {String(analogy.content.label ?? "비유")}
+              <LightbulbIcon
+                weight="fill"
+                aria-hidden
+                className="mr-1 inline align-[-2px]"
+              />
+              {String(analogy.content.label ?? "비유")}
             </p>
             <p className="mt-1 leading-relaxed text-text-primary">
               {String(analogy.content.text ?? "")}
@@ -267,7 +284,8 @@ export function SectionPage() {
               onClick={() => setShowSource((v) => !v)}
               className="text-[0.8rem] font-medium text-text-secondary hover:underline"
             >
-              📎 교재 원문 {data.page && `(${data.page})`}{" "}
+              <PaperclipIcon aria-hidden className="mr-1 inline align-[-2px]" />
+              교재 원문 {data.page && `(${data.page})`}{" "}
               {showSource ? "접기" : "펼치기"}
             </button>
             {showSource && (

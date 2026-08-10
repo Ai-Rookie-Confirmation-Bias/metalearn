@@ -60,7 +60,7 @@ export function CurriculumLayout() {
         </Link>
         {/* 목차가 숨는 좁은 화면에서는 여기가 유일한 "어느 자료인지" 표시다. */}
         <span className="min-w-0 truncate text-[0.9rem] font-bold text-text-primary lg:hidden">
-          📚 {data?.title ?? ""}
+          {data?.title ?? ""}
         </span>
       </header>
 

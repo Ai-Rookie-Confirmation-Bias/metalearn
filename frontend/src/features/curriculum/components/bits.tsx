@@ -1,12 +1,21 @@
 // 커리큘럼 화면 공용 조각.
 //
-// ⚡ 📎 🔒 세 기호는 서비스 정의에서 고정한 시각 언어다.
-//   ⚡ AI가 조정한 것 / 📎 원문 근거 / 🔒 잠긴 이유
+// 기호 셋은 서비스 정의에서 고정한 시각 언어다.
+//   번개  AI가 조정한 것 / 클립  원문 근거 / 자물쇠  잠긴 이유
+//
+// **이모지로 쓰지 않는다.** 이모지는 OS마다 그림이 다르고 글꼴 크기·선 굵기가
+// 옆 글자와 안 맞아서, 교재를 읽는 화면에 섞이면 그 자리만 장난스러워 보인다.
+// 앱의 나머지가 전부 Phosphor 아이콘이라 결도 어긋났다.
+//
 // 원칙: 규칙이 정한 것만 쓴다. **확신이 없으면 아예 안 쓴다** — 그래서
-// reason이 빈 문자열이면 아무것도 렌더하지 않는다(빈 ⚡를 띄우지 않는다).
+// reason이 빈 문자열이면 아무것도 렌더하지 않는다(빈 번개를 띄우지 않는다).
 import { clsx } from "clsx";
+import { LightningIcon } from "@phosphor-icons/react";
 
-import type { MasteryStatus, PlanMode } from "@/features/curriculum/api/curriculum";
+import type {
+  MasteryStatus,
+  PlanMode,
+} from "@/features/curriculum/api/curriculum";
 
 const STATUS_STYLE: Record<MasteryStatus, string> = {
   untouched: "bg-bg-secondary text-text-tertiary",
@@ -16,7 +25,13 @@ const STATUS_STYLE: Record<MasteryStatus, string> = {
   solid: "bg-emerald-50 text-emerald-700",
 };
 
-export function StatusBadge({ status, label }: { status: MasteryStatus; label: string }) {
+export function StatusBadge({
+  status,
+  label,
+}: {
+  status: MasteryStatus;
+  label: string;
+}) {
   return (
     <span
       className={clsx(
@@ -41,7 +56,9 @@ export function ModeBadge({ mode }: { mode: PlanMode }) {
     <span
       className={clsx(
         "rounded px-1.5 py-0.5 text-[0.7rem] font-semibold whitespace-nowrap",
-        mode === "deep" ? "bg-indigo-50 text-indigo-700" : "bg-slate-100 text-slate-600",
+        mode === "deep"
+          ? "bg-indigo-50 text-indigo-700"
+          : "bg-slate-100 text-slate-600",
       )}
     >
       {MODE_TEXT[mode]}
@@ -49,8 +66,14 @@ export function ModeBadge({ mode }: { mode: PlanMode }) {
   );
 }
 
-/** ⚡ AI가 왜 이렇게 했는지. 규칙이 만든 문장을 그대로 싣는다. */
-export function Reason({ text, tone = "ai" }: { text: string; tone?: "ai" | "quiet" }) {
+/** AI가 왜 이렇게 했는지. 규칙이 만든 문장을 그대로 싣는다. */
+export function Reason({
+  text,
+  tone = "ai",
+}: {
+  text: string;
+  tone?: "ai" | "quiet";
+}) {
   if (!text) return null;
   return (
     <p
@@ -59,13 +82,23 @@ export function Reason({ text, tone = "ai" }: { text: string; tone?: "ai" | "qui
         tone === "ai" ? "text-indigo-700" : "text-text-tertiary",
       )}
     >
-      <span aria-hidden>⚡</span>
+      <LightningIcon
+        weight="fill"
+        aria-hidden
+        className="mt-[3px] shrink-0 text-[0.85rem]"
+      />
       <span>{text}</span>
     </p>
   );
 }
 
-export function Bar({ value, tone = "primary" }: { value: number; tone?: "primary" | "accent" }) {
+export function Bar({
+  value,
+  tone = "primary",
+}: {
+  value: number;
+  tone?: "primary" | "accent";
+}) {
   return (
     <div className="h-1.5 w-full overflow-hidden rounded-full bg-border-primary">
       <div
@@ -73,7 +106,9 @@ export function Bar({ value, tone = "primary" }: { value: number; tone?: "primar
           "h-full rounded-full transition-all duration-500",
           tone === "accent" ? "bg-accent" : "bg-primary",
         )}
-        style={{ width: `${Math.round(Math.min(Math.max(value, 0), 1) * 100)}%` }}
+        style={{
+          width: `${Math.round(Math.min(Math.max(value, 0), 1) * 100)}%`,
+        }}
       />
     </div>
   );

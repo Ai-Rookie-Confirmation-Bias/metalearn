@@ -8,13 +8,20 @@
 // 이해도로 잠그면 못 하는 사람일수록 확인할 기회가 사라진다.
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { LightningIcon, LockSimpleIcon } from "@phosphor-icons/react";
 
 import { Mcq } from "@/features/curriculum/components/Mcq";
 import { Bar, pct } from "@/features/curriculum/components/bits";
-import { useAnswer, useFormative } from "@/features/curriculum/queries/useCurriculum";
+import {
+  useAnswer,
+  useFormative,
+} from "@/features/curriculum/queries/useCurriculum";
 
 export function FormativePage() {
-  const { docId = "", index = "0" } = useParams<{ docId: string; index: string }>();
+  const { docId = "", index = "0" } = useParams<{
+    docId: string;
+    index: string;
+  }>();
   const chapterIndex = Number(index);
   const { data, isLoading, isError } = useFormative(docId, chapterIndex);
   const answer = useAnswer(docId);
@@ -38,23 +45,33 @@ export function FormativePage() {
 
   return (
     <div className="mx-auto max-w-2xl p-8">
-      <Link to={back} className="text-[0.8rem] text-text-tertiary hover:underline">
+      <Link
+        to={back}
+        className="text-[0.8rem] text-text-tertiary hover:underline"
+      >
         ← {data.chapterTitle}
       </Link>
 
       <header className="mt-3 mb-6">
-        <p className="text-[0.7rem] font-semibold text-text-tertiary">단원 평가</p>
-        <h1 className="text-2xl font-bold text-text-primary">{data.chapterTitle}</h1>
+        <p className="text-[0.7rem] font-semibold text-text-tertiary">
+          단원 평가
+        </p>
+        <h1 className="text-2xl font-bold text-text-primary">
+          {data.chapterTitle}
+        </h1>
         <p className="mt-2 text-[0.8rem] text-text-secondary">
-          여러 화면에서 배운 것들을 <strong>섞어서</strong> 묻습니다. 하나씩은 알아도
-          같이 놓으면 헷갈리는 지점을 찾는 자리입니다.
+          여러 화면에서 배운 것들을 <strong>섞어서</strong> 묻습니다. 하나씩은
+          알아도 같이 놓으면 헷갈리는 지점을 찾는 자리입니다.
         </p>
       </header>
 
       {/* 🔒 잠김 — 무엇을 하면 열리는지까지 말한다. "잠김"만 띄우면 알 수 없다. */}
       {data.locked ? (
         <div className="rounded-lg border border-border-primary bg-bg-secondary p-6 text-center">
-          <p className="text-2xl">🔒</p>
+          <LockSimpleIcon
+            weight="fill"
+            className="text-2xl text-text-tertiary"
+          />
           <p className="mt-2 font-medium text-text-primary">{data.reason}</p>
           <div className="mx-auto mt-4 max-w-xs">
             <Bar value={data.progress} tone="accent" />
@@ -78,8 +95,13 @@ export function FormativePage() {
           {/* 이 평가가 무엇을 확인하는지 — 백엔드가 실제로 문항에 넣은 것만 온다. */}
           {data.coveredWeak.length > 0 && (
             <p className="mb-4 rounded-lg border-l-4 border-accent bg-accent/5 px-3 py-2 text-[0.8rem] text-text-primary">
-              ⚡ 자주 틀리신 <strong>{data.coveredWeak.join(" · ")}</strong>을(를) 이번
-              평가에 넣었습니다.
+              <LightningIcon
+                weight="fill"
+                aria-hidden
+                className="mr-1 inline align-[-2px]"
+              />
+              자주 틀리신 <strong>{data.coveredWeak.join(" · ")}</strong>을(를)
+              이번 평가에 넣었습니다.
             </p>
           )}
 
@@ -112,8 +134,8 @@ export function FormativePage() {
               </p>
               {answered === data.blocks.length && (
                 <p className="mt-1 text-[0.8rem] text-text-tertiary">
-                  결과는 단원 이해도와 준비도에 반영됐습니다. 틀린 개념은 다음 화면
-                  설명에 함께 녹습니다.
+                  결과는 단원 이해도와 준비도에 반영됐습니다. 틀린 개념은 다음
+                  화면 설명에 함께 녹습니다.
                 </p>
               )}
               <Link

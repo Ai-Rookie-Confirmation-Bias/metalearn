@@ -32,7 +32,7 @@ function One({ figure }: { figure: FigureOut }) {
         className="w-full object-contain"
       />
       <figcaption className="border-t border-border-primary px-3 py-1.5 text-[0.72rem] text-text-tertiary">
-        📖 교재 p.{figure.page}
+        교재 p.{figure.page}
         {figure.caption && <> · {figure.caption}</>}
       </figcaption>
     </figure>
