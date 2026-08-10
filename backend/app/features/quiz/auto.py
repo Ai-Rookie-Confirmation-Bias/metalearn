@@ -21,9 +21,12 @@ from app.features.quiz import jobs
 
 logger = logging.getLogger("uvicorn.error")
 
-# 업로드 흐름에 사용자 개념이 아직 없다(users 테이블 없음 — course.user_id와
-# 같은 사정). 자동 생성 코스의 소유자 자리표시자. auth가 생기면 실제 사용자로.
-AUTO_USER_ID = uuid.UUID("00000000-0000-0000-0000-000000000000")
+# 자동 생성 코스의 소유자 = dev 유저 (core/deps.DEV_USER_ID와 같은 값,
+# alembic 0009가 시드). 예전 자리표시자(…0000)는 auth 도입 후 users에 없어
+# FK 위반으로 자동 생성이 통째로 죽었다 (실측: 업로드 문서 3건 전부 실패).
+# 파싱 READY 트리거에는 요청 문맥이 없어 소유자를 특정할 수 없다 —
+# 로그인 사용자별 소유는 위저드(코스 생성) 경로가 맡는다.
+from app.core.deps import DEV_USER_ID as AUTO_USER_ID  # noqa: E402
 
 # asyncio는 참조가 없는 태스크를 회수할 수 있다 — 완료까지 붙잡아 둔다.
 _tasks: set[asyncio.Task] = set()
@@ -40,8 +43,8 @@ async def _run(document_id: uuid.UUID) -> None:
     try:
         if _is_exam(document_id):
             # 기출은 문제은행 재료가 아니다 (복사 방지, QUIZ.md §0) — 은행도
-            # 자동 코스도 만들지 않는다. 스타일 프로파일은 본문 자료의 생성이
-            # 시작될 때 그 코스에서 추출한다 (exam_style.ensure_profile).
+            # 자동 코스도 만들지 않는다. 기출 시험지를 원문 삼아 문제를 만들면
+            # 조악한 은행이 생기고 저작권 방어선(§2-⑥)도 무너진다.
             logger.info("기출 자료 — 문제은행 자동 생성 제외: doc=%s", document_id)
             return
         course_id, has_bank = _ensure_course(document_id)
