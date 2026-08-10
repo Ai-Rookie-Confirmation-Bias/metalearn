@@ -551,6 +551,7 @@ async def get_lesson(
                 caption=f.caption,
                 needs_vision=f.needs_vision,
                 url=f"/api/parsing/figures/{f.figure_id}",
+                concept_key=f.concept_key,
             )
             for f in section.figures
         ],

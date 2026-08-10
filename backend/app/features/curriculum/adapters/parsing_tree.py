@@ -9,6 +9,7 @@ seedParsec `GET /parsing/documents/{id}/tree` 응답(또는 같은 모양의 JSO
 from __future__ import annotations
 
 import re
+from dataclasses import replace
 from typing import Any
 
 from ..grouping import Concept, Figure, Section, _figures_in, group_into_sections
@@ -87,6 +88,35 @@ def _evidence_spans(
 # 300~700자라 이 값이면 대략 같은 문단이다. **후보일 뿐** — 최종 배정은
 # `_assign_figures`가 가장 가까운 화면 하나로 좁힌다.
 _FIGURE_REACH = 400
+
+
+def _tag_by_concept(
+    figures: tuple[Figure, ...],
+    section,
+    by_name: dict,
+    bases: dict[int, int],
+) -> tuple[Figure, ...]:
+    """화면이 가져간 그림을 **화면 안에서 다시** 개념에 배정한다.
+
+    화면 배정과 같은 방식(`_assign_figures`)을 개념 단위로 한 번 더 돌린다.
+    설명·그림·인출을 개념마다 묶어 보여주려면 그림도 개념을 알아야 한다.
+
+    못 정한 그림은 `concept_key=""`로 남는다 — 화면이 맨 뒤에 모아 놓는다.
+    **버리지 않는다.** 자리를 못 정한 것과 없는 것은 다르다.
+    """
+    keys = list(section.concept_keys)
+    if not figures or not keys:
+        return figures
+    picks = _assign_figures(
+        list(figures), [_evidence_spans((k,), by_name, bases) for k in keys]
+    )
+    tagged: dict[str, str] = {}
+    for key, got in zip(keys, picks):
+        for fig in got:
+            tagged[fig.figure_id] = key
+    return tuple(
+        replace(f, concept_key=tagged.get(f.figure_id, "")) for f in figures
+    )
 
 
 def _assign_figures(
@@ -364,7 +394,7 @@ def document_from_tree(tree: dict[str, Any], *, doc_id: str | None = None) -> Do
                     source=_pick_source(joined, s, by_name, bases),
                     page=s.page or pages,
                     section_id=s.section_id,
-                    figures=picks[j],
+                    figures=_tag_by_concept(picks[j], s, by_name, bases),
                 )
             )
         chapters.append(

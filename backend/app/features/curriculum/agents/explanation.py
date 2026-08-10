@@ -31,15 +31,29 @@ from ..blocks import (
     parse_response,
 )
 
+# **개념마다 한 덩이씩** 받는다. 통짜 문자열로 받던 것을 쪼갠 이유:
+#
+# 화면이 [설명 → 그림 → 그 개념 빈칸]을 개념 단위로 반복해야 하는데, 본문이
+# 한 덩이면 어디서 끊어야 할지 알 수 없다. 글에서 개념 이름을 찾아 자르는 건
+# 모델이 순서대로 쓴다는 보장이 없어 못 쓴다.
+#
+# `concept`는 **위 목록의 이름 그대로**여야 한다. 안 맞으면 그 덩이는 어느
+# 개념에도 안 붙어서 맨 뒤로 밀린다(`parse_response`).
 _SCHEMA = """{
-  "explanation": "설명 본문 (여러 문단 가능)",
+  "sections": [
+    {"concept": "개념 이름 (위 목록과 **글자 그대로** 같게)",
+     "text": "그 개념 설명 (한 문단 이상)"}
+  ],
   "analogy": "비유 — 쓰지 않을 거면 JSON null (문자열 \\"null\\" 아님)"
 }"""
 
 # 약점을 짚을 때만 붙는 필드. 본문(`explanation`)과 분리한다 —
 # 비유를 분리한 것과 같은 이유이고, 실측으로도 본문 안 지시는 안 먹혔다.
 _SCHEMA_WITH_TIE_IN = """{
-  "explanation": "설명 본문 (여러 문단 가능)",
+  "sections": [
+    {"concept": "개념 이름 (위 목록과 **글자 그대로** 같게)",
+     "text": "그 개념 설명 (한 문단 이상)"}
+  ],
   "analogy": "비유 — 쓰지 않을 거면 JSON null (문자열 \\"null\\" 아님)",
   "tie_in": "최근 틀린 개념을 지금 배우는 것과 엮어 짚는 **한 문단** — 엮을 게 없으면 JSON null",
   "tie_in_more": "펼쳐야 보이는 다시 설명. 그 개념 하나를 처음 배우듯 — tie_in이 null이면 null"
@@ -59,7 +73,15 @@ class ExplanationResult:
 
     @property
     def text(self) -> str:
-        return next((b.content["text"] for b in self.blocks if b.type == "concept"), "")
+        """설명 본문 **전체.**
+
+        ⚠️ 개념별로 블록이 갈린 뒤로 `next(...)`로 첫 덩이만 집으면 안 된다.
+           이 값을 인출 에이전트에 넘겨 "방금 읽은 글에서 꺼내게" 하는데,
+           반쪽만 주면 뒷 개념 문항이 근거 없이 만들어진다.
+        """
+        return "\n\n".join(
+            b.content["text"] for b in self.blocks if b.type == "concept"
+        )
 
     @property
     def ok(self) -> bool:
