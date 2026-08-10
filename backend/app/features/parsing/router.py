@@ -20,6 +20,7 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.database import SessionLocal, get_db
 from app.core.deps import get_current_user_id
 from app.features.parsing.models import DocFigure, MaterialRole
@@ -58,6 +59,19 @@ async def upload_document(
     file_bytes = await file.read()
     if not file_bytes:
         raise HTTPException(status_code=400, detail="빈 파일입니다.")
+
+    # **파싱을 시작하기 전에 막는다.** 실측: 113MB PDF가 업스테이지에서 413으로
+    # 죽었는데, 그때까지 파일을 다 올리고 파이프라인을 띄운 뒤였다. 화면에는
+    # 영어 HTTP 에러가 그대로 떴고 기다린 시간은 통째로 헛일이었다.
+    limit = settings.MAX_UPLOAD_MB * 1024 * 1024
+    if len(file_bytes) > limit:
+        raise HTTPException(
+            status_code=413,
+            detail=(
+                f"파일이 너무 큽니다 ({len(file_bytes) / 1024 / 1024:.0f}MB). "
+                f"{settings.MAX_UPLOAD_MB}MB 이하로 올려 주세요."
+            ),
+        )
 
     service = ParsingService(db)
     document_id, needs_parse = service.register(

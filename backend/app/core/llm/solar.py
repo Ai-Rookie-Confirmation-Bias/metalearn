@@ -32,11 +32,12 @@ _PARSE_TIMEOUT = 180.0
 _TRANSIENT_RETRIES = 5
 _TRANSIENT_STATUS = {429, 500, 502, 503, 504}
 
-# 프로세스 전역 동시 요청 상한 — 조각 병렬 추출 시 429 방지.
-# 실측 두 점: 40 동시 = 즉시 429 (PARSING_PLAN) / 8 = 안전. 전면 병렬 실험으로
-# 24까지 올림 — 429가 뜨면 _post_retrying 백오프가 흡수하지만, 재시도 로그가
-# 잦으면 이 값을 내리는 게 맞다.
-_MAX_CONCURRENT = 24
+# 동시 요청 상한은 **설정으로 뺐다** — 자료를 여러 개 올릴 때 여기가 천장이라
+# 값을 돌려 볼 일이 잦고, 그때마다 코드를 고치면 되돌리기가 번거롭다.
+# 근거와 실측은 `settings.LLM_MAX_CONCURRENT` 주석 참고.
+#
+# 파싱(OCR)만 상한이 따로다. 콜 하나가 20초 넘게 슬롯을 잡아서, 자료 10개를
+# 한꺼번에 올리면 그 10개가 추출용 슬롯을 물고 있게 된다.
 
 
 def _strip_nul(value: Any) -> Any:
@@ -103,7 +104,8 @@ class SolarClient(LLMClient):
         self._headers = {"Authorization": f"Bearer {settings.UPSTAGE_API_KEY}"}
         self._base = settings.SOLAR_BASE_URL
         self._client: httpx.AsyncClient | None = None
-        self._sem = asyncio.Semaphore(_MAX_CONCURRENT)
+        self._sem = asyncio.Semaphore(settings.LLM_MAX_CONCURRENT)
+        self._parse_sem = asyncio.Semaphore(settings.LLM_PARSE_CONCURRENT)
 
     def _get_client(self) -> httpx.AsyncClient:
         """공유 커넥션 풀(keep-alive) — 콜마다 TCP+TLS 핸드셰이크 반복 방지."""
@@ -120,13 +122,18 @@ class SolarClient(LLMClient):
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
 
-    async def _request(self, url: str, **kwargs: Any) -> httpx.Response:
-        """세마포어(전역 동시성 상한) 안에서 재시도 포함 POST.
+    async def _request(
+        self, url: str, *, parse: bool = False, **kwargs: Any
+    ) -> httpx.Response:
+        """세마포어(동시성 상한) 안에서 재시도 포함 POST.
 
         세마포어는 백오프 sleep 동안에도 잡는다 — 429 상황에서 신규 유입까지
         줄이려는 의도. 슬롯을 놓아주면 대기 중이던 요청이 즉시 밀려들어간다.
+
+        `parse=True`는 문서 파싱(OCR) 전용 상한을 쓴다. 추론 슬롯과 섞으면
+        20초짜리 OCR 콜이 추출을 굶긴다.
         """
-        async with self._sem:
+        async with (self._parse_sem if parse else self._sem):
             return await _post_retrying(self._get_client(), url, **kwargs)
 
     # ── 생성 ──────────────────────────────────────────────────────
@@ -238,6 +245,7 @@ class SolarClient(LLMClient):
         """
         resp = await self._request(
             "/document-digitization",
+            parse=True,
             files={"document": (filename, file_bytes, content_type)},
             data={
                 "model": settings.DOCUMENT_PARSE_MODEL,
