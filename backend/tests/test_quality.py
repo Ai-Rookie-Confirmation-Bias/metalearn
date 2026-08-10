@@ -390,3 +390,24 @@ async def test_jury_neutral_example_used_for_second_judge():
     prompt = build_judge_prompt([_tf_item()], neutral_example=True)
     assert "피드백" not in prompt
     assert "예시 문구를 복사하지 마라" in prompt
+
+
+def test_mechanical_check_rejects_length_heterogeneous_options():
+    """정답만 유독 긴 선지 — 내용 몰라도 형태로 찍히는 실측 사례(NUI 정의 문항) 차단."""
+    from app.core.quality.checks import mechanical_check
+
+    bad = {
+        "question": "NUI의 정의는 무엇인가?",
+        "options": ["GUI", "CLI", "말/행동 사물과 사용자 상호작용", "VUI"],
+        "answerIndex": 2,
+        "explanation": "",
+    }
+    assert "길이가 오답과 이질적" in mechanical_check("mcq", bad, "NUI는 말/행동으로 상호작용한다")
+
+    ok = {
+        "question": "조정자와 전문가 의견을 종합하는 기법은?",
+        "options": ["델파이 기법", "LOC 기법", "전문가 감정 기법", "수학적 산정 기법"],
+        "answerIndex": 0,
+        "explanation": "",
+    }
+    assert mechanical_check("mcq", ok, "델파이 기법은 의견을 종합한다") is None
