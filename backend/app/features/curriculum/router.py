@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.core.deps import get_current_user_id
+from app.core.llm.solar import solar_client
 
 from .blocks import ConceptBrief
 from .bridge import (
@@ -28,11 +29,15 @@ from .bridge import (
 from .mastery import DAY, WEIGHT, label
 from .planner import formative_ready, weak_for_section
 from .profile import style_block
+from .ask import build_prompt, find_sources
 from .schemas import (
     AnalysisDoc,
     AnalysisOut,
     AnswerIn,
     AnswerOut,
+    AskIn,
+    AskOut,
+    AskSourceOut,
     BlockOut,
     ChapterBrief,
     ChapterOut,
@@ -677,4 +682,86 @@ def answer(
         chapter_reason=plan.reason,
         readiness=course.readiness,
         understanding=course.understanding,
+    )
+
+
+@router.post("/documents/{doc_id}/sections/{section_id}/ask", response_model=AskOut)
+async def ask(
+    doc_id: str,
+    section_id: str,
+    body: AskIn,
+    user_id: uuid.UUID = Depends(get_current_user_id),
+    db: Session = Depends(get_db),
+) -> AskOut:
+    """본문에서 끌어 놓은 구절을 풀어 설명한다.
+
+    **그 화면을 만들 때 쓴 교재 원문(`section.source`)이 주 근거다**(`ask.py`).
+    임베딩 검색은 "같은 개념이 다른 자리에도 있다"를 얹는 보조다.
+
+    ⚠️ **숙련도에 아무것도 기록하지 않는다.** 물어본 건 문항을 틀린 게 아니라
+       다시 본 것이다. 정답률에 섞으면 오측정이고, 자주 묻는 사람이 못하는
+       사람으로 집계된다.
+    """
+    selection = body.selection.strip()
+    if not selection:
+        raise HTTPException(422, "무엇을 물어볼지 알 수 없습니다.")
+    # 문단 하나를 넘기면 그건 드래그가 아니라 통째 복사다. 프롬프트만 밀린다.
+    if len(selection) > 500:
+        raise HTTPException(422, "너무 긴 구간이에요. 문장 단위로 끌어 주세요.")
+
+    progress = _me(user_id)
+    doc = _doc(doc_id, db, progress)
+    found = doc.section(section_id)
+    if found is None:
+        raise HTTPException(404, f"절을 찾을 수 없습니다: {section_id}")
+    _, section = found
+
+    sources = await find_sources(
+        db,
+        doc_id=doc_id,
+        selection=selection,
+        covered=set(section.concept_keys),
+    )
+    prompt = build_prompt(
+        selection=selection,
+        context=body.context,
+        section_title=section.title,
+        # 이름만이 아니라 **정의까지** 넘긴다. 파싱이 원문에서 뽑아 둔 것이라
+        # 이름만 주는 것과 근거로서의 값이 다르다.
+        concepts=[(c.key, c.definition) for c in section.concepts],
+        passage=section.source,
+        page=section.page,
+        sources=sources,
+        history=[(t.role, t.content) for t in body.history],
+        question=body.question,
+    )
+    try:
+        # 이어묻기는 온도를 올린다. 문맥이 거의 같은 상태로 0.4에서 다시 뽑으면
+        # 모델이 방금 한 말과 같은 문장으로 수렴한다 — 실측으로 "좀 더 쉽게
+        # 설명해줘"에 똑같은 답이 나왔다. 프롬프트 규칙과 **둘 다** 손봐야 한다.
+        answer_text = await solar_client.generate(
+            prompt, temperature=0.7 if body.question else 0.4
+        )
+    except Exception as exc:  # noqa: BLE001 — 화면이 이유를 말할 수 있어야 한다
+        raise HTTPException(502, "설명을 만들지 못했어요. 잠시 후 다시 시도해 주세요.") from exc
+
+    return AskOut(
+        answer=answer_text.strip(),
+        # 이 화면 원문을 근거로 썼나. 화면이 "교재 원문 기준" 한 줄을 이걸로 찍는다 —
+        # 근거가 있었는지 없었는지가 안 보이면 둘 다 그냥 AI 답으로 읽힌다.
+        grounded=bool(section.source.strip()),
+        page=section.page or None,
+        sources=[
+            AskSourceOut(
+                document_id=str(s.document_id),
+                filename=s.filename,
+                concept=s.concept,
+                definition=s.definition,
+                topic_title=s.topic_title,
+                page=s.page,
+                similarity=s.similarity,
+                shared=s.shared,
+            )
+            for s in sources
+        ],
     )

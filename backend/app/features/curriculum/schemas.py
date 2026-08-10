@@ -293,6 +293,52 @@ class AnswerOut(_Camel):
     understanding: float = 0.0
 
 
+# ── 드래그해서 물어보기 ──────────────────────────────────────────
+
+
+class AskTurn(_Camel):
+    """이어묻기 이력 한 줄. `role`은 user | assistant."""
+
+    role: str
+    content: str
+
+
+class AskIn(_Camel):
+    # 끌어 놓은 구절. 이어묻기일 때도 **처음 끈 것을 그대로 다시 보낸다** —
+    # 대화가 무엇에 대한 것인지가 화면에도 프롬프트에도 계속 남아야 한다.
+    selection: str
+    # 그 구절이 있던 문단. 없으면 "종속 변수"만 보고 일반론이 나온다.
+    context: str = ""
+    # 이어지는 질문. 비어 있으면 첫 물음(= 끌어 놓은 것 설명해줘).
+    question: str | None = None
+    history: list[AskTurn] = []
+
+
+class AskSourceOut(_Camel):
+    """교재에서 찾은 근거. 요약이 아니라 파싱이 뽑아 둔 정의 그대로다."""
+
+    document_id: str
+    filename: str
+    concept: str
+    definition: str = ""
+    topic_title: str | None = None
+    page: str | None = None
+    similarity: float
+    # 지금 읽는 자료가 아니라 도서관 책에서 왔나.
+    shared: bool = False
+
+
+class AskOut(_Camel):
+    answer: str
+    # 이 화면의 교재 원문을 근거로 썼나 · 그 원문의 쪽.
+    # 화면이 "📖 교재 원문 기준"을 이걸로 찍는다.
+    grounded: bool = False
+    page: str | None = None
+    # 다른 자리(다른 단원 · 📕 도서관 책)에서 찾은 같은 개념. **더 볼 곳**이지
+    # 주 근거가 아니다.
+    sources: list[AskSourceOut] = []
+
+
 # ── 메타인지 분석 ────────────────────────────────────────────────
 
 
