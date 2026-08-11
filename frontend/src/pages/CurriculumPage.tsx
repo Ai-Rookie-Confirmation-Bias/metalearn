@@ -137,7 +137,7 @@ function NextUp({ doc, chapter }: { doc: DocumentOut; chapter: ChapterBrief }) {
           오해한다. 책장에 있으면 그 파일을, 없으면 AI가 쓴 것임을 말한다. */}
       {chapter.inserted && (
         <p className="mt-2 truncate text-[0.78rem] text-emerald-700">
-          {chapter.coveredBy ? chapter.coveredBy : "교재 밖 내용 · 보강 개념"}
+          ✚ {chapter.coveredBy ? chapter.coveredBy : "교재 밖 내용 · 보강 개념"}
         </p>
       )}
 

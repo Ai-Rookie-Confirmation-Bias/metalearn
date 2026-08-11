@@ -23,7 +23,6 @@ import {
   LockSimpleIcon,
   NotePencilIcon,
   PlayCircleIcon,
-  PlusIcon,
 } from "@phosphor-icons/react";
 
 import type { SectionOut } from "@/features/curriculum/api/curriculum";
@@ -236,13 +235,19 @@ export function OutlinePanel({ docId }: { docId: string }) {
                   <span className="flex items-center gap-1.5">
                     {/* ✚ 진단이 끼운 단원 — 교재에 없던 내용. 목차는 학습 내내
                         옆에 떠 있으므로, 여기서 구분이 안 되면 학습자는 이걸
-                        교재 목차로 읽는다. */}
+                        교재 목차로 읽는다.
+
+                        ⚠️ **여기만 아이콘이 아니라 글자다.** ✚(U+271A)는
+                        이모지가 아니라 본문 글꼴의 글리프라, 단원 제목과 같은
+                        획 굵기·같은 줄에 앉는다. 아이콘으로 바꿔 보니 제목
+                        옆에서 가늘고 따로 노는 표시가 됐다. 이건 장식이 아니라
+                        **제목의 일부**로 읽혀야 한다. */}
                     {ch.inserted && (
                       <span
                         title="진단에서 모른다고 하신 내용 — 교재에는 없습니다"
                         className="shrink-0 text-[0.75rem] font-bold text-accent"
                       >
-                        <PlusIcon weight="bold" className="text-[0.7rem]" />
+                        ✚
                       </span>
                     )}
                     <span
