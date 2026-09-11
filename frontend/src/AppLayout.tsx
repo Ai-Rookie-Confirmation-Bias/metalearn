@@ -1,24 +1,118 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { useEffect, useRef, useState } from "react";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { clsx } from "clsx";
 import {
   HexagonIcon,
   BooksIcon,
+  BookOpenTextIcon,
   ChartLineUpIcon,
   GearIcon,
   LightningIcon,
   MagnifyingGlassIcon,
   BellIcon,
+  SignOutIcon,
   type Icon,
 } from "@phosphor-icons/react";
+
+import { fetchMe, logout } from "@/features/auth/api";
+import { isLoggedIn } from "@/shared/api/client";
 
 // 로그인 후 공통 셸: 좌측 사이드바(고정) + 상단 검색바 + 본문 슬롯.
 // 사이드바는 안 사라지고 <Outlet/> 본문만 라우트에 따라 교체됨.
 
+// ⚠️ **문제집은 여기 없다.** 문제은행은 자료에 딸린 것이라 책장 카드에서 연다
+//    (`/quiz?course=<id>`). 사이드바에도 두면 진입점이 둘로 갈려서, 거기로 들어온
+//    사람은 책장에서 이미 고른 자료를 과목 선택 화면에서 **또 고르게 된다.**
+//    `/quiz` 라우트 자체는 살아 있다 — 카드의 딥링크와 "다른 과목"이 쓴다.
 const NAV: { to: string; label: string; icon: Icon }[] = [
   { to: "/library", label: "나의 책장", icon: BooksIcon },
   { to: "/analysis", label: "메타인지 분석", icon: ChartLineUpIcon },
   { to: "/settings", label: "설정", icon: GearIcon },
 ];
+
+const avatarUrl = (name: string) =>
+  `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=2563eb&color=fff`;
+
+// 헤더 우측 계정 영역.
+//
+// 로그인 여부가 화면 어디에도 안 보이면 시연에서 확인할 방법이 없다 —
+// 자료가 안 보일 때 그게 "로그인이 풀렸다"인지 "업로드가 실패했다"인지
+// 가릴 수 없기 때문이다. 미로그인이면 dev 유저로 도는 중이라고 밝힌다.
+function AccountMenu() {
+  const navigate = useNavigate();
+  const qc = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  const loggedIn = isLoggedIn();
+  const { data: me } = useQuery({ queryKey: ["auth", "me"], queryFn: fetchMe });
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => {
+      if (!boxRef.current?.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  const label = loggedIn ? (me?.name ?? me?.email ?? "…") : "학습자";
+
+  const signOut = () => {
+    logout();
+    // 토큰이 사라지면 이제부터 dev 유저다. 캐시를 비우지 않으면 이전 계정의
+    // 책장이 그대로 남아 로그아웃이 안 된 것처럼 보인다.
+    qc.clear();
+    navigate("/login");
+  };
+
+  return (
+    <div ref={boxRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex cursor-pointer items-center gap-3"
+      >
+        <img src={avatarUrl(label)} alt="프로필" className="h-9 w-9 rounded-full" />
+        <span className="text-[0.95rem] font-semibold text-text-primary">{label}님</span>
+      </button>
+
+      {open && (
+        <div className="absolute right-0 top-full z-10 mt-2 w-[240px] overflow-hidden rounded-xl border border-border-primary bg-white shadow-lg">
+          <div className="border-b border-border-primary px-4 py-3">
+            <p className="truncate text-[0.9rem] font-semibold text-text-primary">
+              {loggedIn ? (me?.email ?? "…") : "로그인하지 않았어요"}
+            </p>
+            <p className="mt-0.5 text-[0.8rem] text-text-tertiary">
+              {loggedIn
+                ? `${me?.provider ?? ""} 계정으로 로그인됨`
+                : "체험 계정으로 보는 중이에요"}
+            </p>
+          </div>
+          {loggedIn ? (
+            <button
+              type="button"
+              onClick={signOut}
+              className="flex w-full items-center gap-2 px-4 py-3 text-left text-[0.9rem] font-medium text-text-secondary transition-colors hover:bg-bg-secondary hover:text-primary"
+            >
+              <SignOutIcon className="text-[1.1rem]" />
+              로그아웃
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate("/login")}
+              className="w-full px-4 py-3 text-left text-[0.9rem] font-semibold text-accent transition-colors hover:bg-bg-secondary"
+            >
+              로그인하기
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function AppLayout() {
   return (
@@ -52,7 +146,56 @@ export default function AppLayout() {
           ))}
         </nav>
 
-        <div className="p-6">
+        {/* 탐색 — 내 것이 아닌 자료를 둘러보는 자리.
+            위 내비와 **가른다.** 위는 전부 "내 것"(내 책장·내 분석·내 설정)이고
+            도서관은 남이 넣어 둔 책이라, 같은 목록에 섞이면 올린 적 없는 책이
+            내 것처럼 읽힌다. 그래서 구분선 아래 별도 블록으로 내린다. */}
+        <div className="mt-6 border-t border-border-primary px-6 pt-5">
+          <p className="mb-2 px-1 text-[0.7rem] font-bold uppercase tracking-wider text-text-tertiary">
+            탐색
+          </p>
+          <NavLink
+            to="/shared"
+            className={({ isActive }) =>
+              clsx(
+                "flex items-center gap-3 rounded-xl border px-4 py-3 transition-colors",
+                isActive
+                  ? "border-accent/30 bg-accent/10"
+                  : "border-transparent hover:border-border-primary hover:bg-bg-secondary",
+              )
+            }
+          >
+            {({ isActive }) => (
+              <>
+                <span
+                  className={clsx(
+                    "flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-colors",
+                    isActive
+                      ? "bg-accent text-white"
+                      : "bg-bg-secondary text-text-secondary",
+                  )}
+                >
+                  <BookOpenTextIcon className="text-[1.15rem]" weight="fill" />
+                </span>
+                <span className="min-w-0">
+                  <span
+                    className={clsx(
+                      "block truncate text-[0.9rem] font-bold",
+                      isActive ? "text-accent" : "text-text-primary",
+                    )}
+                  >
+                    MetaLearn 도서관
+                  </span>
+                  <span className="block text-[0.75rem] text-text-tertiary">
+                    자료 찾아보기
+                  </span>
+                </span>
+              </>
+            )}
+          </NavLink>
+        </div>
+
+        <div className="p-6 pt-4">
           <div className="rounded-2xl border border-border-primary bg-bg-secondary p-5">
             <LightningIcon weight="fill" className="mb-2 block text-[1.5rem] text-accent" />
             <h5 className="mb-1 text-[0.95rem] font-bold text-text-primary">Pro로 업그레이드</h5>
@@ -83,14 +226,7 @@ export default function AppLayout() {
             >
               <BellIcon />
             </button>
-            <div className="flex cursor-pointer items-center gap-3">
-              <img
-                src="https://ui-avatars.com/api/?name=User&background=2563eb&color=fff"
-                alt="프로필"
-                className="h-9 w-9 rounded-full"
-              />
-              <span className="text-[0.95rem] font-semibold text-text-primary">학습자님</span>
-            </div>
+            <AccountMenu />
           </div>
         </header>
 

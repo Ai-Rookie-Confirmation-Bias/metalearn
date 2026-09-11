@@ -1,0 +1,270 @@
+"""에이전트의 순수 부분 — 프롬프트가 무엇을 요구하는가, 결과를 어떻게 판정하는가.
+
+LLM 호출은 안 한다. 여기서 잠그는 건 **시키는 내용**과 **인정하는 기준**이다.
+둘 다 실측에서 한 번씩 무너진 자리라 테스트로 고정한다.
+"""
+import json
+import re
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from app.features.curriculum.agents.explanation import (  # noqa: E402
+    TIE_IN_LABEL,
+    build_prompt,
+    tied_in,
+)
+from app.features.curriculum.agents.retrieval import (  # noqa: E402
+    _levels_of,
+    build_fill_prompt,
+)
+from app.features.curriculum.agents.retrieval import (  # noqa: E402
+    build_prompt as build_prompt_retrieval,
+)
+from app.features.curriculum.blocks import Block, ConceptBrief, parse_response  # noqa: E402
+from app.features.curriculum.planner import COMPRESSED, mode_block  # noqa: E402
+from app.features.curriculum.retrieval_label import scrub_blocks  # noqa: E402
+from app.features.curriculum.retrieval_level import L1_RECALL  # noqa: E402
+
+CONCEPTS = [
+    ConceptBrief("결합도", "모듈 사이의 관련 정도"),
+    ConceptBrief("응집도", "모듈 내부 요소의 관련 정도"),
+    ConceptBrief("팬인", "자신을 호출하는 상위 모듈 수"),
+]
+
+
+def _tie_block(text: str) -> Block:
+    return Block("tie_in", {"text": text, "label": TIE_IN_LABEL}, concept_keys=())
+
+
+# ── 보충 프롬프트: 빠진 것만 시킨다 ────────────────────────────────
+
+
+def test_보충은_빠진_개념만_요구한다():
+    # 개념 10개 중 2개가 빠졌을 때 10개를 다시 시키면 또 8개만 만든다(실측).
+    p = build_fill_prompt("모듈", CONCEPTS, [CONCEPTS[2]], "설명 본문")
+    assert "1개" in p
+    assert "팬인" in p
+
+
+def test_보충은_이미_있는_개념을_다시_만들지_말라고_한다():
+    p = build_fill_prompt("모듈", CONCEPTS, [CONCEPTS[2]], "설명 본문")
+    assert "결합도" in p and "응집도" in p  # 있다고 알려주되
+    assert "다시 만들지 마라" in p  # 만들진 말라고
+
+
+def test_보충_예시는_빠진_개념으로_완성돼_있다():
+    # 추상 자리(`"…____…"`)를 주면 모델이 그대로 낸다 — 다섯 번 겪었다.
+    p = build_fill_prompt("모듈", CONCEPTS, [CONCEPTS[2]], "설명")
+    assert '"answer": "팬인"' in p and '"concept": "팬인"' in p
+
+
+def test_보충은_이름_인출만_시킨다():
+    # 누락 보충은 성질로 메우면 안 된다 — 숙련도에 쓸 이름 인출이 목적이다.
+    p = build_fill_prompt("모듈", CONCEPTS, [CONCEPTS[2]], "설명")
+    assert "상황 또는 정의" in p
+    assert "성질 유형은 만들지 마라" in p
+
+
+def test_라벨_검증_뒤에도_L1_게이트가_성질_문항을_잰다():
+    # scrub이 성질 문항의 concept_keys를 비운다. 그때 정의문을 못 찾으면
+    # `assess_cloze`가 "잴 수 없으면 L2"로 올려 **정의문을 통째로 베낀 문항이
+    # 게이트를 통과한다.** 라벨은 content.concept에 남아야 한다.
+    copied = Block(
+        "cloze",
+        {"sentence": "모듈 사이의 ____ 정도", "answer": "관련", "kind": "성질"},
+        concept_keys=("결합도",),
+    )
+    assert _levels_of([copied], CONCEPTS, "") == [L1_RECALL]
+    assert _levels_of(scrub_blocks([copied], CONCEPTS), CONCEPTS, "") == [L1_RECALL]
+
+
+def test_전부_빠졌으면_전부_요구한다():
+    p = build_fill_prompt("모듈", CONCEPTS, CONCEPTS, "설명")
+    assert "3개" in p
+    assert "다시 만들지 마라" not in p  # 이미 있는 게 없으니 그 말도 없다
+
+
+# ── 약점 엮기: 요청이 아니라 결과를 본다 ──────────────────────────
+
+
+def test_문단도_개념명도_있어야_인정한다():
+    b = _tie_block("지난번에 결합도를 놓치셨는데, 응집도와 짝으로 보면 쉽습니다.")
+    assert tied_in([b], ("결합도",)) == ("결합도",)
+
+
+def test_문단이_없으면_인정_안_한다():
+    # 모델이 "엮을 게 없다"고 판단해 null을 냈으면 화면 ⚡도 뜨면 안 된다.
+    body = Block("concept", {"text": "결합도는 …"}, concept_keys=())
+    assert tied_in([body], ("결합도",)) == ()
+
+
+def test_개념명이_없으면_인정_안_한다():
+    # 문단은 썼는데 이름을 안 쓰면 학습자가 "그때 그거"라고 못 알아본다.
+    b = _tie_block("앞에서 배운 것과 이어지는 내용입니다.")
+    assert tied_in([b], ("결합도",)) == ()
+
+
+def test_요청한_것_중_들어간_것만_돌려준다():
+    b = _tie_block("결합도를 다시 짚고 갑니다.")
+    assert tied_in([b], ("결합도", "팬인")) == ("결합도",)
+
+
+def test_약점을_요청_안_했으면_비어_있다():
+    b = _tie_block("결합도를 다시 짚고 갑니다.")
+    assert tied_in([b], ()) == ()
+
+
+# ── 설명 프롬프트: 약점이 있을 때만 말한다 ────────────────────────
+
+
+def test_약점이_없으면_아무_말도_안_한다():
+    p = build_prompt("모듈", CONCEPTS)
+    assert "tie_in" not in p
+    assert "최근" not in p
+
+
+def test_약점이_있으면_필드를_연다():
+    # 본문 안에 넣으라고 하면 안 나온다(실측 0회). 별도 필드라야 나온다.
+    p = build_prompt("모듈", CONCEPTS, weak_concepts=("팬아웃",))
+    assert "tie_in" in p
+    assert "팬아웃" in p
+    # 엮으라고만 하면 무관한 절에도 갖다 붙인다. 빠져나갈 길을 같이 준다
+    assert "억지로" in p and "null" in p
+
+
+def test_분량_모드가_프롬프트에_붙는다():
+    # plan.mode가 화면에만 뜨고 설명에 안 들어가면 거짓이다.
+    plain = build_prompt("모듈", CONCEPTS)
+    deep = build_prompt("모듈", CONCEPTS, mode_block="[이 단원의 분량 — 설명을 늘림]\n- 길게")
+    assert "이 단원의 분량" not in plain
+    assert "이 단원의 분량" in deep and "길게" in deep
+
+
+def test_분량이_성향보다_뒤에_온다():
+    # 성향은 "비유를 정의보다 먼저", compressed는 "비유 금지"다. 실제로 부딪히는
+    # 자리이고 실측에서 분량이 이겼는데(비유 0/3), **이긴 이유가 뒤에 왔기
+    # 때문**이었다. 순서가 곧 우선순위라 뒤집히면 압축 단원에 비유가 돌아온다.
+    p = build_prompt(
+        "모듈",
+        CONCEPTS,
+        profile_block="[이 학습자에게 맞춘 설명 방식]\n- 비유를 먼저 놓아라",
+        mode_block=mode_block(COMPRESSED),
+    )
+    assert p.index("맞춘 설명 방식") < p.index("이 단원의 분량")
+
+
+def test_압축_지시가_충돌을_스스로_밝힌다():
+    # 순서에만 기대면 프롬프트를 손대는 순간 조용히 뒤집힌다. 지시문 안에도 있어야 한다.
+    assert "이 분량 지시를 따른다" in mode_block(COMPRESSED)
+    assert "비유는 넣지 마라" in mode_block(COMPRESSED)
+
+
+def test_형식마다_반드시_지킬_것을_못박는다():
+    """★ 서술형 지시만으로는 형식이 화면에 안 나온다.
+
+    실측(같은 화면·2026-08-10) — `_ENFORCE`가 없을 때:
+
+        압축 있음   metaphor 비유○  definition ○  table 표✗  why 이유✗
+        압축 없음   metaphor 비유✗  definition ○  table 표✗  why 이유✗
+
+    압축이 형식을 눌러서인 줄 알았는데 **압축을 빼도 같았다.** 원래 지시가
+    약했던 것이다. 출력할 JSON 키를 이름으로 부르고 "★ 반드시"를 붙여야 따랐다.
+    """
+    from app.features.curriculum.profile import style_block
+
+    assert "반드시 채워라" in style_block("metaphor")
+    assert "analogy" in style_block("metaphor")
+    assert "반드시 넣어라" in style_block("table")
+    assert "|---|---|" in style_block("table")  # 표 모양을 직접 보여준다
+    assert "반드시 써라" in style_block("why")
+
+    # definition만 예외 — 원래 지시로 지켜진다(실측 4/4).
+    assert "★" not in style_block("definition")
+
+    # 모르는 값은 빈 문자열. 진단 안 한 자료가 여기로 온다.
+    assert style_block("") == "" and style_block("없는형식") == ""
+
+
+def test_분량_지시는_형식을_건드리지_않는다():
+    """무엇을 끝까지 남길지는 **형식이** 정한다.
+
+    전에는 압축 지시에 "analogy를 채워라"를 박아 뒀는데, 형식과 무관하게
+    걸려서 `table`·`why`에까지 엉뚱한 비유가 붙었다(실측 2/4 오염).
+    """
+    for m in (mode_block(COMPRESSED), mode_block(COMPRESSED, measured=False)):
+        assert "analogy" not in m
+        assert "비유" not in m or "비유는 넣지 마라" in m
+
+
+def test_목표로_압축했을_땐_형식을_안_덮는다():
+    """★ 재서 압축한 것과 선언으로 압축한 것은 다르다.
+
+    실측 사고: A 수업이 진단에서 형식 "비유로"를 골랐는데 설명에 비유가
+    하나도 없었다. `exam`·2주로 걸린 `compressed`가 "비유는 넣지 마라"까지
+    같이 들고 왔기 때문. 그 지시의 근거는 "이미 아는 사람에게 비유는 소음"인데
+    **목표로 걸린 압축은 아무것도 재지 않은 목차에 붙는다** — 근거가 없다.
+    """
+    goaled = mode_block(COMPRESSED, measured=False)
+    assert "핵심만" in goaled  # 분량은 여전히 줄인다
+    assert "비유는 넣지 마라" not in goaled
+    assert "설명 방식은 그대로 지켜라" in goaled
+
+
+def test_보충_예시가_스스로_필터를_통과한다():
+    # ★ 예시가 곧 출력이다(일곱 번째). 예시가 '그런 상황에서 쓰는 것이 ____ 다.'였는데
+    # 모델이 그대로 베껴 세 개념 전부 같은 문장을 냈고, 앞 문장을 가리키는 문장이라
+    # 파서가 다 버려 0문항이 됐다. 예시는 **베끼면 오히려 맞는 모양**이어야 한다.
+    p = build_fill_prompt("모듈", CONCEPTS, CONCEPTS, "설명")
+    # 프롬프트 안의 예시를 그대로 응답인 척 넣어본다.
+    examples = re.findall(r'\{"kind".*?\}', p)
+    assert examples, "예시가 프롬프트에 없다"
+    raw = json.dumps({"cloze": [json.loads(e) for e in examples]}, ensure_ascii=False)
+    blocks = [b for b in parse_response(raw, CONCEPTS, "설명") if b.type == "cloze"]
+    assert len(blocks) == len(CONCEPTS), f"예시를 베끼면 {len(blocks)}개만 남는다"
+
+
+def test_인출_예시가_스스로_필터를_통과한다():
+    # ★ 여덟 번째. 보충 프롬프트는 위 테스트로 잠갔는데 **인출 본체는 안 잠겨
+    # 있었다.** "상황" 예시가 아래 문장으로 하드코딩돼 있었다:
+    #     "팀이 그런 방식으로 일하고 있다면 그것은 ____ 다."
+    # 공통점 없는 두 교재가 이 문장을 글자 그대로 냈다(12화면 44빈칸 중 8개).
+    # 지시어가 문장 **중간**에 있어 `_DEICTIC_STARTS`(시작만 검사)를 통과하고,
+    # 완성된 문장이라 `_TEMPLATE_MARKERS`도 안 걸린다.
+    p = build_prompt_retrieval("모듈", CONCEPTS, "설명", "결합도는 모듈 사이의 관련 정도다.")
+    examples = re.findall(r'\{"kind".*?\}', p, re.S)
+    assert examples, "예시가 프롬프트에 없다"
+
+    # ① 예시 문장에 개념 정의에서 온 단서가 실제로 들어갔는가 (하드코딩 회귀 방지)
+    first = json.loads(examples[0])
+    assert CONCEPTS[0].definition.rstrip(".") in first["sentence"], (
+        f"상황 예시가 개념으로 완성되지 않았다: {first['sentence']}"
+    )
+
+    # ② 베껴도 통과하는가 — 예시를 그대로 응답인 척 넣어본다.
+    raw = json.dumps({"cloze": [json.loads(e) for e in examples]}, ensure_ascii=False)
+    kept = [b for b in parse_response(raw, CONCEPTS, "설명") if b.type == "cloze"]
+    assert kept, f"예시를 베끼면 전부 버려진다: {[json.loads(e)['sentence'] for e in examples]}"
+
+
+# ⚠️ 새 테스트는 **이 위에** 쓴다. 아래 `__main__` 블록보다 뒤에 정의하면
+#    pytest로는 돌지만 스크립트로 직접 돌릴 때 조용히 빠진다(실제로 겪었다).
+
+
+def _main() -> int:
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"PASS {t.__name__}")
+        except AssertionError as e:
+            failed += 1
+            print(f"FAIL {t.__name__}  {e}")
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main())

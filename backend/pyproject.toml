@@ -13,9 +13,34 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "python-jose[cryptography]>=3.3",
-    "passlib[bcrypt]>=1.7",
+    # passlib을 거치지 않고 bcrypt를 직접 부른다. passlib 1.7.4는 bcrypt 4.1+에서
+    # 버전 탐지가 깨져 해싱 호출 자체가 죽는다 — core/security.py 주석 참고.
+    "bcrypt>=4.1",
     "httpx>=0.28",
+    # 파싱 업로드 라우터가 UploadFile/Form을 쓴다. 없으면 **import 단계에서** 앱이
+    # 통째로 죽는다(FastAPI가 라우트 등록 때 검사한다). 선언이 빠져 있어서
+    # 클린 빌드가 안 됐다 — 로컬에 예전에 깔린 것으로 가려져 있었다.
+    "python-multipart>=0.0.9",
 ]
+
+[dependency-groups]
+# 테스트 도구도 선언이 없어서 `uv run --with pytest` 로 억지로 돌려야 했다.
+# multipart와 같은 종류의 구멍이다 — 새로 클론한 사람은 테스트를 못 돌린다.
+#
+# ⚠️ 병합 때 `[dependency-groups]`가 **두 번** 들어갔다. 커리큘럼 쪽과 quiz 쪽이
+#    서로 다른 줄에 각자 추가해서 git은 충돌로 보지 않았는데, TOML은 같은
+#    테이블을 두 번 쓰는 걸 금지한다 — uv가 파일을 읽는 순간 죽는다.
+#    **충돌이 안 났다고 안전한 게 아니다.** 하나로 합쳤다.
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=1.4.0",  # quiz 테스트가 async — asyncio_mode=auto로 잡는다
+    "anyio>=4.0",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = ["."]
 
 [tool.uv]
 package = false

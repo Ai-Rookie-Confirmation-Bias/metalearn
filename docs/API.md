@@ -1,5 +1,17 @@
 # MetaLearn — API 명세 (🔒 = 인증 필요)
 
+> ## ⚠️ 이 문서는 **2026-07-03** 기준이다 — 피벗 전 설계다
+>
+> 7/28 서비스 전환과 8/3 확정안보다 앞선다. 네 브랜치(dev·seedParsec·quiz-create·
+> curriculum) 모두 같은 blob이고 아무도 고치지 않았다. 아래 표에는 **구현되지 않은
+> 경로**와 **이름이 바뀐 경로**가 섞여 있다.
+>
+> **지금 실제로 도는 API 31개는 [INTEGRATION.md §3](INTEGRATION.md)에 있다.**
+> 학습 계층 계약은 [LEARNER_CONTRACT.md §5](LEARNER_CONTRACT.md).
+>
+> 이 파일은 초기 설계 기록으로 남긴다. 새 경로를 여기에 추가하지 말 것 —
+> 유효한 것과 아닌 것이 섞이면 둘 다 못 믿게 된다.
+
 > README.md에서 분리. **API 변경은 이 파일에서 관리한다.**
 
 
@@ -51,6 +63,15 @@
 | POST | /review/answer 🔒 | 복습 응답 → 간격 갱신(attempts kind=review) |
 | GET | /review/schedule?courseId= 🔒 | 복습 캘린더 |
 | GET | /courses/:id/connections 🔒 | 연결 퀴즈 소집 |
+
+### 문제은행 (문제 페이지 — 학습 데이터와 격리, docs/QUIZ.md)
+
+| M | 경로 | 용도 |
+| --- | --- | --- |
+| POST | /courses/:id/quiz/generate | 파싱 결과(JSON)로 문제은행 배치 생성 → {saved, discarded[]}. 파싱 완료 시 내부 트리거 예정 |
+| GET | /courses/:id/quiz 🔒 | 문서별·목차별 문항 수 (범위 선택 화면) |
+| POST | /courses/:id/quiz/session 🔒 | {documentId, tocIndexes[], count} → 문항 샘플링 (정답·해설 제외) |
+| POST | /quiz/attempts 🔒 | 답 제출 → 서버 채점 → {correct, answer, explanation(고른 선지 해설), evidence(근거 원문+페이지)} |
 
 ### 결제/구독
 

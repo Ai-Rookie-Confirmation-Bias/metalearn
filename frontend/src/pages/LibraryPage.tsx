@@ -1,63 +1,51 @@
+import { useEffect, useRef, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   PlusIcon,
   PlayIcon,
-  MagnifyingGlassIcon,
-  PencilIcon,
-  PenNibIcon,
-  BookOpenIcon,
-  NotebookIcon,
-  GraduationCapIcon,
-  BookmarkIcon,
-  type Icon,
+  WarningCircleIcon,
+  TrashIcon,
 } from "@phosphor-icons/react";
 
-import { courses, meStats, type CourseSummary } from "@/pages/library/mock";
-import { useCreatedCourses } from "@/features/course-create/store";
+import { createCourse, deleteCourse, listCourses } from "@/features/course/api";
+import {
+  purposeToGoal,
+  usePendingCourse,
+  type PendingCourse,
+} from "@/features/course-create/pendingCourse";
+import { fetchDocument, type DocumentOut } from "@/features/curriculum/api/curriculum";
+import {
+  curriculumKeys,
+  useDocuments,
+} from "@/features/curriculum/queries/useCurriculum";
+import { saveConfig } from "@/features/diagnostic/api";
+import { fetchCourseBanks, requestGeneration } from "@/pages/quiz/api";
+import type { CourseBank } from "@/pages/quiz/mock";
+import {
+  PARSE_LABEL,
+  parseProgress,
+  type ParsingDocumentOut,
+} from "@/features/parsing/api/documents";
+import { useParsingDocuments } from "@/features/parsing/queries/useParsingDocuments";
+import { usePendingUploads } from "@/features/parsing/store";
+import {
+  COVERS,
+  assignCovers,
+  type Cover,
+} from "@/features/curriculum/components/covers";
 
-// difficulty_est(1~10) → 뱃지 라벨
-function difficultyLabel(est: number): string {
-  if (est <= 3) return "입문";
-  if (est <= 7) return "중급";
-  return "고급";
+function learnPath(docId: string) {
+  return `/curriculum/${encodeURIComponent(docId)}`;
 }
 
-// 커버(색+아이콘)는 스키마에 없는 표현 계층 → course.id로 파생.
-// 아이콘은 과목 무관 범용 학습 아이콘이라 어느 코스에 붙어도 자연스러움.
-// 파랑 계열은 "이어서 학습" 배너(accent)와 겹치지 않게 제외.
-type Cover = { grad: string; icon: Icon };
-const COVERS: Cover[] = [
-  { grad: "from-[#0f172a] to-[#334155]", icon: PencilIcon }, // 남색
-  { grad: "from-[#059669] to-[#10b981]", icon: BookOpenIcon }, // 초록
-  { grad: "from-[#7c3aed] to-[#a855f7]", icon: PenNibIcon }, // 보라
-  { grad: "from-[#d97706] to-[#f59e0b]", icon: NotebookIcon }, // 주황
-  { grad: "from-[#e11d48] to-[#fb7185]", icon: GraduationCapIcon }, // 장미
-  { grad: "from-[#0d9488] to-[#14b8a6]", icon: BookmarkIcon }, // 청록
-];
-
-function hashIndex(id: string) {
-  return [...id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % COVERS.length;
+function sectionsDone(doc: DocumentOut) {
+  return Math.max(0, doc.sectionsTotal - doc.remainingSections);
 }
 
-// 각 코스에 커버 배정: 해시로 고른 색을 우선하되, 이미 쓴 색이면 다음 빈 색으로 밀어
-// 책장 안에서는 안 겹치게(생일 역설 회피). 코스가 팔레트(6)보다 많아지면 그때부터만 반복.
-function assignCovers(list: CourseSummary[]): Map<string, Cover> {
-  const used = new Set<number>();
-  const map = new Map<string, Cover>();
-  for (const c of list) {
-    let idx = hashIndex(c.id);
-    for (let i = 0; used.has(idx) && i < COVERS.length; i++) {
-      idx = (idx + 1) % COVERS.length;
-    }
-    used.add(idx);
-    map.set(c.id, COVERS[idx]);
-  }
-  return map;
-}
-
-// 이어서 학습하기 히어로 — 마지막으로 보던 코스 원클릭 재개(진행 중일 때만)
-function ContinueBanner({ course }: { course: CourseSummary }) {
-  const progress = Math.round((course.sectionsCompleted / course.sectionsTotal) * 100);
+function ContinueBanner({ doc }: { doc: DocumentOut }) {
+  const progress = Math.round(doc.readiness * 100);
+  const next = doc.chapters.find((ch) => ch.sectionsDone < ch.sectionsTotal);
 
   return (
     <section className="mb-12 flex flex-col gap-6 rounded-2xl bg-accent p-8 text-white sm:flex-row sm:items-center sm:justify-between">
@@ -65,20 +53,23 @@ function ContinueBanner({ course }: { course: CourseSummary }) {
         <span className="inline-block rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/80">
           이어서 학습하기
         </span>
-        <h3 className="mt-3 truncate text-2xl font-bold">{course.title}</h3>
-        {course.nextSectionTitle && (
-          <p className="mt-1 truncate text-sm text-white/60">다음: {course.nextSectionTitle}</p>
+        <h3 className="mt-3 truncate text-2xl font-bold">{doc.title}</h3>
+        {next && (
+          <p className="mt-1 truncate text-sm text-white/60">다음: {next.title}</p>
+        )}
+        {doc.sectionsDue > 0 && (
+          <p className="mt-1 text-sm text-white/70">🔁 복습할 화면 {doc.sectionsDue}개</p>
         )}
         <div className="mt-4 flex items-center gap-3">
           <div className="h-2 w-48 max-w-full overflow-hidden rounded-full bg-white/25">
             <div className="h-full rounded-full bg-white" style={{ width: `${progress}%` }} />
           </div>
-          <span className="text-sm font-semibold text-white/80">{progress}% 완료</span>
+          <span className="text-sm font-semibold text-white/80">준비도 {progress}%</span>
         </div>
       </div>
 
       <Link
-        to="/learning"
+        to={learnPath(doc.docId)}
         className="inline-flex flex-shrink-0 items-center justify-center gap-2 rounded-xl bg-white px-7 py-3.5 text-[0.95rem] font-bold text-accent shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md"
       >
         <PlayIcon weight="fill" />
@@ -88,41 +79,53 @@ function ContinueBanner({ course }: { course: CourseSummary }) {
   );
 }
 
-function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
-  const started = course.diagStatus === "completed";
-  const progress = course.sectionsTotal
-    ? Math.round((course.sectionsCompleted / course.sectionsTotal) * 100)
-    : 0;
+function BookCard({
+  doc,
+  cover,
+  needsDiagnostic,
+  bank,
+  onDelete,
+  deleting,
+}: {
+  doc: DocumentOut;
+  cover: Cover;
+  /** 수업인데 진단을 아직 안 했다. **학습보다 먼저** 보낸다 — 진단이 목차 앞에
+   *  보강 단원을 끼우므로, 나중에 하면 이미 읽은 단원 앞에 끼워진다. */
+  needsDiagnostic?: boolean;
+  /** 이 수업의 문제은행. 없으면 아직 안 만들어졌거나 만드는 중. */
+  bank?: CourseBank;
+  /** 수업일 때만 온다. 픽스처·자료 하나짜리는 지울 대상이 아니다. */
+  onDelete?: () => void;
+  deleting?: boolean;
+}) {
+  // 지우기는 되돌릴 수 없다. **한 번 더 묻는다** — 카드가 격자로 촘촘히 붙어
+  // 있어서 오른쪽 위 작은 버튼은 잘못 누르기 딱 좋은 자리다.
+  const [confirming, setConfirming] = useState(false);
+  const done = sectionsDone(doc);
+  const progress = Math.round(doc.readiness * 100);
+  const started = done > 0;
 
-  // 진단 전이면 진단 시작, 완료+진행0이면 학습 시작, 진행중이면 이어서
-  const cta = !started ? "진단 시작하기" : progress > 0 ? "이어서 학습하기" : "학습 시작하기";
-
+  // 기본 제공 자료는 여기 안 온다 — `/shared` 페이지가 따로 맡는다.
+  // 이 카드는 **내가 올린 자료 전용**이라 진단·진도·문제집을 다 말할 수 있다.
+  const cta = needsDiagnostic
+    ? "진단하고 시작하기"
+    : started
+      ? "이어서 학습하기"
+      : "바로 학습하기";
+  const to = needsDiagnostic
+    ? `/diagnostic/${encodeURIComponent(doc.docId)}`
+    : learnPath(doc.docId);
   const CoverIcon = cover.icon;
 
-  // 방금 만든 코스 = 씨앗 생성 중 (백엔드에선 gen_status 폴링으로 대체)
-  if (course.generating) {
-    return (
-      <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm">
-        <div
-          className={`relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`}
-        >
-          <span className="h-9 w-9 animate-spin rounded-full border-[3px] border-white/40 border-t-white" />
-        </div>
-        <div className="flex flex-1 flex-col p-6">
-          <h4 className="mb-1 text-[1.125rem] font-bold leading-snug text-text-primary">
-            {course.title}
-          </h4>
-          <p className="mb-6 flex-1 text-[0.9rem] text-text-secondary">
-            AI가 커리큘럼을 만들고 있어요…
-          </p>
-          <div className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
-            <span className="h-4 w-4 animate-spin rounded-full border-2 border-text-tertiary/40 border-t-text-tertiary" />
-            생성 중…
-          </div>
-        </div>
-      </div>
-    );
-  }
+  // 문제집은 **같은 자료의 다른 갈래**다. 전에는 `/quiz` 탭에 따로 있어서,
+  // 책장에서 자료를 고른 사람이 거기서 같은 자료를 또 골라야 했다.
+  const items = bank?.summary?.total ?? 0;
+  const quizReady = items > 0;
+  const quizLabel = quizReady
+    ? `문제 풀기 · ${items}문항`
+    : bank?.status === "generating"
+      ? "문제 만드는 중…"
+      : "문제집 없음";
 
   return (
     <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm transition-all hover:-translate-y-1 hover:border-text-tertiary hover:shadow-lg">
@@ -131,21 +134,36 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
       >
         <CoverIcon className="text-[3.5rem] opacity-90" />
         <span className="absolute right-4 top-4 rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur-sm">
-          {difficultyLabel(course.difficultyEst)}
+          화면 {doc.sectionsTotal}개
         </span>
+        {onDelete && (
+          <button
+            type="button"
+            onClick={() => setConfirming(true)}
+            aria-label="이 수업 지우기"
+            title="이 수업 지우기"
+            className="absolute left-3 top-3 rounded-lg p-2 text-white/70 transition-colors hover:bg-white/20 hover:text-white"
+          >
+            <TrashIcon className="text-[1.1rem]" />
+          </button>
+        )}
       </div>
 
       <div className="flex flex-1 flex-col p-6">
         <h4 className="mb-1 text-[1.125rem] font-bold leading-snug text-text-primary">
-          {course.title}
+          {doc.title}
         </h4>
-        <p className="mb-6 flex-1 text-[0.9rem] text-text-secondary">{course.category}</p>
+        {/* 소요 시간은 안 쓴다 — 사람마다 다른 값을 단정해서 보여주면
+            그만큼 안 걸렸을 때 그 뒤 숫자를 아무도 안 믿는다. */}
+        <p className="mb-6 flex-1 text-[0.9rem] text-text-secondary">
+          목차 {doc.chapters.length}개
+          {doc.sectionsDue > 0 ? ` · 🔁 ${doc.sectionsDue}` : ""}
+        </p>
 
-        {/* 진단 완료면 진행률, 진단 전이면 안내 한 줄(바닥 미정이라 진행률 없음) */}
         {started ? (
           <div className="mb-4">
             <div className="mb-2 flex justify-between text-[0.85rem] font-semibold">
-              <span className="text-text-secondary">진행률</span>
+              <span className="text-text-secondary">준비도</span>
               <span className="text-primary">{progress}%</span>
             </div>
             <div className="h-2 w-full overflow-hidden rounded-full bg-bg-secondary">
@@ -154,20 +172,247 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
                 style={{ width: `${progress}%` }}
               />
             </div>
+            <p className="mt-1.5 text-[0.75rem] text-text-tertiary">
+              {done}/{doc.sectionsTotal} 화면
+            </p>
           </div>
         ) : (
-          <div className="mb-4 flex items-center gap-1.5 text-[0.85rem] text-text-tertiary">
-            <MagnifyingGlassIcon className="text-base" />
-            학습 전 수준 진단이 필요해요
+          <div className="mb-4 text-[0.85rem] text-text-tertiary">아직 시작하지 않았어요</div>
+        )}
+
+        {confirming ? (
+          <div className="mt-auto flex flex-col gap-2">
+            <p className="text-[0.85rem] text-text-secondary">
+              이 수업을 지울까요? <strong>진도와 목차가 함께 사라져요.</strong>{" "}
+              올린 파일은 다시 올리면 됩니다.
+            </p>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={onDelete}
+                disabled={deleting}
+                className="inline-flex flex-1 items-center justify-center rounded-xl bg-red-600 px-5 py-3 text-[0.9rem] font-semibold text-white transition-colors hover:bg-red-700 disabled:opacity-60"
+              >
+                {deleting ? "지우는 중…" : "지우기"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setConfirming(false)}
+                disabled={deleting}
+                className="inline-flex flex-1 items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:bg-bg-secondary"
+              >
+                그대로 두기
+              </button>
+            </div>
+          </div>
+        ) : (
+        <div className="mt-auto flex flex-col gap-2">
+          <Link
+            to={to}
+            className="inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
+          >
+            {cta}
+          </Link>
+
+          {quizReady ? (
+            <Link
+              to={`/quiz?course=${encodeURIComponent(doc.docId)}`}
+              className="inline-flex w-full items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:border-accent hover:bg-accent/5 hover:text-accent"
+            >
+              {quizLabel}
+            </Link>
+          ) : (
+            // 눌러도 갈 데가 없으면 **누를 수 없게 보여야 한다.** 문제은행이
+            // 없는 코스는 `/quiz` 목록에서도 빠져서, 눌러 보내면 과목 선택
+            // 화면만 뜨고 왜 안 열리는지 알 수 없다.
+            <span className="inline-flex w-full items-center justify-center rounded-xl border border-dashed border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
+              {quizLabel}
+            </span>
+          )}
+        </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 올렸지만 아직 안 끝난 자료. **여기 보이는 건 전부 서버가 준 status다** —
+// 화면이 시간을 재거나 단계를 추측하지 않는다.
+function PendingCard({
+  filename,
+  doc,
+  unreachable,
+  cover,
+  onDismiss,
+}: {
+  filename: string;
+  doc: ParsingDocumentOut | undefined;
+  unreachable: boolean;
+  cover: Cover;
+  onDismiss: () => void;
+}) {
+  const failed = doc?.status === "failed";
+  const broken = failed || unreachable;
+  const progress = doc ? Math.round(parseProgress(doc.status) * 100) : 0;
+  const message = failed
+    ? (doc?.error ?? PARSE_LABEL.failed)
+    : unreachable
+      ? "상태를 확인할 수 없어요. 백엔드가 켜져 있는지 확인해 주세요."
+      : doc
+        ? PARSE_LABEL[doc.status]
+        : "상태를 확인하는 중…";
+
+  return (
+    <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm">
+      <div
+        className={
+          broken
+            ? "relative flex h-[140px] items-center justify-center bg-gradient-to-br from-[#7f1d1d] to-[#b91c1c] text-white"
+            : `relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`
+        }
+      >
+        {broken ? (
+          <WarningCircleIcon weight="fill" className="text-[3.5rem] opacity-90" />
+        ) : (
+          <span className="h-9 w-9 animate-spin rounded-full border-[3px] border-white/40 border-t-white" />
+        )}
+      </div>
+
+      <div className="flex flex-1 flex-col p-6">
+        <h4 className="mb-1 truncate text-[1.125rem] font-bold leading-snug text-text-primary">
+          {filename}
+        </h4>
+        <p
+          className={`mb-6 flex-1 text-[0.9rem] ${broken ? "text-red-600" : "text-text-secondary"}`}
+        >
+          {message}
+        </p>
+
+        {!broken && (
+          <div className="mb-4">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-bg-secondary">
+              <div
+                className="h-full rounded-full bg-accent transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+            <p className="mt-1.5 text-[0.75rem] text-text-tertiary">
+              분석이 끝나면 자동으로 책장에 꽂혀요.
+            </p>
           </div>
         )}
 
-        <Link
-          to="/learning"
-          className="mt-auto inline-flex w-full items-center justify-center rounded-xl bg-primary px-5 py-3 text-[0.9rem] font-semibold text-white shadow-sm transition-all hover:bg-primary-hover hover:-translate-y-0.5 hover:shadow-md"
+        {broken ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="mt-auto inline-flex w-full items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:bg-bg-secondary"
+          >
+            치우기
+          </button>
+        ) : (
+          <div className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
+            분석 중…
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// 위저드가 남긴 수업 의도 — 자료 N개를 한 권으로 묶는 중.
+function PendingCourseCard({
+  course,
+  docs,
+  error,
+  unreachable,
+  cover,
+  onDismiss,
+}: {
+  course: PendingCourse;
+  docs: (ParsingDocumentOut | undefined)[];
+  error: string | null;
+  /** 서버가 이 자료들을 모른다(404). 기다려도 오지 않으므로 치울 길을 준다. */
+  unreachable?: boolean;
+  cover: Cover;
+  onDismiss: () => void;
+}) {
+  const failed = docs.some((d) => d?.status === "failed");
+  const readyCount = docs.filter((d) => d?.status === "ready").length;
+  const total = course.documentIds.length;
+  const progress = total
+    ? Math.round(
+        (docs.reduce((sum, d) => sum + (d ? parseProgress(d.status) : 0), 0) / total) * 100,
+      )
+    : 0;
+  const broken = failed || unreachable || Boolean(error);
+  const names = course.documentIds
+    .map((id) => course.filenames[id])
+    .filter(Boolean)
+    .join(" · ");
+
+  return (
+    <div className="flex min-h-[350px] flex-col overflow-hidden rounded-2xl border border-border-primary bg-white shadow-sm">
+      <div
+        className={
+          broken
+            ? "relative flex h-[140px] items-center justify-center bg-gradient-to-br from-[#7f1d1d] to-[#b91c1c] text-white"
+            : `relative flex h-[140px] items-center justify-center bg-gradient-to-br text-white ${cover.grad}`
+        }
+      >
+        {broken ? (
+          <WarningCircleIcon weight="fill" className="text-[3.5rem] opacity-90" />
+        ) : (
+          <span className="h-9 w-9 animate-spin rounded-full border-[3px] border-white/40 border-t-white" />
+        )}
+        <span className="absolute right-4 top-4 rounded-full bg-white/20 px-3 py-1 text-xs font-bold backdrop-blur-sm">
+          자료 {readyCount}/{total}
+        </span>
+      </div>
+
+      <div className="flex flex-1 flex-col p-6">
+        <h4 className="mb-1 truncate text-[1.125rem] font-bold leading-snug text-text-primary">
+          {course.title}
+        </h4>
+        <p
+          className={`mb-2 flex-1 text-[0.9rem] ${broken ? "text-red-600" : "text-text-secondary"}`}
         >
-          {cta}
-        </Link>
+          {error
+            ? error
+            : unreachable
+              ? "서버에 이 자료가 없어요. 치우고 다시 올려 주세요."
+              : failed
+              ? "자료 분석에 실패한 파일이 있어요."
+              : readyCount === total
+                ? "수업을 묶는 중…"
+                : "자료를 분석한 뒤 수업 한 권으로 묶어요."}
+        </p>
+        <p className="mb-6 truncate text-[0.75rem] text-text-tertiary">{names}</p>
+
+        {!broken && (
+          <div className="mb-4">
+            <div className="h-2 w-full overflow-hidden rounded-full bg-bg-secondary">
+              <div
+                className="h-full rounded-full bg-accent transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {broken ? (
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="mt-auto inline-flex w-full items-center justify-center rounded-xl border border-border-primary px-5 py-3 text-[0.9rem] font-semibold text-text-secondary transition-colors hover:bg-bg-secondary"
+          >
+            치우기
+          </button>
+        ) : (
+          <div className="mt-auto inline-flex w-full items-center justify-center gap-2 rounded-xl bg-bg-secondary px-5 py-3 text-[0.9rem] font-semibold text-text-tertiary">
+            수업 준비 중…
+          </div>
+        )}
       </div>
     </div>
   );
@@ -175,36 +420,227 @@ function BookCard({ course, cover }: { course: CourseSummary; cover: Cover }) {
 
 export function LibraryPage() {
   const navigate = useNavigate();
-  const drafts = useCreatedCourses((s) => s.drafts);
+  const qc = useQueryClient();
+  const pending = usePendingUploads((s) => s.pending);
+  const dropPending = usePendingUploads((s) => s.remove);
+  const pendingCourse = usePendingCourse((s) => s.pending);
+  const clearPendingCourse = usePendingCourse((s) => s.clear);
+  const { data: docIds, isLoading, isError } = useDocuments();
+  const [assembleError, setAssembleError] = useState<string | null>(null);
+  const [removing, setRemoving] = useState<string | null>(null);
+  const [removeError, setRemoveError] = useState<string | null>(null);
+  const assembling = useRef(false);
 
-  // 방금 만든 코스(스토어)를 CourseSummary 모양으로 → mock과 합쳐 렌더.
-  // (백엔드 붙으면 이 병합 대신 GET /courses 리페치 결과를 그대로 사용)
-  const draftCourses: CourseSummary[] = drafts.map((d) => ({
-    id: d.id,
-    title: d.title,
-    category: null,
-    difficultyEst: 5,
-    diagStatus: "not_started",
-    sectionsTotal: 0,
-    sectionsCompleted: 0,
-    lastActivityAt: null,
-    generating: d.generating,
-  }));
-  const allCourses = [...draftCourses, ...courses];
+  const courseDocIds = new Set(pendingCourse?.documentIds ?? []);
+  // 수업으로 묶을 자료는 개별 대기 카드로 안 띄운다 — 한 장의 "수업 준비 중"으로.
+  const lonePending = pending.filter((p) => !courseDocIds.has(p.docId));
 
-  // 이어서 학습할 코스 = 진행 중(진단 완료 & 0<진행<100) 코스 중 마지막 학습이 가장 최근인 것.
-  // 정렬은 프론트에서 lastActivityAt(서버가 MAX(attempts.created_at)로 계산해 준 값) 최신순으로.
-  const continueCourse = allCourses
+  const docs = useQueries({
+    queries: (docIds ?? []).map((id) => ({
+      queryKey: curriculumKeys.document(id),
+      queryFn: () => fetchDocument(id),
+    })),
+  });
+
+  // **코스 목록 한 번으로 진단 여부를 안다.** 카드마다 따로 물으면 자료 수만큼
+  // 요청이 나가고, 자료 하나짜리는 404라 콘솔이 지저분해진다.
+  const { data: courses } = useQuery({
+    queryKey: ["courses", "list"],
+    queryFn: listCourses,
+    staleTime: 10_000,
+  });
+  const undiagnosed = new Set(
+    (courses ?? []).filter((c) => !c.diagnosed_at).map((c) => c.id),
+  );
+  // 지울 수 있는 건 **수업뿐이다.** 픽스처와 낱권 자료는 이 목록에 없다.
+  const courseIds = new Set((courses ?? []).map((c) => c.id));
+
+  // 카드에 문항 수를 실으려면 코스별 문제은행 요약이 필요하다. `fetchCourseBanks`가
+  // 코스 목록 + 코스별 요약을 한 번에 모아 준다 — 카드마다 따로 묻지 않는다.
+  //
+  // 생성 중인 게 있으면 폴링한다. 업로드 직후 접수한 배치가 **분 단위**라
+  // (실측 888초), 한 번만 물으면 "문제 만드는 중…"에서 영원히 안 바뀐다.
+  const { data: banks } = useQuery({
+    queryKey: ["quiz", "banks"],
+    queryFn: fetchCourseBanks,
+    staleTime: 30_000,
+    refetchInterval: (q) =>
+      (q.state.data ?? []).some((b) => b.status === "generating" || b.refilling)
+        ? 15_000
+        : false,
+  });
+  const bankByCourse = new Map((banks ?? []).map((b) => [b.course_id, b]));
+
+  // 위저드가 남긴 코스 후보의 자료도 같이 묻는다. 대기 목록(`pending`)과
+  // 코스 후보(`pendingCourse`)는 따로 저장돼서 한쪽만 남을 수 있는데, 그때
+  // **상태를 물어볼 곳이 없어져 카드가 영원히 "준비 중"에 갇힌다.**
+  const watchIds = [
+    ...new Set([
+      ...pending.map((p) => p.docId),
+      ...(pendingCourse?.documentIds ?? []),
+    ]),
+  ];
+  const parsing = useParsingDocuments(watchIds);
+  const parsingById = new Map(
+    parsing
+      .map((q) => q.data)
+      .filter((d): d is ParsingDocumentOut => Boolean(d))
+      .map((d) => [d.id, d]),
+  );
+  // 서버가 모르는 접수증. **404도 여기 들어온다** — DB를 비웠거나 남의 기기에서
+  // 올린 것을 이 브라우저가 기억하고 있으면 그렇다. 이걸 안 세면 화면이
+  // 오지 않을 자료를 무한히 기다린다(실측: DB 초기화 뒤 "자료 0/10"에서 멈춤).
+  const unreachableIds = new Set(
+    watchIds.filter((_, i) => parsing[i]?.isError),
+  );
+  // effect 의존성용 — Map은 매 렌더 새 객체라 키가 바뀌는 문자열로 본다.
+  const courseStatusKey = (pendingCourse?.documentIds ?? [])
+    .map((id) => `${id}:${parsingById.get(id)?.status ?? "?"}`)
+    .join("|");
+
+  // 수업으로 묶기 직전인 자료는 책 카드로 안 띄운다 — 코스가 생기면 멤버로 빠진다.
+  const ready = docs
+    .map((q) => q.data)
+    .filter((d): d is DocumentOut => Boolean(d) && !courseDocIds.has(d!.docId));
+
+  // 기본 제공 자료는 **여기 안 놓는다.** 사이드바 `/shared`가 따로 맡는다 —
+  // 올린 적 없는 책이 "나의 책장"에 섞이면 그게 내 것인지 아닌지 흐려지고,
+  // 그 자료들은 진단도 진도도 없어서 카드가 말할 수 있는 것 자체가 다르다.
+  const shelfMine = ready.filter((d) => !d.shared);
+
+  // 파싱이 끝나도 커리큘럼 목록은 다시 물어봐야 안다 — 그 목록 API가 호출될
+  // 때 ready 문서를 학습 store로 끌어오기 때문이다(파싱→학습 이음매).
+  // 다만 곧 코스로 묶일 자료는 목록을 당겨도 개별 카드가 되므로, 코스 조립이
+  // 끝난 뒤에만 무효화한다(아래 assemble effect).
+  const readyKey = parsing
+    .map((q) => q.data)
     .filter(
-      (c) =>
-        c.diagStatus === "completed" &&
-        c.sectionsCompleted > 0 &&
-        c.sectionsCompleted < c.sectionsTotal,
+      (d): d is ParsingDocumentOut =>
+        d?.status === "ready" && !courseDocIds.has(d.id),
     )
-    .sort((a, b) => (b.lastActivityAt ?? "").localeCompare(a.lastActivityAt ?? ""))[0];
+    .map((d) => d.id)
+    .join(",");
+  useEffect(() => {
+    if (!readyKey) return;
+    void qc.invalidateQueries({ queryKey: curriculumKeys.documents });
+  }, [readyKey, qc]);
 
-  // 커버 색/아이콘을 책장 안에서 안 겹치게 미리 배정
-  const coverByCourse = assignCovers(allCourses);
+  // 책장이 그 자료를 알아본 뒤에야 대기 목록에서 뺀다. 먼저 빼면 카드가
+  // 한 번 사라졌다가 다시 나타난다. 코스 멤버 후보는 조립이 뺄 때까지 둔다.
+  useEffect(() => {
+    if (!docIds) return;
+    for (const p of lonePending) {
+      if (docIds.includes(p.docId)) dropPending(p.docId);
+    }
+  }, [docIds, lonePending, dropPending]);
+
+  // 전부 ready면 POST /courses. 역할은 서버가 정하고, purpose는 진단 goal로만 넘긴다.
+  useEffect(() => {
+    if (!pendingCourse || assembling.current || assembleError) return;
+    const statuses = pendingCourse.documentIds.map((id) => parsingById.get(id));
+    if (statuses.some((d) => !d)) return;
+    if (statuses.some((d) => d!.status === "failed")) return;
+    if (!statuses.every((d) => d!.status === "ready")) return;
+
+    assembling.current = true;
+    const { documentIds, title, purpose, kinds } = pendingCourse;
+    void (async () => {
+      try {
+        const course = await createCourse({
+          document_ids: documentIds,
+          title,
+          kinds: kinds ?? null,
+        });
+        try {
+          await saveConfig(course.id, { goal: purposeToGoal(purpose) });
+        } catch {
+          // 목표는 진단 화면에서 다시 고를 수 있다. 코스 자체가 만들어진 게 본전.
+        }
+
+        // 문제은행 생성을 **여기서** 접수한다. 실데이터 888초짜리라 진단을
+        // 하는 동안 서버가 만들게 두는 게 가장 빠르다. 이 문을 아무도 안 불러서
+        // 문제집이 계속 비어 있었다.
+        //
+        // ⚠️ **접수까지는 기다린다.** 전에는 `void ...catch(() => {})`로 던져
+        //    놓고 곧장 `navigate`했는데, 요청이 나가기 전에 이 컴포넌트가
+        //    언마운트되면서 취소됐다. 서버 상태가 `idle`이라 접수조차 안 된
+        //    것인데 catch가 삼켜서 아무 흔적도 없었다(실측: 업로드했는데
+        //    문항 0개, 로그에 POST가 아예 없음).
+        //
+        //    이 API는 배치를 걸고 즉시 돌아온다(202). 기다려도 체감이 없다.
+        //    실패해도 넘어간다 — 문제집은 학습과 별개고 문제집 화면에서 다시
+        //    접수할 수 있다(리필). 다만 **조용히 삼키지는 않는다.**
+        // 기출(exam)은 문제은행 재료가 아니다 — 서버도 422로 거절하지만
+        // 애초에 접수하지 않는다 (스타일 프로파일은 생성 시 서버가 알아서 뽑음).
+        const bankDocIds = documentIds.filter((id) => kinds?.[id] !== "exam");
+        await Promise.allSettled(
+          bankDocIds.map((id) =>
+            requestGeneration(course.id, id).catch((e: unknown) => {
+              console.warn("[library] 문제은행 접수 실패", id, e);
+            }),
+          ),
+        );
+
+        for (const id of documentIds) dropPending(id);
+        clearPendingCourse();
+        setAssembleError(null);
+        await qc.invalidateQueries({ queryKey: curriculumKeys.documents });
+
+        // ★ 진단으로 데려간다. 진단은 **커리큘럼을 정하는 단계**지 선택지가
+        //   아니다 — 건너뛰면 보강 단원 없이 배우게 된다(실측: 목차 4 → 14).
+        //   방금 올린 사람만 여기 온다(`pendingCourse`가 있어야 이 블록이 돈다).
+        navigate(`/diagnostic/${encodeURIComponent(course.id)}`);
+      } catch (e) {
+        const detail = (e as { response?: { data?: { detail?: string } } })?.response
+          ?.data?.detail;
+        setAssembleError(detail ?? (e as Error)?.message ?? "수업을 만들지 못했어요.");
+      } finally {
+        assembling.current = false;
+      }
+    })();
+    // parsingById는 courseStatusKey로 대표한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCourse, courseStatusKey, assembleError, dropPending, clearPendingCourse, qc]);
+
+  /** 수업 지우기. 서버가 지운 뒤 **캐시를 통째로 버린다** — 무효화만 하면
+   *  다시 받아오는 사이 방금 지운 카드가 그대로 남아 있다. */
+  async function removeCourse(courseId: string) {
+    setRemoving(courseId);
+    setRemoveError(null);
+    try {
+      await deleteCourse(courseId);
+      qc.removeQueries({ queryKey: curriculumKeys.document(courseId) });
+      qc.removeQueries({ queryKey: ["courses", "list"] });
+      qc.removeQueries({ queryKey: ["quiz", "banks"] });
+      await qc.invalidateQueries({ queryKey: curriculumKeys.documents });
+    } catch (e) {
+      const detail = (e as { response?: { data?: { detail?: string } } })?.response
+        ?.data?.detail;
+      setRemoveError(detail ?? (e as Error)?.message ?? "수업을 지우지 못했어요.");
+    } finally {
+      setRemoving(null);
+    }
+  }
+
+  // 이어서 = 한 번이라도 본 자료 중 준비도가 가장 높은 것(아직 미완).
+  const continueDoc = ready
+    .filter((d) => sectionsDone(d) > 0 && !d.complete)
+    .sort((a, b) => b.readiness - a.readiness)[0];
+
+  const coverById = assignCovers([
+    ...(pendingCourse ? [pendingCourse.title] : []),
+    ...lonePending.map((p) => p.docId),
+    ...ready.map((d) => d.docId),
+  ]);
+
+  // **내 자료 기준이다.** 기본 제공 자료는 처음부터 깔려 있으므로, 그걸로
+  // 세면 아직 아무것도 안 올린 사람에게 "첫 학습을 시작해보세요"가 안 뜬다.
+  const empty =
+    !isLoading &&
+    !isError &&
+    shelfMine.length === 0 &&
+    lonePending.length === 0 &&
+    !pendingCourse;
 
   return (
     <div className="mx-auto w-full max-w-[1400px] px-12 py-12">
@@ -212,23 +648,32 @@ export function LibraryPage() {
         <h2 className="mb-1 text-[2rem] font-extrabold tracking-tight text-text-primary">
           오늘도 성장할 준비 되셨나요?
         </h2>
-        <p className="text-text-secondary">
-          {meStats.streakDays > 0
-            ? `지금까지 ${meStats.streakDays}일째 꾸준히 학습 중입니다.`
-            : "학습을 시작해볼까요?"}
-        </p>
+        <p className="text-text-secondary">자료를 고르면 맞춤 커리큘럼으로 들어갑니다.</p>
       </div>
 
-      {continueCourse && <ContinueBanner course={continueCourse} />}
+      {continueDoc && <ContinueBanner doc={continueDoc} />}
 
-      {/* 나의 책장 */}
       <section>
         <div className="mb-6 flex items-end justify-between">
           <h3 className="text-xl font-bold text-text-primary">나의 책장</h3>
         </div>
 
-        {allCourses.length === 0 ? (
-          /* 첫 사용자(코스 0개) — 새 학습 시작을 크게 강조한 빈 상태 */
+        {removeError && (
+          <p className="mb-6 rounded-xl bg-red-50 px-5 py-3 text-[0.9rem] text-red-600">
+            {removeError}
+          </p>
+        )}
+
+        {isLoading && (
+          <p className="py-12 text-center text-text-secondary">자료를 불러오는 중…</p>
+        )}
+        {isError && (
+          <p className="py-12 text-center text-red-600">
+            자료를 불러오지 못했습니다. 백엔드가 켜져 있는지 확인해 주세요.
+          </p>
+        )}
+
+        {!isLoading && !isError && empty ? (
           <button
             type="button"
             onClick={() => navigate("/create")}
@@ -246,26 +691,74 @@ export function LibraryPage() {
             </span>
           </button>
         ) : (
-          <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-8">
-            {/* 새 학습 추가 슬롯 — 맨 앞 고정(코스 많아도 좌상단에서 바로 찾음) */}
-            <button
-              type="button"
-              onClick={() => navigate("/create")}
-              className="group flex min-h-[350px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border-primary p-8 text-center transition-colors hover:border-accent hover:bg-accent/5"
-            >
-              <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-bg-secondary text-[2rem] text-text-tertiary transition-colors group-hover:bg-accent group-hover:text-white">
-                <PlusIcon />
-              </div>
-              <h4 className="mb-1 text-[1.125rem] font-bold text-text-primary">새로운 학습 시작하기</h4>
-              <p className="text-[0.9rem] text-text-secondary">새로운 목표를 책장에 꽂아보세요.</p>
-            </button>
+          !isLoading &&
+          !isError && (
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(300px,1fr))] gap-8">
+              <button
+                type="button"
+                onClick={() => navigate("/create")}
+                className="group flex min-h-[350px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border-primary p-8 text-center transition-colors hover:border-accent hover:bg-accent/5"
+              >
+                <div className="mb-5 flex h-16 w-16 items-center justify-center rounded-full bg-bg-secondary text-[2rem] text-text-tertiary transition-colors group-hover:bg-accent group-hover:text-white">
+                  <PlusIcon />
+                </div>
+                <h4 className="mb-1 text-[1.125rem] font-bold text-text-primary">
+                  새로운 학습 시작하기
+                </h4>
+                <p className="text-[0.9rem] text-text-secondary">새 자료를 책장에 꽂아보세요.</p>
+              </button>
 
-            {allCourses.map((course) => (
-              <BookCard key={course.id} course={course} cover={coverByCourse.get(course.id)!} />
-            ))}
-          </div>
+              {pendingCourse && (
+                <PendingCourseCard
+                  course={pendingCourse}
+                  docs={pendingCourse.documentIds.map((id) => parsingById.get(id))}
+                  error={assembleError}
+                  unreachable={pendingCourse.documentIds.some((id) =>
+                    unreachableIds.has(id),
+                  )}
+                  cover={coverById.get(pendingCourse.title) ?? COVERS[0]}
+                  onDismiss={() => {
+                    for (const id of pendingCourse.documentIds) dropPending(id);
+                    clearPendingCourse();
+                    setAssembleError(null);
+                  }}
+                />
+              )}
+
+              {/* ⚠️ 실패한 조회는 `data`가 없다. 전에는 `parsing.find(row =>
+                  row.data?.id === …)`로 찾아서 **404가 난 자료를 영영 못 찾았고**,
+                  그래서 치우기 버튼이 안 떴다. 인덱스로 맞춘 집합을 쓴다. */}
+              {lonePending.map((p) => (
+                <PendingCard
+                  key={p.docId}
+                  filename={p.filename}
+                  doc={parsingById.get(p.docId)}
+                  unreachable={unreachableIds.has(p.docId)}
+                  cover={coverById.get(p.docId) ?? COVERS[0]}
+                  onDismiss={() => dropPending(p.docId)}
+                />
+              ))}
+
+              {shelfMine.map((doc) => (
+                <BookCard
+                  key={doc.docId}
+                  doc={doc}
+                  cover={coverById.get(doc.docId) ?? COVERS[0]}
+                  needsDiagnostic={undiagnosed.has(doc.docId)}
+                  bank={bankByCourse.get(doc.docId)}
+                  onDelete={
+                    courseIds.has(doc.docId)
+                      ? () => void removeCourse(doc.docId)
+                      : undefined
+                  }
+                  deleting={removing === doc.docId}
+                />
+              ))}
+            </div>
+          )
         )}
       </section>
+
     </div>
   );
 }

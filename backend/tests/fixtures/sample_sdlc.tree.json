@@ -1,0 +1,211 @@
+{
+  "document": {
+    "id": "11111111-1111-1111-1111-111111111111",
+    "filename": "sample_sdlc.pdf",
+    "source_format": "pdf",
+    "status": "ready",
+    "error": null,
+    "parser_version": "3.0",
+    "density_grade": "body",
+    "avg_segment_chars": 800,
+    "concept_coverage": 100,
+    "created_at": "2026-08-05T00:00:00Z"
+  },
+  "topics": [
+    {
+      "id": "22222222-2222-2222-2222-222222222201",
+      "seq": 0,
+      "title": "1. 소프트웨어 구축",
+      "page_from": 1,
+      "page_to": 4,
+      "segments": [
+        {
+          "id": "33333333-3333-3333-3333-333333333301",
+          "seq": 0,
+          "heading": "생명 주기",
+          "content": "폭포수 모형은 이전 단계로 돌아갈 수 없는 고전적 생명 주기 모형이다. 프로토타입 모형은 견본을 통해 요구사항을 파악한다. 나선형 모형은 계획 수립, 위험 분석, 개발 및 검증, 고객 평가를 반복한다. 애자일 모형은 짧은 주기를 반복하며 고객 요구에 유연하게 대응한다.",
+          "page_from": 1,
+          "page_to": 2,
+          "char_count": 180,
+          "sentence_count": 4,
+          "figures": []
+        }
+      ],
+      "concepts": [
+        {
+          "id": "44444444-4444-4444-4444-444444444401",
+          "name": "폭포수 모형",
+          "definition": "이전 단계로 돌아갈 수 없는 고전적 생명 주기 모형",
+          "source": "book",
+          "global_key": "waterfall",
+          "segment_seqs": [0],
+          "prerequisite_ids": ["44444444-4444-4444-4444-444444444499"],
+          "evidence": [
+            {
+              "segment_seq": 0,
+              "sentence_seq": 0,
+              "char_start": 0,
+              "char_end": 40,
+              "text": "폭포수 모형은 이전 단계로 돌아갈 수 없는 고전적 생명 주기 모형이다.",
+              "page_from": 1,
+              "page_to": 2
+            }
+          ]
+        },
+        {
+          "id": "44444444-4444-4444-4444-444444444402",
+          "name": "프로토타입 모형",
+          "definition": "견본으로 요구사항을 파악하는 모형",
+          "source": "book",
+          "global_key": "prototype",
+          "segment_seqs": [0],
+          "prerequisite_ids": [],
+          "evidence": [
+            {
+              "segment_seq": 0,
+              "sentence_seq": 1,
+              "char_start": 41,
+              "char_end": 75,
+              "text": "프로토타입 모형은 견본을 통해 요구사항을 파악한다.",
+              "page_from": 1,
+              "page_to": 2
+            }
+          ]
+        },
+        {
+          "id": "44444444-4444-4444-4444-444444444403",
+          "name": "나선형 모형",
+          "definition": "위험 분석을 반복하는 점진적 모형",
+          "source": "book",
+          "global_key": "spiral",
+          "segment_seqs": [0],
+          "prerequisite_ids": [],
+          "evidence": [
+            {
+              "segment_seq": 0,
+              "sentence_seq": 2,
+              "char_start": 76,
+              "char_end": 130,
+              "text": "나선형 모형은 계획 수립, 위험 분석, 개발 및 검증, 고객 평가를 반복한다.",
+              "page_from": 1,
+              "page_to": 2
+            }
+          ]
+        },
+        {
+          "id": "44444444-4444-4444-4444-444444444404",
+          "name": "애자일 모형",
+          "definition": "짧은 주기를 반복하는 개발 모형",
+          "source": "book",
+          "global_key": "agile",
+          "segment_seqs": [0],
+          "prerequisite_ids": [],
+          "evidence": [
+            {
+              "segment_seq": 0,
+              "sentence_seq": 3,
+              "char_start": 131,
+              "char_end": 180,
+              "text": "애자일 모형은 짧은 주기를 반복하며 고객 요구에 유연하게 대응한다.",
+              "page_from": 1,
+              "page_to": 2
+            }
+          ]
+        },
+        {
+          "id": "44444444-4444-4444-4444-444444444499",
+          "name": "소프트웨어 생명 주기",
+          "definition": "개발 프로세스를 단계로 나눈 체계",
+          "source": "book",
+          "global_key": "sdlc",
+          "segment_seqs": [0],
+          "prerequisite_ids": [],
+          "evidence": []
+        }
+      ]
+    },
+    {
+      "id": "22222222-2222-2222-2222-222222222202",
+      "seq": 1,
+      "title": "2. 비용 산정",
+      "page_from": 3,
+      "page_to": 4,
+      "segments": [
+        {
+          "id": "33333333-3333-3333-3333-333333333302",
+          "seq": 0,
+          "heading": "비용",
+          "content": "LOC 기법은 소스 코드 라인 수로 비용을 산정한다. COCOMO 모형은 LOC 기반 비용 산정 기법이다. 델파이 기법은 전문가 합의로 비용을 추정한다.",
+          "page_from": 3,
+          "page_to": 4,
+          "char_count": 90,
+          "sentence_count": 3,
+          "figures": []
+        }
+      ],
+      "concepts": [
+        {
+          "id": "44444444-4444-4444-4444-444444444411",
+          "name": "LOC 기법",
+          "definition": "라인 수 기반 비용 산정",
+          "source": "book",
+          "global_key": "loc",
+          "segment_seqs": [0],
+          "prerequisite_ids": [],
+          "evidence": [
+            {
+              "segment_seq": 0,
+              "sentence_seq": 0,
+              "char_start": 0,
+              "char_end": 30,
+              "text": "LOC 기법은 소스 코드 라인 수로 비용을 산정한다.",
+              "page_from": 3,
+              "page_to": 4
+            }
+          ]
+        },
+        {
+          "id": "44444444-4444-4444-4444-444444444412",
+          "name": "COCOMO 모형",
+          "definition": "보헴의 LOC 기반 비용 산정",
+          "source": "book",
+          "global_key": "cocomo",
+          "segment_seqs": [0],
+          "prerequisite_ids": ["44444444-4444-4444-4444-444444444411"],
+          "evidence": [
+            {
+              "segment_seq": 0,
+              "sentence_seq": 1,
+              "char_start": 31,
+              "char_end": 60,
+              "text": "COCOMO 모형은 LOC 기반 비용 산정 기법이다.",
+              "page_from": 3,
+              "page_to": 4
+            }
+          ]
+        },
+        {
+          "id": "44444444-4444-4444-4444-444444444413",
+          "name": "델파이 기법",
+          "definition": "전문가 합의 추정",
+          "source": "book",
+          "global_key": "delphi",
+          "segment_seqs": [0],
+          "prerequisite_ids": [],
+          "evidence": [
+            {
+              "segment_seq": 0,
+              "sentence_seq": 2,
+              "char_start": 61,
+              "char_end": 90,
+              "text": "델파이 기법은 전문가 합의로 비용을 추정한다.",
+              "page_from": 3,
+              "page_to": 4
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "orphan_segments": []
+}

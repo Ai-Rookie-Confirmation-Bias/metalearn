@@ -4,11 +4,11 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_PASSWORD: dev
-      POSTGRES_DB: metalearn
+      POSTGRES_DB: metalearn_v3
     ports: ["5432:5432"]
     volumes: ["pgdata:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d metalearn"]
+      test: ["CMD-SHELL", "pg_isready -U postgres -d metalearn_v3"]
       interval: 5s
       timeout: 3s
       retries: 5
@@ -19,7 +19,12 @@ services:
     env_file: ./backend/.env
     environment:
       # 호스트가 'db'(서비스명) — 도커 네트워크 내부 DNS
-      DATABASE_URL: postgresql+psycopg://postgres:dev@db:5432/metalearn
+      # metalearn_v3: 파싱 v3 전용. 기존 metalearn DB는 integration 브랜치
+      # 스키마(alembic 0023)라 documents/concepts 등 테이블명이 겹쳐 공존 불가.
+      DATABASE_URL: postgresql+psycopg://postgres:dev@db:5432/metalearn_v3
+      # 잠깐 꺼둔 것 — 같은 책을 올릴 때마다 파싱을 처음부터 다시 돌린다.
+      # 확인이 끝나면 이 줄을 지운다(기본값이 재사용 on).
+      REUSE_PARSED_DOCUMENTS: "false"
     ports: ["8000:8000"]
     volumes:
       - ./backend:/app
